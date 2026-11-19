@@ -18,6 +18,8 @@ import {
   telegramVerbatimMessage,
   telegramVisibleLength,
   truncateText,
+  fitTelegramCaption,
+  TELEGRAM_CAPTION_LIMIT,
 } from './formatter';
 import { telegramMessageChunks } from './longMessage';
 import { pageAnalyzeChoice, pageForwardFolded } from '../botChat/pageForward';
@@ -53,7 +55,6 @@ import {
 import type { Message } from 'grammy/types';
 
 const TELEGRAM_MSG_LIMIT = TELEGRAM_MESSAGE_MAX;
-const TELEGRAM_CAPTION_LIMIT = 1024;
 const TELEGRAM_RESULT_MAX = 2600;
 const COMPACT_CHUNK_CHARS = 3000;
 const COMPACT_MAX_MESSAGES = 3;
@@ -87,7 +88,7 @@ export async function safeSendMessage(
   try {
     await bot.api.sendMessage(chatId, text, {
       parse_mode: 'HTML',
-      reply_parameters: replyToMessageId ? { message_id: replyToMessageId } : undefined,
+      ...quoteOf(replyToMessageId),
       reply_markup: replyMarkup,
       link_preview_options: { is_disabled: true },
     });
@@ -291,6 +292,22 @@ async function sendLargeFile(
   });
 }
 
+/**
+ * A flow's caption as Telegram HTML: whole when it fits the caption limit, otherwise cut at a
+ * paragraph, line or word (`fitTelegramCaption`) and the cut written to the log.
+ */
+function flowCaptionHtml(mctx: TelegramMessagingContext, caption: string | undefined): string {
+  const source = caption ? extractResponseSection(caption, mctx.getStrings()).trim() : '';
+  if (!source) return '';
+  const fitted = fitTelegramCaption(source);
+  const html = formatResponseForTelegramHtml(fitted);
+  if (fitted !== source) {
+    const whole = telegramVisibleLength(formatResponseForTelegramHtml(source));
+    mctx.onLog(`[telegram] caption cut to fit ${TELEGRAM_CAPTION_LIMIT} characters: ${whole} → ${telegramVisibleLength(html)}`);
+  }
+  return html;
+}
+
 export async function sendProactiveFile(
   mctx: TelegramMessagingContext,
   chatId: number,
@@ -304,11 +321,7 @@ export async function sendProactiveFile(
   if (!bot || !mctx.isPollerActive()) {
     throw new Error('Telegram bot is not running');
   }
-  const captionSource = caption ? extractResponseSection(caption, mctx.getStrings()) : '';
-  let captionHtml = captionSource ? formatResponseForTelegramHtml(captionSource) : '';
-  if (captionHtml && telegramVisibleLength(captionHtml) > TELEGRAM_CAPTION_LIMIT) {
-    captionHtml = formatResponseForTelegramHtml(truncateText(captionSource, TELEGRAM_CAPTION_LIMIT));
-  }
+  const captionHtml = flowCaptionHtml(mctx, caption);
   const captionOpts = {
     ...(captionHtml ? { caption: captionHtml, parse_mode: 'HTML' as const } : {}),
     ...replyMarkupFor(chatId, extras),
@@ -673,11 +686,7 @@ export async function sendProactiveAlbum(
   if (!bot || !mctx.isPollerActive()) {
     throw new Error('Telegram bot is not running');
   }
-  const captionSource = caption ? extractResponseSection(caption, mctx.getStrings()) : '';
-  let captionHtml = captionSource ? formatResponseForTelegramHtml(captionSource) : '';
-  if (captionHtml && telegramVisibleLength(captionHtml) > TELEGRAM_CAPTION_LIMIT) {
-    captionHtml = formatResponseForTelegramHtml(truncateText(captionSource, TELEGRAM_CAPTION_LIMIT));
-  }
+  const captionHtml = flowCaptionHtml(mctx, caption);
   const captionOpts: CaptionOpts = captionHtml ? { caption: captionHtml, parse_mode: 'HTML' } : {};
   const quote = quoteOf(replyTo);
   const paths = await Promise.all(filePaths.map((p) => resolveSafeLocalAttachment(p, authorizedPaths)));
@@ -921,7 +930,7 @@ async function sendQuestionReply(
     const sent = await bot.api.sendMessage(target.chatId, text, {
       ...(verbatim ? (verbatim.entities.length > 0 ? { entities: verbatim.entities } : {}) : { parse_mode: 'HTML' as const }),
       reply_markup: askKeyboard({ runId: question.runId, chatId: target.chatId, userId: target.userId }, question.choices),
-      reply_parameters: target.requestMessageId ? { message_id: target.requestMessageId } : undefined,
+      ...quoteOf(target.requestMessageId),
       link_preview_options: { is_disabled: true },
     });
     messageId = sent.message_id;
@@ -1026,7 +1035,7 @@ async function sendVerbatimReply(
   try {
     const sent = await bot.api.sendMessage(target.chatId, message.text, {
       ...(message.entities.length > 0 ? { entities: message.entities } : {}),
-      reply_parameters: target.requestMessageId ? { message_id: target.requestMessageId } : undefined,
+      ...quoteOf(target.requestMessageId),
       link_preview_options: { is_disabled: true },
     });
     if (result.awaitingAnswer) mctx.onAgentAskShown?.(target, { messageId: sent.message_id, numbered: true });

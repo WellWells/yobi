@@ -3,10 +3,11 @@ import { IPC } from '../shared/types';
 import type { GeminiModelChoice, GeminiModelState } from '../shared/geminiModels';
 import type { ClaudeModelChoice, ClaudeModelState } from '../shared/claudeModels';
 import type { ChatgptModelChoice, ChatgptModelState } from '../shared/chatgptModels';
+import type { PerplexityModelChoice, PerplexityModelState } from '../shared/perplexityModels';
 import type { MemoryEditResult, MemoryNote, BotSelfChange, UserMemorySnapshot } from '../shared/userMemory';
 import type { AiNameRequest, AiNameResult } from '../shared/aiName';
 import type {
-  FlowAssistEditRequest, FlowAssistEditResult, FlowAssistExplainRequest, FlowAssistExplainResult, FlowAssistNamesRequest, FlowAssistNamesResult,
+  FlowAssistEditRequest, FlowAssistEditResult, FlowAssistExplainRequest, FlowAssistExplainResult, FlowAssistNamesRequest, FlowAssistNamesResult, FlowAssistKeysRequest, FlowAssistKeysResult,
 } from '../shared/flowAssist';
 import type {
   MemoryCurateApplyResult,
@@ -29,6 +30,7 @@ import type {
 } from '../shared/translate';
 import type { ReadingPrefs } from '../shared/readingPrefs';
 import type { FlowFolder, FlowFolderDeleteResult, FlowFolderMoveResult, FlowFolderResult } from '../shared/flowFolders';
+import type { FlowFolderRunStartResult, FlowFolderRunState } from '../shared/flowFolderRun';
 import type {
   FlowSortApplyResult,
   FlowSortPick,
@@ -37,7 +39,8 @@ import type {
   FlowSortUndoResult,
 } from '../shared/flowFolderSort';
 import type { YtdlToolsState } from '../shared/ytdl';
-import type { DownloadsKeep } from '../shared/downloads';
+import type { ManagedToolId, ManagedToolState } from '../shared/managedTools';
+import type { BotDownloadCap, DownloadsKeep } from '../shared/downloads';
 import type { McpFlowToolsRequest, McpFlowToolsResult } from '../shared/mcpFlowStep';
 import type { TelegramLargeUploadInput, TelegramLargeUploadResult } from '../shared/telegramUpload';
 import type { ConversationHistoryList, ConversationRestoreResult } from '../shared/conversationHistory';
@@ -46,6 +49,18 @@ import type { ConversationFolder, FolderActionResult, FolderDeleteResult } from 
 import type { SidebarViewPrefs } from '../shared/sidebarView';
 import type { FeedPreviewRequest, FeedPreviewResult } from '../shared/feedPreview';
 import type { PttBoardChoice, PttBoardPreviewRequest, PttBoardPreviewResult } from '../shared/pttBoard';
+import type { KnowledgeBase, KnowledgeFileScope } from '../shared/knowledgeBase';
+import type {
+  KnowledgeAnalysisEvent,
+  KnowledgeFile,
+  KnowledgeFileDetail,
+  KnowledgeFilePreview,
+  KnowledgeImportResult,
+  KnowledgeSaveError,
+  KnowledgeSaveRequest,
+  KnowledgeSearchResult,
+  KnowledgeStatus,
+} from '../shared/knowledgeStatus';
 import type { LinkRecognitionState, LinkRecognitionTarget } from '../shared/linkRecognition';
 import type {
   NotionBrowseResult,
@@ -59,7 +74,7 @@ import type { FlowSaveSource, FlowVersionList, FlowVersionRestoreResult } from '
 import type {
   AccountStatus, AttachmentStashRequest, AuthProvider, BackupCategoryId, BackupCategoryInfo, BackupExportResult,
   BackupImportResult, BackupInspectResult, BotBuiltinCommands, BotByokCommandInfo, BotLlmDirectConfig, ByokConnectionProbe, ByokGroupSaveRequest, ByokInstanceSaveRequest, ByokModelsResult,
-  ByokSettingsSnapshot, ByokTestResult, CaptureSettings, ChatCommandResult, ChatTurnEvent, HotkeyBindResult,
+  ByokKeyTestResult, ByokSettingsSnapshot, ByokTestResult, CaptureSettings, ChatCommandResult, ChatTurnEvent, HotkeyBindResult,
   ShellInfo, ShellOutputEvent, ShellRunReply, ShellRunRequest,
   QuickExportSettings, LinkAnalysisPreferences,
   FeedCandidate, FlowDefinition, FlowExecutionEvent, FlowExecutionLog, FlowExecutionResult, HiddenSources,
@@ -187,6 +202,7 @@ export type ElectronAPI = {
   assistFlowEdit: (request: FlowAssistEditRequest) => Promise<FlowAssistEditResult>;
   assistFlowExplain: (request: FlowAssistExplainRequest) => Promise<FlowAssistExplainResult>;
   assistFlowNames: (request: FlowAssistNamesRequest) => Promise<FlowAssistNamesResult>;
+  assistFlowKeys: (request: FlowAssistKeysRequest) => Promise<FlowAssistKeysResult>;
   cancelFlowAssist: (id: string) => Promise<boolean>;
   runDocAssistant: (request: DocAssistantRequest) => Promise<DocAssistantResult>;
   cancelDocAssistant: (id: string) => Promise<boolean>;
@@ -206,6 +222,10 @@ export type ElectronAPI = {
   setClaudeModel: (patch: Partial<ClaudeModelChoice>) => Promise<ClaudeModelState>;
   refreshClaudeModels: () => Promise<ClaudeModelState>;
   onClaudeModelsChanged: (cb: (state: ClaudeModelState) => void) => () => void;
+  getPerplexityModels: () => Promise<PerplexityModelState>;
+  setPerplexityModel: (patch: Partial<PerplexityModelChoice>) => Promise<PerplexityModelState>;
+  refreshPerplexityModels: () => Promise<PerplexityModelState>;
+  onPerplexityModelsChanged: (cb: (state: PerplexityModelState) => void) => () => void;
   getChatgptModels: () => Promise<ChatgptModelState>;
   setChatgptModel: (patch: Partial<ChatgptModelChoice>) => Promise<ChatgptModelState>;
   refreshChatgptModels: () => Promise<ChatgptModelState>;
@@ -253,8 +273,18 @@ export type ElectronAPI = {
   ytdlToolsSetCustom: (paths: { ytdlp: string; ffmpegDir: string } | null) => Promise<YtdlToolsState>;
   ytdlToolsSetNightly: (on: boolean) => Promise<YtdlToolsState>;
   onYtdlToolsState: (cb: (state: YtdlToolsState) => void) => () => void;
+  managedToolsGet: () => Promise<ManagedToolState[]>;
+  managedToolsInstall: (id: ManagedToolId) => Promise<ManagedToolState[]>;
+  managedToolsCheckUpdate: (id: ManagedToolId) => Promise<ManagedToolState[]>;
+  managedToolsRemove: (id: ManagedToolId) => Promise<ManagedToolState[]>;
+  managedToolsSetCustom: (id: ManagedToolId, file: string | null) => Promise<ManagedToolState[]>;
+  onManagedToolState: (cb: (state: ManagedToolState) => void) => () => void;
   getDownloadsKeep: () => Promise<DownloadsKeep>;
   setDownloadsKeep: (choice: DownloadsKeep) => Promise<DownloadsKeep>;
+  getBotDownloadCap: () => Promise<BotDownloadCap>;
+  setBotDownloadCap: (choice: BotDownloadCap) => Promise<BotDownloadCap>;
+  getBotUserDownloadCaps: () => Promise<Record<string, BotDownloadCap>>;
+  setBotUserDownloadCap: (request: { platform: string; userId: string; cap: BotDownloadCap | null }) => Promise<Record<string, BotDownloadCap>>;
   startConversation: (prompt: string) => Promise<StartedConversation | null>;
   importConversations: (filePaths: string[]) => Promise<ConversationImportResult>;
   startFileDrag: (filePaths: string[]) => void;
@@ -280,6 +310,9 @@ export type ElectronAPI = {
   updateShortcuts: (next: Record<string, ShortcutOverride>) => Promise<Record<string, ShortcutOverride>>;
   getAiUrl: () => Promise<string>;
   updateAiUrl: (url: string) => Promise<boolean>;
+  onAiUrlChanged: (cb: (url: string) => void) => () => void;
+  /** Settings were changed from outside the Settings page (the Yobi connector): read them again. */
+  onSettingsChanged: (cb: () => void) => () => void;
   getHiddenSources: () => Promise<HiddenSources>;
   updateHiddenSources: (next: HiddenSources) => Promise<{ ok: boolean }>;
 
@@ -365,6 +398,7 @@ export type ElectronAPI = {
   clearTelegramLargeUpload: () => Promise<TelegramLargeUploadResult>;
   testTelegramLargeUpload: (input: TelegramLargeUploadInput) => Promise<TelegramLargeUploadResult>;
   updateTelegramAllowGroupCommands: (enabled: boolean) => Promise<boolean>;
+  updateTelegramReplaceLinkMessage: (enabled: boolean) => Promise<boolean>;
   getBotProviderCommands: () => Promise<Record<Provider, BotProviderCommand>>;
   updateBotProviderCommands: (commands: Record<Provider, BotProviderCommand>) => Promise<boolean>;
   getBotBuiltinCommands: () => Promise<BotBuiltinCommands>;
@@ -425,6 +459,7 @@ export type ElectronAPI = {
   deleteByokInstance: (id: string) => Promise<{ ok: boolean; snapshot: ByokSettingsSnapshot }>;
   listByokModels: (req: ByokConnectionProbe) => Promise<ByokModelsResult>;
   testByokInstance: (req: ByokConnectionProbe) => Promise<ByokTestResult>;
+  testByokKeys: (ids?: string[]) => Promise<ByokKeyTestResult[]>;
   saveByokGroup: (req: ByokGroupSaveRequest) => Promise<{ ok: boolean; snapshot: ByokSettingsSnapshot }>;
   deleteByokGroup: (id: string) => Promise<{ ok: boolean; snapshot: ByokSettingsSnapshot }>;
   getMcpServers: () => Promise<McpServerView[]>;
@@ -478,6 +513,8 @@ export type ElectronAPI = {
 
   getTheme: () => Promise<string>;
   updateTheme: (theme: string) => Promise<boolean>;
+  getBackdropMotion: () => Promise<boolean>;
+  updateBackdropMotion: (moves: boolean) => Promise<boolean>;
   getLayoutMode: () => Promise<string>;
   updateLayoutMode: (mode: string) => Promise<boolean>;
   getShowTokenUsage: () => Promise<boolean>;
@@ -490,6 +527,8 @@ export type ElectronAPI = {
   getMarkdownZoom: () => Promise<number>;
   updateMarkdownZoom: (zoom: number) => Promise<boolean>;
   onReadingZoomCommand: (cb: (command: ReadingZoomCommand) => void) => () => void;
+  getSystemTextScale: () => Promise<number>;
+  onSystemTextScaleChanged: (cb: (percent: number) => void) => () => void;
   getReadingPrefs: () => Promise<ReadingPrefs>;
   updateReadingPrefs: (patch: Partial<ReadingPrefs>) => Promise<ReadingPrefs>;
   getSidebarView: () => Promise<SidebarViewPrefs>;
@@ -518,6 +557,11 @@ export type ElectronAPI = {
   /** `folder`: '' for the top level; `before`: the flow they were dropped on. */
   moveFlowsToFolder: (flowIds: string[], folder: string, before?: string) => Promise<FlowFolderMoveResult>;
   onFlowFoldersChanged: (cb: (folders: FlowFolder[]) => void) => () => void;
+  /** 「全部執行」: the folder's flows one after another, in main. */
+  runFlowFolder: (folder: string) => Promise<FlowFolderRunStartResult>;
+  stopFlowFolderRun: (folder: string) => Promise<boolean>;
+  listFlowFolderRuns: () => Promise<FlowFolderRunState[]>;
+  onFlowFolderRunsChanged: (cb: (states: FlowFolderRunState[]) => void) => () => void;
   getFlowSortModel: () => Promise<string>;
   proposeFlowSort: (request: FlowSortProposeRequest) => Promise<FlowSortProposeResult>;
   cancelFlowSort: () => Promise<boolean>;
@@ -526,8 +570,8 @@ export type ElectronAPI = {
   executeFlow: (flowId: string) => Promise<FlowExecutionResult>;
   runChatCommand: (flowId: string, command: string, input: string, conversationPath?: string, progressId?: string, modelUrl?: string) => Promise<ChatCommandResult>;
   onChatCommandProgress: (cb: (payload: { progressId: string; progress: StepProgress }) => void) => () => void;
-  runAgentCommand: (goal: string, targetUrl: string, runId: string, conversationPath?: string, attachments?: string[], mcpServerIds?: string[], web?: boolean) => Promise<AgentCommandResult>;
-  setConversationConnectors: (filePath: string, serverIds: string[], web?: boolean, agent?: boolean) => Promise<boolean>;
+  runAgentCommand: (goal: string, targetUrl: string, runId: string, conversationPath?: string, attachments?: string[], mcpServerIds?: string[], web?: boolean, knowledgeOnly?: boolean, knowledgeFiles?: KnowledgeFileScope) => Promise<AgentCommandResult>;
+  setConversationConnectors: (filePath: string, serverIds: string[], web?: boolean, agent?: boolean, knowledgeOnly?: boolean, knowledgeFiles?: KnowledgeFileScope) => Promise<boolean>;
   resumeAgentRun: (runId: string, answer?: string, providerUrl?: string) => Promise<AgentCommandResult>;
   cancelAgentRun: (runId: string) => Promise<boolean>;
   listResumableAgentRuns: () => Promise<AgentRunSummary[]>;
@@ -574,6 +618,28 @@ export type ElectronAPI = {
   pttFindBoards: (query: string) => Promise<PttBoardChoice[]>;
   pttPreviewBoard: (request: PttBoardPreviewRequest) => Promise<PttBoardPreviewResult>;
   pttCancelPreview: (slot: string) => Promise<boolean>;
+  kbList: () => Promise<{ bases: KnowledgeBase[]; statuses: KnowledgeStatus[] }>;
+  kbPickFolder: () => Promise<string | null>;
+  kbSave: (request: KnowledgeSaveRequest) => Promise<{ bases: KnowledgeBase[] } | { error: KnowledgeSaveError }>;
+  kbRemove: (id: string) => Promise<KnowledgeBase[]>;
+  kbSync: (id: string) => Promise<boolean>;
+  kbOpenCitation: (url: string) => Promise<boolean>;
+  kbOpenFolder: (id: string) => Promise<boolean>;
+  kbFiles: (id: string) => Promise<{ files: KnowledgeFile[]; analysis: KnowledgeAnalysisEvent[] }>;
+  kbFileDetail: (id: string, rel: string) => Promise<KnowledgeFileDetail | null>;
+  kbFilePreview: (id: string, rel: string) => Promise<KnowledgeFilePreview | null>;
+  kbSearch: (id: string, query: string) => Promise<KnowledgeSearchResult | null>;
+  kbPickFiles: () => Promise<string[]>;
+  kbImport: (id: string, paths: string[]) => Promise<KnowledgeImportResult | null>;
+  kbDeleteFiles: (id: string, rels: string[]) => Promise<number>;
+  kbOpenFile: (id: string, rel: string) => Promise<boolean>;
+  kbRevealFile: (id: string, rel: string) => Promise<boolean>;
+  kbAnalyze: (id: string, rels: string[], model: string) => Promise<boolean>;
+  kbAnalyzeCancel: (id: string, rels: string[]) => Promise<void>;
+  kbAiClear: (id: string, rels: string[]) => Promise<number>;
+  onKbAnalysis: (cb: (event: KnowledgeAnalysisEvent) => void) => () => void;
+  onKbStatus: (cb: (status: KnowledgeStatus) => void) => () => void;
+  onKbChanged: (cb: (bases: KnowledgeBase[]) => void) => () => void;
 };
 
 const api: ElectronAPI = {
@@ -734,6 +800,7 @@ const api: ElectronAPI = {
   assistFlowEdit: (request) => ipcRenderer.invoke(IPC.FLOW_ASSIST_EDIT, request),
   assistFlowExplain: (request) => ipcRenderer.invoke(IPC.FLOW_ASSIST_EXPLAIN, request),
   assistFlowNames: (request) => ipcRenderer.invoke(IPC.FLOW_ASSIST_NAMES, request),
+  assistFlowKeys: (request) => ipcRenderer.invoke(IPC.FLOW_ASSIST_KEYS, request),
   cancelFlowAssist: (id) => ipcRenderer.invoke(IPC.FLOW_ASSIST_CANCEL, id),
   onWritingToolsProgress: (cb) => {
     const handler = (_event: Electron.IpcRendererEvent, progress: WritingToolsProgress) => cb(progress);
@@ -777,6 +844,14 @@ const api: ElectronAPI = {
     const handler = (_: Electron.IpcRendererEvent, state: ClaudeModelState) => cb(state);
     ipcRenderer.on(IPC.CLAUDE_MODEL_CHANGED, handler);
     return () => ipcRenderer.removeListener(IPC.CLAUDE_MODEL_CHANGED, handler);
+  },
+  getPerplexityModels: () => ipcRenderer.invoke(IPC.PERPLEXITY_MODEL_GET),
+  setPerplexityModel: (patch) => ipcRenderer.invoke(IPC.PERPLEXITY_MODEL_SET, patch),
+  refreshPerplexityModels: () => ipcRenderer.invoke(IPC.PERPLEXITY_MODEL_REFRESH),
+  onPerplexityModelsChanged: (cb) => {
+    const handler = (_: Electron.IpcRendererEvent, state: PerplexityModelState) => cb(state);
+    ipcRenderer.on(IPC.PERPLEXITY_MODEL_CHANGED, handler);
+    return () => ipcRenderer.removeListener(IPC.PERPLEXITY_MODEL_CHANGED, handler);
   },
   getChatgptModels: () => ipcRenderer.invoke(IPC.CHATGPT_MODEL_GET),
   setChatgptModel: (patch) => ipcRenderer.invoke(IPC.CHATGPT_MODEL_SET, patch),
@@ -846,8 +921,22 @@ const api: ElectronAPI = {
     ipcRenderer.on(IPC.YTDL_TOOLS_STATE, handler);
     return () => ipcRenderer.removeListener(IPC.YTDL_TOOLS_STATE, handler);
   },
+  managedToolsGet: () => ipcRenderer.invoke(IPC.MANAGED_TOOLS_GET),
+  managedToolsInstall: (id) => ipcRenderer.invoke(IPC.MANAGED_TOOLS_INSTALL, id),
+  managedToolsCheckUpdate: (id) => ipcRenderer.invoke(IPC.MANAGED_TOOLS_CHECK_UPDATE, id),
+  managedToolsRemove: (id) => ipcRenderer.invoke(IPC.MANAGED_TOOLS_REMOVE, id),
+  managedToolsSetCustom: (id, file) => ipcRenderer.invoke(IPC.MANAGED_TOOLS_SET_CUSTOM, id, file),
+  onManagedToolState: (cb) => {
+    const handler = (_: Electron.IpcRendererEvent, state: ManagedToolState) => cb(state);
+    ipcRenderer.on(IPC.MANAGED_TOOLS_STATE, handler);
+    return () => ipcRenderer.removeListener(IPC.MANAGED_TOOLS_STATE, handler);
+  },
   getDownloadsKeep: () => ipcRenderer.invoke(IPC.DOWNLOADS_KEEP_GET),
   setDownloadsKeep: (choice) => ipcRenderer.invoke(IPC.DOWNLOADS_KEEP_SET, choice),
+  getBotDownloadCap: () => ipcRenderer.invoke(IPC.BOT_DOWNLOAD_CAP_GET),
+  setBotDownloadCap: (choice) => ipcRenderer.invoke(IPC.BOT_DOWNLOAD_CAP_SET, choice),
+  getBotUserDownloadCaps: () => ipcRenderer.invoke(IPC.BOT_USER_DOWNLOAD_CAPS_GET),
+  setBotUserDownloadCap: (request) => ipcRenderer.invoke(IPC.BOT_USER_DOWNLOAD_CAP_SET, request),
   startConversation: (prompt) => ipcRenderer.invoke(IPC.START_CONVERSATION, prompt),
   importConversations: (filePaths) => ipcRenderer.invoke(IPC.IMPORT_CONVERSATIONS, filePaths),
   startFileDrag: (filePaths) => ipcRenderer.send(IPC.START_FILE_DRAG, filePaths),
@@ -882,6 +971,16 @@ const api: ElectronAPI = {
   updateShortcuts: (next) => ipcRenderer.invoke(IPC.UPDATE_SHORTCUTS, next),
   getAiUrl: () => ipcRenderer.invoke(IPC.GET_AI_URL),
   updateAiUrl: (url) => ipcRenderer.invoke(IPC.UPDATE_AI_URL, url),
+  onAiUrlChanged: (cb) => {
+    const handler = (_: Electron.IpcRendererEvent, url: string) => cb(url);
+    ipcRenderer.on(IPC.AI_URL_CHANGED, handler);
+    return () => ipcRenderer.removeListener(IPC.AI_URL_CHANGED, handler);
+  },
+  onSettingsChanged: (cb) => {
+    const handler = () => cb();
+    ipcRenderer.on(IPC.SETTINGS_CHANGED, handler);
+    return () => ipcRenderer.removeListener(IPC.SETTINGS_CHANGED, handler);
+  },
   getHiddenSources: () => ipcRenderer.invoke(IPC.GET_HIDDEN_SOURCES),
   updateHiddenSources: (next) => ipcRenderer.invoke(IPC.UPDATE_HIDDEN_SOURCES, next),
 
@@ -986,6 +1085,7 @@ const api: ElectronAPI = {
   clearTelegramLargeUpload: () => ipcRenderer.invoke(IPC.CLEAR_TELEGRAM_LARGE_UPLOAD),
   testTelegramLargeUpload: (input) => ipcRenderer.invoke(IPC.TEST_TELEGRAM_LARGE_UPLOAD, input),
   updateTelegramAllowGroupCommands: (enabled) => ipcRenderer.invoke(IPC.UPDATE_TELEGRAM_ALLOW_GROUP_COMMANDS, enabled),
+  updateTelegramReplaceLinkMessage: (enabled) => ipcRenderer.invoke(IPC.UPDATE_TELEGRAM_REPLACE_LINK_MESSAGE, enabled),
   getBotProviderCommands: () => ipcRenderer.invoke(IPC.GET_BOT_PROVIDER_COMMANDS),
   updateBotProviderCommands: (commands) => ipcRenderer.invoke(IPC.UPDATE_BOT_PROVIDER_COMMANDS, commands),
   getBotBuiltinCommands: () => ipcRenderer.invoke(IPC.GET_BOT_BUILTIN_COMMANDS),
@@ -1046,6 +1146,7 @@ const api: ElectronAPI = {
   deleteByokInstance: (id) => ipcRenderer.invoke(IPC.BYOK_DELETE_INSTANCE, id),
   listByokModels: (req) => ipcRenderer.invoke(IPC.BYOK_LIST_MODELS, req),
   testByokInstance: (req) => ipcRenderer.invoke(IPC.BYOK_TEST_INSTANCE, req),
+  testByokKeys: (ids) => ipcRenderer.invoke(IPC.BYOK_TEST_KEYS, ids),
   saveByokGroup: (req) => ipcRenderer.invoke(IPC.BYOK_SAVE_GROUP, req),
   deleteByokGroup: (id) => ipcRenderer.invoke(IPC.BYOK_DELETE_GROUP, id),
   getMcpServers: () => ipcRenderer.invoke(IPC.MCP_LIST_SERVERS),
@@ -1155,6 +1256,8 @@ const api: ElectronAPI = {
 
   getTheme: () => ipcRenderer.invoke(IPC.GET_THEME),
   updateTheme: (theme) => ipcRenderer.invoke(IPC.UPDATE_THEME, theme),
+  getBackdropMotion: () => ipcRenderer.invoke(IPC.GET_BACKDROP_MOTION),
+  updateBackdropMotion: (moves) => ipcRenderer.invoke(IPC.UPDATE_BACKDROP_MOTION, moves),
 
   getLayoutMode: () => ipcRenderer.invoke(IPC.GET_LAYOUT_MODE),
   updateLayoutMode: (mode) => ipcRenderer.invoke(IPC.UPDATE_LAYOUT_MODE, mode),
@@ -1175,6 +1278,12 @@ const api: ElectronAPI = {
     const handler = (_: Electron.IpcRendererEvent, command: ReadingZoomCommand) => cb(command);
     ipcRenderer.on(IPC.READING_ZOOM_COMMAND, handler);
     return () => ipcRenderer.removeListener(IPC.READING_ZOOM_COMMAND, handler);
+  },
+  getSystemTextScale: () => ipcRenderer.invoke(IPC.GET_SYSTEM_TEXT_SCALE),
+  onSystemTextScaleChanged: (cb) => {
+    const handler = (_: Electron.IpcRendererEvent, percent: number) => cb(percent);
+    ipcRenderer.on(IPC.SYSTEM_TEXT_SCALE_CHANGED, handler);
+    return () => ipcRenderer.removeListener(IPC.SYSTEM_TEXT_SCALE_CHANGED, handler);
   },
   getReadingPrefs: () => ipcRenderer.invoke(IPC.GET_READING_PREFS),
   updateReadingPrefs: (patch) => ipcRenderer.invoke(IPC.UPDATE_READING_PREFS, patch),
@@ -1207,6 +1316,14 @@ const api: ElectronAPI = {
     ipcRenderer.on(IPC.FLOW_FOLDERS_CHANGED, handler);
     return () => ipcRenderer.removeListener(IPC.FLOW_FOLDERS_CHANGED, handler);
   },
+  runFlowFolder: (folder) => ipcRenderer.invoke(IPC.FLOW_FOLDER_RUN, folder),
+  stopFlowFolderRun: (folder) => ipcRenderer.invoke(IPC.FLOW_FOLDER_RUN_STOP, folder),
+  listFlowFolderRuns: () => ipcRenderer.invoke(IPC.FLOW_FOLDER_RUN_LIST),
+  onFlowFolderRunsChanged: (cb) => {
+    const handler = (_: Electron.IpcRendererEvent, states: FlowFolderRunState[]) => cb(states);
+    ipcRenderer.on(IPC.FLOW_FOLDER_RUN_CHANGED, handler);
+    return () => ipcRenderer.removeListener(IPC.FLOW_FOLDER_RUN_CHANGED, handler);
+  },
   getFlowSortModel: () => ipcRenderer.invoke(IPC.FLOW_FOLDER_SORT_GET_MODEL),
   proposeFlowSort: (request) => ipcRenderer.invoke(IPC.FLOW_FOLDER_SORT_PROPOSE, request),
   cancelFlowSort: () => ipcRenderer.invoke(IPC.FLOW_FOLDER_SORT_CANCEL),
@@ -1220,10 +1337,10 @@ const api: ElectronAPI = {
     ipcRenderer.on(IPC.FLOW_CHAT_COMMAND_PROGRESS, handler);
     return () => ipcRenderer.removeListener(IPC.FLOW_CHAT_COMMAND_PROGRESS, handler);
   },
-  runAgentCommand: (goal, targetUrl, runId, conversationPath, attachments, mcpServerIds, web) =>
-    ipcRenderer.invoke(IPC.AGENT_RUN, goal, targetUrl, runId, conversationPath, attachments, mcpServerIds, web),
-  setConversationConnectors: (filePath, serverIds, web, agent) =>
-    ipcRenderer.invoke(IPC.AGENT_SET_CONNECTORS, filePath, serverIds, web, agent),
+  runAgentCommand: (goal, targetUrl, runId, conversationPath, attachments, mcpServerIds, web, knowledgeOnly, knowledgeFiles) =>
+    ipcRenderer.invoke(IPC.AGENT_RUN, goal, targetUrl, runId, conversationPath, attachments, mcpServerIds, web, knowledgeOnly, knowledgeFiles),
+  setConversationConnectors: (filePath, serverIds, web, agent, knowledgeOnly, knowledgeFiles) =>
+    ipcRenderer.invoke(IPC.AGENT_SET_CONNECTORS, filePath, serverIds, web, agent, knowledgeOnly, knowledgeFiles),
   resumeAgentRun: (runId, answer, providerUrl) => ipcRenderer.invoke(IPC.AGENT_RESUME, runId, answer, providerUrl),
   cancelAgentRun: (runId) => ipcRenderer.invoke(IPC.AGENT_CANCEL, runId),
   listResumableAgentRuns: () => ipcRenderer.invoke(IPC.AGENT_LIST_RESUMABLE),
@@ -1300,6 +1417,40 @@ const api: ElectronAPI = {
   pttFindBoards: (query) => ipcRenderer.invoke(IPC.PTT_FIND_BOARDS, query),
   pttPreviewBoard: (request) => ipcRenderer.invoke(IPC.PTT_PREVIEW_BOARD, request),
   pttCancelPreview: (slot) => ipcRenderer.invoke(IPC.PTT_CANCEL_PREVIEW, slot),
+  kbList: () => ipcRenderer.invoke(IPC.KB_LIST),
+  kbPickFolder: () => ipcRenderer.invoke(IPC.KB_PICK_FOLDER),
+  kbSave: (request) => ipcRenderer.invoke(IPC.KB_SAVE, request),
+  kbRemove: (id) => ipcRenderer.invoke(IPC.KB_REMOVE, id),
+  kbSync: (id) => ipcRenderer.invoke(IPC.KB_SYNC, id),
+  kbOpenCitation: (url) => ipcRenderer.invoke(IPC.KB_OPEN_CITATION, url),
+  kbOpenFolder: (id) => ipcRenderer.invoke(IPC.KB_OPEN_FOLDER, id),
+  kbFiles: (id) => ipcRenderer.invoke(IPC.KB_FILES, id),
+  kbFileDetail: (id, rel) => ipcRenderer.invoke(IPC.KB_FILE_DETAIL, id, rel),
+  kbFilePreview: (id, rel) => ipcRenderer.invoke(IPC.KB_FILE_PREVIEW, id, rel),
+  kbSearch: (id, query) => ipcRenderer.invoke(IPC.KB_SEARCH, id, query),
+  kbPickFiles: () => ipcRenderer.invoke(IPC.KB_PICK_FILES),
+  kbImport: (id, paths) => ipcRenderer.invoke(IPC.KB_IMPORT, id, paths),
+  kbDeleteFiles: (id, rels) => ipcRenderer.invoke(IPC.KB_DELETE_FILES, id, rels),
+  kbOpenFile: (id, rel) => ipcRenderer.invoke(IPC.KB_OPEN_FILE, id, rel),
+  kbRevealFile: (id, rel) => ipcRenderer.invoke(IPC.KB_REVEAL_FILE, id, rel),
+  kbAnalyze: (id, rels, model) => ipcRenderer.invoke(IPC.KB_ANALYZE, id, rels, model),
+  kbAnalyzeCancel: (id, rels) => ipcRenderer.invoke(IPC.KB_ANALYZE_CANCEL, id, rels),
+  kbAiClear: (id, rels) => ipcRenderer.invoke(IPC.KB_AI_CLEAR, id, rels),
+  onKbAnalysis: (cb) => {
+    const handler = (_: Electron.IpcRendererEvent, event: KnowledgeAnalysisEvent) => cb(event);
+    ipcRenderer.on(IPC.KB_ANALYSIS, handler);
+    return () => ipcRenderer.removeListener(IPC.KB_ANALYSIS, handler);
+  },
+  onKbStatus: (cb) => {
+    const handler = (_: Electron.IpcRendererEvent, status: KnowledgeStatus) => cb(status);
+    ipcRenderer.on(IPC.KB_STATUS, handler);
+    return () => ipcRenderer.removeListener(IPC.KB_STATUS, handler);
+  },
+  onKbChanged: (cb) => {
+    const handler = (_: Electron.IpcRendererEvent, bases: KnowledgeBase[]) => cb(bases);
+    ipcRenderer.on(IPC.KB_CHANGED, handler);
+    return () => ipcRenderer.removeListener(IPC.KB_CHANGED, handler);
+  },
 };
 
 contextBridge.exposeInMainWorld('electronAPI', api);

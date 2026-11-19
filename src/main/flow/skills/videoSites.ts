@@ -17,12 +17,15 @@ import type { YtdlDestination, YtdlPick } from '../../../shared/ytdl';
 import { siteLabel } from '../../../shared/linkSites/rows';
 import type { VideoRef, VideoSiteId } from '../../../shared/linkSites/types';
 import { FlowUserError } from '../userError';
+import { offerSiteVerification, requestSiteVerification } from '../../siteVerification';
+import { YOUTUBE_CLEARANCE_COOKIES, YOUTUBE_CLEARANCE_PARTITION, isGoogleSorryRedirect, landedPastGoogleCheck } from '../../youtubeClearance';
+import { youtubeWatchUrl } from '../../../shared/youtubeUrl';
 import { bilibiliVideo } from './bilibiliVideo';
 import { m3u8Video } from './m3u8Video';
 import { soundcloudTrack } from './soundcloudTrack';
 import { cuesFromJson3 } from './srt';
 import { vimeoVideo } from './vimeoVideo';
-import type { SelfDownloadVideoSite, TimedSubtitles, VideoInfo, VideoSite, YtdlpVideoSite } from './videoSiteTypes';
+import type { SelfDownloadVideoSite, TimedSubtitles, VideoInfo, VideoReadAccess, VideoSite, YtdlpVideoSite } from './videoSiteTypes';
 
 export type { VideoInfo, VideoSite } from './videoSiteTypes';
 
@@ -36,16 +39,39 @@ export function isYoutubeTurnedAway(message: string): boolean {
   return /^YouTube (?:redirected to (?:www\.)?google\.|answered HTTP 429$)/.test(message);
 }
 
-async function readYoutubeInfo(videoId: string, signal?: AbortSignal): Promise<YoutubeVideoInfo> {
+/** A failed watch-page read in the person's words; a Stop as it was. */
+function watchPageFailure(err: unknown, signal: AbortSignal | undefined): unknown {
+  if (signal?.aborted) return err;
+  const reason = err instanceof Error ? err.message : String(err);
+  if (isYoutubeTurnedAway(reason)) return videoPageHeldBack('youtube', reason);
+  return new FlowUserError('flow.error.ytdlInfoUnreadable', { site: siteLabel('youtube') }, `Could not read the YouTube video: ${reason}`);
+}
+
+/**
+ * Google turned this address away to its "unusual traffic" check: a person answers it once in the
+ * shared verification window (`siteVerification.ts`), and its pass rides on every YouTube read and
+ * yt-dlp call from then on (`youtubeClearance.ts`). Shown at once when the person started the read
+ * at the computer; otherwise offered in a desktop notification, and this read fails saying so.
+ */
+async function passGoogleCheck(videoId: string, interactive: boolean, signal: AbortSignal | undefined): Promise<void> {
+  const request = { site: 'youtube', partition: YOUTUBE_CLEARANCE_PARTITION, url: youtubeWatchUrl(videoId), isCleared: landedPastGoogleCheck };
+  if (!interactive) throw offerSiteVerification(request);
+  await requestSiteVerification({ ...request, signal });
+}
+
+async function readYoutubeInfo(videoId: string, signal: AbortSignal | undefined, interactive: boolean): Promise<YoutubeVideoInfo> {
   const site = siteLabel('youtube');
   let info: YoutubeVideoInfo;
   try {
     info = await fetchYoutubeVideoInfo(videoId, signal);
   } catch (err) {
-    if (signal?.aborted) throw err;
-    const reason = err instanceof Error ? err.message : String(err);
-    if (isYoutubeTurnedAway(reason)) throw videoPageHeldBack('youtube', reason);
-    throw new FlowUserError('flow.error.ytdlInfoUnreadable', { site }, `Could not read the YouTube video: ${reason}`);
+    if (signal?.aborted || !isGoogleSorryRedirect(err instanceof Error ? err.message : String(err))) throw watchPageFailure(err, signal);
+    await passGoogleCheck(videoId, interactive, signal);
+    try {
+      info = await fetchYoutubeVideoInfo(videoId, signal);
+    } catch (again) {
+      throw watchPageFailure(again, signal);
+    }
   }
   if (info.playability === 'live') {
     throw new FlowUserError('flow.error.ytdlLive', {}, 'The YouTube video is a live stream');
@@ -91,8 +117,8 @@ async function botCheckedInfo(ref: VideoRef, signal?: AbortSignal): Promise<Vide
 }
 
 /** YouTube's player response, read without the download tools (`ytInitialPlayerResponse`). */
-async function youtubeInfo(ref: VideoRef, signal?: AbortSignal): Promise<VideoInfo> {
-  const info = await readYoutubeInfo(ref.id, signal);
+async function youtubeInfo(ref: VideoRef, signal?: AbortSignal, access?: VideoReadAccess): Promise<VideoInfo> {
+  const info = await readYoutubeInfo(ref.id, signal, access?.interactive === true);
   if (info.playability === 'botCheck') return botCheckedInfo(ref, signal);
   const track = pickCaptionTrack(info.captionTracks, info.defaultCaptionTrack);
   return {
@@ -138,6 +164,8 @@ export const VIDEO_SITES: Record<VideoSiteId, VideoSite> = {
     info: youtubeInfo,
     // The canonical watch URL is checked again there: nothing else reaches yt-dlp.
     downloadArgs: (ref, quality, destination, lowAudio) => youtubeSiteArgs(ref.url, quality, destination, lowAudio),
+    // Google's pass alone, when a person answered its check; nothing at all otherwise.
+    cookies: YOUTUBE_CLEARANCE_COOKIES,
     transcript: youtubeTranscript,
     chatCover: (info) => youtubeCoverForChat(info.ref.id, info.cover),
   },

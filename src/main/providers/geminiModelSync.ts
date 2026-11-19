@@ -47,6 +47,7 @@ export function setGeminiModelChoice(patch: Partial<GeminiModelChoice>): GeminiM
 async function runPicker(wc: WebContents, target: GeminiPickerTarget | null): Promise<GeminiPickerResult> {
   return namedGeminiPickerResult(
     await executeWithTimeout<GeminiPickerResult>(wc, buildGeminiModelPickerScript(target), PICKER_TIMEOUT_MS),
+    config.geminiModelCatalog,
   );
 }
 
@@ -106,11 +107,11 @@ export async function syncGeminiModel(wc: WebContents): Promise<void> {
       // The menu opened and listed nothing: a page change, not an account without models.
       sendLog('⚠️ Gemini\'s model menu listed no models — Gemini may have changed it; keeping the cached list');
     }
-    const decision = resolveGeminiTarget(config.geminiModel, config.geminiModelCatalog, read.snapshot);
-    if (decision.remappedFrom) {
-      const gone = config.geminiModelCatalog?.models.find((m) => m.id === decision.remappedFrom)?.label ?? decision.remappedFrom;
-      const now = read.snapshot.models.find((m) => m.id === decision.choice.modelId)?.label ?? decision.choice.modelId;
-      sendLog(`🧠 Gemini no longer offers ${gone} — switching to ${now}, the model in the same place`);
+    const decision = resolveGeminiTarget(config.geminiModel, read.snapshot);
+    if (decision.unavailable) {
+      const gone = config.geminiModelCatalog?.models.find((m) => m.id === decision.unavailable)?.label ?? decision.unavailable;
+      const now = read.snapshot.models.find((m) => m.id === decision.choice.modelId)?.label ?? 'its own choice';
+      sendLog(`🧠 Gemini no longer offers ${gone} — leaving the page on ${now}`);
     }
 
     let snapshot = read.snapshot;

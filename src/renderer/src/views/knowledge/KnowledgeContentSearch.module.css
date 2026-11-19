@@ -1,0 +1,14 @@
+.row {
+  border-radius: 6px;
+}
+
+.row:hover,
+.row:focus-visible {
+  background: var(--bg-hover);
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.row[data-open] {
+  background: var(--accent-dim);
+}

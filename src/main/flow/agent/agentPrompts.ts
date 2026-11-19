@@ -1,4 +1,4 @@
-import { isByokTargetUrl, type AgentChatLine, type AgentLinkedPage, type AgentReplyContext } from '../../../shared/types';
+import { isByokTargetUrl, providerFromUrl, type AgentChatLine, type AgentLinkedPage, type AgentReplyContext } from '../../../shared/types';
 import { formatPromptDateWithWeekday } from '../../../shared/promptDate';
 import { fenceUntrusted, sealClosingTag } from '../../../shared/promptFencing';
 import { measureFor, promptCapFor, truncateByMeasure } from '../../chat/conversationContext';
@@ -103,15 +103,41 @@ export interface AgentPlan {
   done: number[];
 }
 
-const MAX_PLAN_STEPS = 4;
+/**
+ * The plan's item cap on a browser provider: a longer plan is re-rendered into every prompt and
+ * would push a repair prompt past the tightest provider cap. BYOK has no cap, so it gets twice the
+ * room.
+ */
+export const MAX_PLAN_STEPS = 4;
+export const MAX_PLAN_STEPS_BYOK = 8;
 
 /**
  * Hard ceiling on a self-assessed step budget, and the number the prompt quotes. A ceiling, not a
  * target: the engine still stops on the wall clock, the token budget or a finish. It is a separate
  * declared field because a longer plan would push repair prompts past the tightest provider cap.
+ * BYOK's is higher: its runs stop on tokens.
  */
 export const MAX_SELF_ASSESSED_STEPS = 40;
+export const MAX_SELF_ASSESSED_STEPS_BYOK = 60;
 const MAX_PLAN_STEP_CHARS = 100;
+
+/**
+ * How many `delegate` calls one BYOK `call_tools` may carry when it holds nothing else.
+ * Defined here, beside the other tier sizes, so the
+ * prompt can quote it without importing `agentBatch` (which imports this module); `agentBatch`
+ * re-exports it. A mixed batch, and every batch on a browser provider, stays at `MAX_BATCH_CALLS`.
+ */
+export const MAX_DELEGATE_BATCH_BYOK = 5;
+
+/** The plan's item cap for a run's tier (`leanPromptFor`). */
+export function planStepCap(lean: boolean): number {
+  return lean ? MAX_PLAN_STEPS_BYOK : MAX_PLAN_STEPS;
+}
+
+/** The ceiling `steps_needed` may raise a run's step limit to, for its tier. */
+export function selfAssessedStepCap(lean: boolean): number {
+  return lean ? MAX_SELF_ASSESSED_STEPS_BYOK : MAX_SELF_ASSESSED_STEPS;
+}
 
 export function emptyPlan(): AgentPlan {
   return { steps: [], done: [] };
@@ -121,17 +147,24 @@ export function emptyPlan(): AgentPlan {
  * The model's own estimate of how many steps the GOAL needs, read from the same object as the
  * plan. Anything unparseable is simply absent — a bookkeeping field must never be the reason a
  * legal action is rejected, which is the rule the plan fields already follow.
+ *
+ * The validators read without knowing the run's tier, so they clamp at the widest cap; the engine
+ * applies its tier's own (`selfAssessedStepCap`).
  */
-export function readStepBudget(json: unknown): { stepsNeeded?: number } {
+export function readStepBudget(json: unknown, cap: number = MAX_SELF_ASSESSED_STEPS_BYOK): { stepsNeeded?: number } {
   if (typeof json !== 'object' || json === null) return {};
   const raw = (json as Record<string, unknown>).steps_needed
     ?? (json as Record<string, unknown>).stepsNeeded;
   const value = typeof raw === 'number' ? raw : Number.parseInt(String(raw ?? ''), 10);
   if (!Number.isInteger(value) || value < 1) return {};
-  return { stepsNeeded: Math.min(value, MAX_SELF_ASSESSED_STEPS) };
+  return { stepsNeeded: Math.min(value, cap) };
 }
 
-export function readPlanFields(json: unknown): { plan?: string[]; planDone?: number[] } {
+/**
+ * Like `readStepBudget`, read tier-blind at the widest cap; `applyPlanUpdate` keeps the run's
+ * tier's own (`planStepCap`).
+ */
+export function readPlanFields(json: unknown, cap: number = MAX_PLAN_STEPS_BYOK): { plan?: string[]; planDone?: number[] } {
   if (typeof json !== 'object' || json === null) return {};
   const obj = json as Record<string, unknown>;
 
@@ -139,7 +172,7 @@ export function readPlanFields(json: unknown): { plan?: string[]; planDone?: num
     ? obj.plan
         .filter((step): step is string => typeof step === 'string' && step.trim().length > 0)
         .map((step) => step.trim().slice(0, MAX_PLAN_STEP_CHARS))
-        .slice(0, MAX_PLAN_STEPS)
+        .slice(0, cap)
     : [];
 
   const doneSource = Array.isArray(obj.plan_done) ? obj.plan_done
@@ -165,14 +198,14 @@ function planStepKey(step: string): string {
 /**
  * Append-only: an existing item keeps its index, so every `plan_done` index still points at the work it
  * checked off, and the plan cannot shrink to make a multi-part goal look finished after one part. A later
- * plan only adds work an observation revealed; `MAX_PLAN_STEPS` bounds the whole run because the plan
- * is re-rendered into every prompt.
+ * plan only adds work an observation revealed; `cap` (the tier's `planStepCap`) bounds the whole run
+ * because the plan is re-rendered into every prompt.
  */
-export function applyPlanUpdate(plan: AgentPlan, steps?: string[], done?: number[]): void {
+export function applyPlanUpdate(plan: AgentPlan, steps?: string[], done?: number[], cap: number = MAX_PLAN_STEPS): void {
   if (steps) {
     const seen = new Set(plan.steps.map(planStepKey));
     for (const step of steps) {
-      if (plan.steps.length >= MAX_PLAN_STEPS) break;
+      if (plan.steps.length >= cap) break;
       const key = planStepKey(step);
       if (!key || seen.has(key)) continue;
       seen.add(key);
@@ -199,10 +232,19 @@ export function renderPlan(plan: AgentPlan): string[] {
 }
 
 /**
- * Must cover the widest instruction block the builder emits: every char past it is one
- * `preparePromptForProvider` takes off the TAIL, which is the action instruction.
+ * Whether a run is shown the lean (BYOK) tier. Only an uncapped API endpoint gets it: the lean
+ * tier is not measured against `INSTRUCTION_EST`, so a capped provider must never be sent it.
  */
-export const INSTRUCTION_EST = 7_814;
+export function leanPromptFor(providerUrl: string): boolean {
+  return isByokTargetUrl(providerUrl);
+}
+
+/**
+ * Must cover the widest instruction block the builder emits on a capped (browser) provider: every
+ * char past it is one `preparePromptForProvider` takes off the TAIL, which is the action
+ * instruction. The lean tier is not counted (`leanPromptFor`): BYOK has no cap to overflow.
+ */
+export const INSTRUCTION_EST = 7_841;
 
 /**
  * What the change rules add on top, charged only by a run that can change something. Folding it into
@@ -392,6 +434,40 @@ function renderEnvironment(answerLanguage: string | undefined): string[] {
 }
 
 /**
+ * Only the coaching (browser) tier, on the output contract's first line: a chat site's own file
+ * features — Gemini's document export, ChatGPT's code runner and download link — make a file the
+ * user never receives (a run "makes" a .docx there and answers in prose). A BYOK endpoint has no such features.
+ * Kept to a clause because the signed-out Gemini prompt has no room for a rule; the why and the
+ * way back to the tools ride on the rejection (`siteMadeFileError`), where a model that did it reads it.
+ */
+export const SITE_FILES_UNSEEN = ', no file made by this site';
+
+/**
+ * ChatGPT only, its own section just before the action instruction: asked for "a .docx",
+ * ChatGPT reaches for its code runner every time — on turn 1 it builds the file on the site, and when
+ * the site's Python quota runs out it reports the file impossible, with the office connector listed
+ * in full in the same prompt. Gemini follows the rejection and Claude never did it, so they are not
+ * charged for it. The engine charges it with the run's fixed blocks (`evidenceReserve`), so the
+ * shared `INSTRUCTION_EST` and signed-out Gemini are untouched. `officeHandle` names the connector's
+ * tool only when this run really has it; otherwise the rule points at the tool lists.
+ */
+export function siteFileRules(providerUrl: string, officeHandle?: string): string[] {
+  if (isByokTargetUrl(providerUrl) || providerFromUrl(providerUrl) !== 'chatgpt') return [];
+  const office = officeHandle
+    ? ` — a Word, Excel or PowerPoint file with "call_mcp", "server": "${officeHandle}", "name": "officecli"`
+    : '';
+  return [
+    'THIS SITE\'S OWN TOOLS ARE NOT YOURS HERE:',
+    '- Never use this site\'s python, code interpreter, canvas or file creation: what they make never',
+    '  reaches the user, and their limits are not this run\'s — a file they cannot make is no reason to stop.',
+    `- Make every file with a tool under TOOLS or MCP TOOLS${office}; then "finish" saying what it made.`,
+  ];
+}
+
+/** The live thread's reminder of `siteFileRules`, on every ChatGPT delta that asks for an action. */
+export const SITE_FILES_DELTA = 'Make any file with your TOOLS, never with this site\'s python or canvas.';
+
+/**
  * `flowTools` is false for a delegated helper and a bot run, which cannot call the flow builders.
  * `webTools` is false when the composer's web switch is off: the text must then not name web tools.
  */
@@ -447,7 +523,53 @@ const CAN_YOU_MEANS_DO: readonly string[] = [
  */
 const NO_REQUEST = '- No request in the GOAL, and it answers nothing above (a greeting, a lone number or word): a brief "finish", "done": true, no question.';
 
-function approachLean(webTools: boolean): string[] {
+/**
+ * A delegated helper's role, in its turn and finish prompts on both tiers.
+ * Its answer is read by the run that delegated, which acts on the ids, paths and figures in it, so
+ * a greeting, an offer or a question is noise and a gap left unsaid reads as "not there". On a
+ * browser provider these characters are paid for by the blocks a helper is never sent (the batch
+ * shape, `ask_user`, the flow builders, memory, chat): `agentPromptBudget` measures it.
+ */
+export const HELPER_ROLE: readonly string[] = [
+  'HELPER ROLE: you work for a lead agent, not the user — the user never sees your text.',
+  '- Copy exact ids, file paths, figures and any link the task asks for; keep each web fact\'s [n].',
+  '- Say plainly which parts you could not find. No greeting, no offers, no questions.',
+];
+
+/** What the lean tier's AUTONOMY block may point at: only shapes this run can really send. */
+export interface AutonomyTools {
+  /** `call_tools` is offered. */
+  batch: boolean;
+  /** `delegate` is in the catalog (never for a helper). */
+  delegate: boolean;
+  /** `ask_user` is offered this turn. */
+  ask: boolean;
+}
+
+/**
+ * Lean (BYOK) tier only: how to keep working without being told. The aim is an
+ * agent that is autonomous and proactive; a BYOK model has no prompt cap, so the rules a
+ * browser tier cannot afford go here. Splitting stays the model's call (an engine that splits for
+ * it was rejected); this only says when splitting pays. Names a shape only when the run has it:
+ * an instruction to call what the run lacks costs a rejected action.
+ */
+export function autonomyRules(tools: AutonomyTools): string[] {
+  return [
+    'AUTONOMY:',
+    '- Work your plan item by item, and tick each one in "plan_done" as soon as it is done.',
+    ...(tools.batch && tools.delegate
+      ? ['- When the GOAL has several independent parts that each need several steps (find, then read),',
+         '  send one "delegate" per part, all together in one "call_tools".']
+      : []),
+    ...(tools.batch ? ['- Independent single reads go together in one "call_tools".'] : []),
+    '- Before "finish", check every plan item against the observations and look up what is missing.',
+    '- After a change, read it back with a read tool when one exists.',
+    '- Keep going while another step can still change the answer.',
+    ...(tools.ask ? ['- "ask_user" only when you are truly blocked.'] : []),
+  ];
+}
+
+function approachLean(webTools: boolean, autonomy: AutonomyTools): string[] {
   return [
     '- You DO tasks with your TOOLS, not generic advice — if a TOOL can do it, USE it.',
     '- "I cannot do X" is only true after checking TOOLS and finding nothing — never from memory.',
@@ -463,6 +585,8 @@ function approachLean(webTools: boolean): string[] {
     NO_REQUEST,
     '- If your observations are insufficient, say so honestly and tell the user exactly what to provide',
     '  so YOU can finish it.',
+    '',
+    ...autonomyRules(autonomy),
   ];
 }
 
@@ -549,7 +673,11 @@ function batchExample(webTools: boolean): string[] {
  * The worked call. It names a tool the run really has: with the web off, an example naming "research"
  * is what the model copies — and the repair prompt re-sends the very same example with the rejection.
  */
-function callExample(webTools: boolean): string {
+/** The worked call of a run that may only read the knowledge base (`knowledgeOnly`). */
+const KNOWLEDGE_CALL_EXAMPLE = '{"thought":"I need what the documents say about it","doing":"Searching the documents","action":"call_tool","tool":"kb_search","config":{"query":"amount due date invoice"}}';
+
+function callExample(webTools: boolean, knowledgeOnly = false): string {
+  if (knowledgeOnly) return KNOWLEDGE_CALL_EXAMPLE;
   return webTools
     ? '{"thought":"I need current prices before I can compare them","doing":"Checking RTX 5080 prices","action":"call_tool","tool":"research","config":{"query":"RTX 5080 current retail price"}}'
     : '{"thought":"I need the current conditions before I can advise","doing":"Checking Taipei weather","action":"call_tool","tool":"weather","config":{"location":"Taipei"}}';
@@ -711,7 +839,30 @@ export function linkedPageSection(page: AgentLinkedPage | undefined): string[] {
     'what the user wants from it and answer from this; it needs no second read:',
     fenceUntrusted('linked_page', [title, oneLine(page.url, PAGE_URL_MAX), '', text].join('\n')),
     ...(page.truncated === true ? ['This is only the start of the page: say so if the answer depends on the rest.'] : []),
+    ...archivedPageLines(page.archived),
   ];
+}
+
+/** The site no longer has the page, so what was read is the Internet Archive's copy. Read defensively, like the page. */
+function archivedPageLines(archived: AgentLinkedPage['archived']): string[] {
+  if (!archived || typeof archived.day !== 'string' || typeof archived.url !== 'string') return [];
+  const day = oneLine(archived.day, 10);
+  return [`The site no longer has this page: this is the Internet Archive's copy of ${day} (${oneLine(archived.url, PAGE_URL_MAX)}). Say it is an archived copy and from when.`];
+}
+
+const ATTACHED_NAME_MAX = 160;
+
+/**
+ * The files attached to the GOAL by the names the file tools take: Office working copies a tool can
+ * edit, and the rest (chat-media/…) to read or turn into a PDF. The names are the user's own file
+ * names, so they are fenced like any text Yobi did not write.
+ */
+export function attachedFilesSection(files: readonly string[] | undefined): string[] {
+  const names = Array.isArray(files)
+    ? files.filter((name) => typeof name === 'string' && name.trim() !== '').map((name) => oneLine(name, ATTACHED_NAME_MAX))
+    : [];
+  if (names.length === 0) return [];
+  return ['', 'ATTACHED FILES (what the user attached, by the names your file tools take; edit only the ones without a folder):', fenceUntrusted('attached_files', names.join('\n'))];
 }
 
 /** The group log keeps at most this many per chat; what fits a provider is `fitChatToProvider`'s call. */
@@ -765,7 +916,7 @@ const RECAP_NOTHING_KEPT: readonly string[] = [
 ];
 
 /** What a bot request brings from its chat; empty for every other run and for a helper. */
-export type ChatContext = Pick<TurnPromptOptions, 'replyTo' | 'recentChat' | 'chatRecap' | 'linkedPage'>;
+export type ChatContext = Pick<TurnPromptOptions, 'replyTo' | 'recentChat' | 'chatRecap' | 'linkedPage' | 'attachedFiles'>;
 
 /** A bot request made in a group: its history is this person's exchanges with the bot, not the group's talk. */
 function inGroup(chat: ChatContext): boolean {
@@ -822,7 +973,10 @@ export function fitLinkedPageToProvider(providerUrl: string, chat: ChatContext, 
 
 /** Everything a bot request brings from its chat, in prompt order, ending right before the GOAL. */
 export function chatSections(chat: ChatContext): string[] {
-  return [...linkedPageSection(chat.linkedPage), ...recentChatSection(chat.recentChat, chat.chatRecap === true), ...replySection(chat.replyTo)];
+  return [
+    ...linkedPageSection(chat.linkedPage), ...recentChatSection(chat.recentChat, chat.chatRecap === true),
+    ...attachedFilesSection(chat.attachedFiles), ...replySection(chat.replyTo),
+  ];
 }
 
 /**
@@ -836,15 +990,37 @@ const NO_WRITE_LANDED: readonly string[] = [
   'Otherwise: fix the arguments from the error and the schema above, and try the write again.',
 ];
 
-/** 1-4, not 2-4: a floor of two makes one-thing goals invent a filler item. One thing is one item. */
-const PLAN_REQUEST: readonly string[] = [
-  '- On this FIRST action, ALSO include "plan": [1-4 short sub-goals that together cover the GOAL;',
-  '  ONE for a one-thing GOAL, never "read the request" or "reply"] — your checklist for the run.',
-  `- ALSO include "steps_needed": how many tool calls the whole GOAL will take (1-${MAX_SELF_ASSESSED_STEPS}).`,
-  '  You get ONE estimate and it cannot be revised, so judge the real work: a lookup is 2-3, a',
-  '  researched comparison 8-12, a long back-and-forth with files or commands 20+. Over-asking',
-  '  costs nothing — you stop as soon as you can answer — but the run ENDS at the number you give.',
-];
+/**
+ * 1-4, not 2-4: a floor of two makes one-thing goals invent a filler item. One thing is one item.
+ * The numbers quoted are the tier's own caps (`planStepCap`, `selfAssessedStepCap`); the browser
+ * text is unchanged. BYOK may re-estimate once near the end (`reestimateNotice`), so its text does
+ * not say the estimate can never be revised.
+ */
+function planRequest(lean: boolean, stepCap = selfAssessedStepCap(lean)): string[] {
+  return [
+    `- On this FIRST action, ALSO include "plan": [1-${planStepCap(lean)} short sub-goals that together cover the GOAL;`,
+    '  ONE for a one-thing GOAL, never "read the request" or "reply"] — your checklist for the run.',
+    `- ALSO include "steps_needed": how many tool calls the whole GOAL will take (1-${stepCap}).`,
+    lean
+      ? '  Judge the real work now: a lookup is 2-3, a'
+      : '  You get ONE estimate and it cannot be revised, so judge the real work: a lookup is 2-3, a',
+    '  researched comparison 8-12, a long back-and-forth with files or commands 20+. Over-asking',
+    '  costs nothing — you stop as soon as you can answer — but the run ENDS at the number you give.',
+  ];
+}
+
+/**
+ * BYOK only, said once when the step limit is two turns away and the plan still has open items:
+ * the one chance to raise it. Only upward, only once, never past the tier's cap — the engine
+ * enforces all three. `taken` is the turns already used, so the model can state a total.
+ */
+export function reestimateNotice(stepsLeft: number, taken: number, cap: number): string {
+  return [
+    `STEPS RUNNING OUT: you have ${stepsLeft} step(s) left and your plan still has unchecked items.`,
+    `If the GOAL needs more, ALSO include "steps_needed" with your next action: the TOTAL tool calls the whole GOAL`,
+    `takes, counting the ${taken} already used (at most ${cap}). This is your one re-estimate; if not, finish with what you have.`,
+  ].join('\n');
+}
 
 const PLAN_PROGRESS: readonly string[] = [
   '- ALSO include "plan_done": [1-based indices of the plan items now finished].',
@@ -870,6 +1046,8 @@ function heldNotice(held: HeldFinish): string[] {
     'Take the step that gets what is missing.',
     // A summarised connector shows only a few tool names, so the missing tool may be behind "tool_help".
     ...(held.connectorHelp ? ['A connector summarised under MCP TOOLS may hold it: open it with "tool_help" before you give up.'] : []),
+    // Read from the run's own steps: a model that just used a tool can still finish "it is not here".
+    ...(held.workingTools?.length ? [`These tools answered you in this run and are there to use with "call_mcp": ${held.workingTools.join(', ')}.`] : []),
     'If nothing can get it — a search that found nothing is a result — "finish" again with "done": false and say in "content" what you searched.',
   ];
 }
@@ -944,8 +1122,21 @@ export interface TurnPromptOptions {
   deliverable?: readonly number[];
   /** The user's saved memory and the rule for changing it, pre-rendered; charged by the engine like the goal. */
   userMemory?: string;
-  /** Offer `call_tools`. Never for a helper: fan-out below fan-out multiplies every rate limit. */
+  /** Offer `call_tools`. A browser helper never gets it; a BYOK helper does, for reads (never `delegate`). */
   batchGrammar?: boolean;
+  /** `delegate` is in the catalog, so the lean tier's AUTONOMY rules may point at it. */
+  delegate?: boolean;
+  /**
+   * How many calls a batch of nothing but `delegate` may hold, when that is more than the usual
+   * batch (`delegateBatchLimit`): quoted only then, the number the validator holds the run to.
+   */
+  delegateBatch?: number;
+  /** BYOK's one re-estimate is open (`reestimateNotice`): a rebuilt prompt restates it. */
+  reestimate?: string;
+  /** The run's own `steps_needed` ceiling when it is not the tier's (a BYOK helper's 20). */
+  stepCap?: number;
+  /** A delegated helper: it reports to the lead agent, not the user (`HELPER_ROLE`). */
+  helper?: boolean;
   /** The run can call the flow builders. False for a helper, which must not be pointed at `assess_flow`. */
   flowTools?: boolean;
   /** The web tools are in scope. False when the composer's web switch is off: the text must not name them. */
@@ -960,10 +1151,19 @@ export interface TurnPromptOptions {
   chatRecap?: boolean;
   /** The page the GOAL's link points at (`linkedPageSection`). */
   linkedPage?: AgentLinkedPage;
+  /** The files attached to the GOAL, by the names the file tools take (`attachedFilesSection`). */
+  attachedFiles?: readonly string[];
+  /** The provider's own rules (`siteFileRules`), charged by the engine with the run's fixed blocks. */
+  siteRules?: readonly string[];
   /** The UI language's name when the "reply in the UI language" switch is on (`answerLanguageLine`). */
   answerLanguage?: string;
   /** Names the step titles' language for a helper, which has no `answerLanguage` of its own. */
   doingLanguage?: string;
+  /**
+   * The user chose to ask only their knowledge base (`knowledgeOnlyRules`): these lines replace the
+   * approach rules, whose web, connector and "do it with every tool" advice this run cannot follow.
+   */
+  knowledgeOnly?: readonly string[];
 }
 
 export interface HeldFinish {
@@ -971,6 +1171,8 @@ export interface HeldFinish {
   stepsLeft: number;
   /** Connectors are shown as one-line summaries behind `tool_help`, so "no tool for it" is not yet known. */
   connectorHelp?: boolean;
+  /** Connector tools that already answered this run (`<server>:<tool>`): they are there to use. */
+  workingTools?: readonly string[];
 }
 
 function shapeCount(mcpGrammar: boolean, allowAsk: boolean, canDeliver: boolean, batch: boolean): string {
@@ -986,6 +1188,7 @@ export function buildTurnPrompt(opts: TurnPromptOptions): string {
     stalled = false, offload = false, allowAsk = false, changeRules = false, writesAllFailed = false,
     userDataSources = false, plan = emptyPlan(), deliverable = [], runtimeContext = '', earlierActions = '',
     userMemory = '', batchGrammar: batch = false, flowTools = true, webTools = true, held, answerLanguage, doingLanguage,
+    delegate = false, delegateBatch, reestimate = '', stepCap, helper = false, siteRules = [], knowledgeOnly,
   } = opts;
   const planned = plan.steps.length > 0;
   // A held finish outranks a fully checked plan: the model checked the items AND said the goal is
@@ -996,17 +1199,18 @@ export function buildTurnPrompt(opts: TurnPromptOptions): string {
     'You are Yobi\'s autonomous agent. You DO tasks yourself with the TOOLS below, not generic how-to',
     'advice. Read the GOAL, then ACT: call tools, observe, repeat, and finish with a real answer.',
     '',
+    ...(helper ? [...HELPER_ROLE, ''] : []),
     ...renderEnvironment(answerLanguage),
     '',
     ...(userMemory.trim() ? [userMemory.trim(), ''] : []),
     APPROACH_HEADER,
     ...IDENTITY_RULES,
     ...(userDataSources ? OWN_DATA_FIRST : []),
-    ...(lean ? approachLean(webTools) : approachFull(flowTools, webTools)),
+    ...(knowledgeOnly ?? (lean ? approachLean(webTools, { batch, delegate, ask: allowAsk }) : approachFull(flowTools, webTools))),
     ...(changeRules ? ['', ...CHANGE_RULES] : []),
     '',
     'OUTPUT RULES (critical):',
-    '- Output ONLY one JSON object — no prose, no markdown code fences.',
+    `- Output ONLY one JSON object — no prose, no markdown code fences${lean ? '' : SITE_FILES_UNSEEN}.`,
     `- Use exactly one of ${shapeCount(mcpGrammar, allowAsk, canDeliver, batch)}:`,
     `  {"thought": string, ${doingField(doingLanguage)}, "action": "call_tool", "tool": <a tool name>, "config": {...}}`,
     ...(mcpGrammar
@@ -1023,9 +1227,9 @@ export function buildTurnPrompt(opts: TurnPromptOptions): string {
     ...(hasRecapSection(userMemory) ? [`  ${RECAP_HOOK}`] : []),
     '- A real "call_tool" action:',
     '<example>',
-    callExample(webTools),
+    callExample(webTools, knowledgeOnly !== undefined),
     '</example>',
-    ...(lean && batch ? batchExample(webTools) : []),
+    ...(lean && batch && !knowledgeOnly ? batchExample(webTools) : []),
     ...(canDeliver ? DELIVER_RULES : []),
     // The language is repeated at the answer: a non-English locale or tool output can outweigh the
     // opening rule.
@@ -1044,12 +1248,13 @@ export function buildTurnPrompt(opts: TurnPromptOptions): string {
         ]
       : []),
     ...(batch ? BATCH_RULES : []),
+    ...(batch && lean && delegate && delegateBatch ? [`  Up to ${delegateBatch} when every call is "delegate".`] : []),
     ...(allowAsk ? ASK_RULES : []),
     ...(allowAsk && changeRules ? ASK_BEFORE_CHANGE : []),
     '- Use concrete literal values — NEVER {{placeholder}} notation.',
     '- Only call a tool listed under TOOLS or MCP TOOLS, using only its documented keys.',
     '- Never repeat an identical tool call.',
-    ...(mustFinish ? [] : planned ? PLAN_PROGRESS : [...PLAN_REQUEST, ...(changeRules ? INTENT_REQUEST : [])]),
+    ...(mustFinish ? [] : planned ? PLAN_PROGRESS : [...planRequest(lean, stepCap), ...(changeRules ? INTENT_REQUEST : [])]),
     '',
     ...PRECEDENCE,
     '',
@@ -1069,6 +1274,8 @@ export function buildTurnPrompt(opts: TurnPromptOptions): string {
     ...(offload && !mustFinish && !finished ? [...OFFLOAD_HINT, ''] : []),
     ...(writesAllFailed ? [...NO_WRITE_LANDED, ''] : []),
     ...(held && !mustFinish ? [...heldNotice(held), ''] : []),
+    ...(reestimate && !mustFinish ? [reestimate, ''] : []),
+    ...(siteRules.length > 0 && !mustFinish ? [...siteRules, ''] : []),
     mustFinish
       ? 'You have reached the step limit. You MUST now output a "finish" action whose "content" is your best written answer, synthesized from the observations above.'
       : finished
@@ -1093,6 +1300,8 @@ export interface DeltaRuleState {
   runtimeContext: string;
   /** The model has written its plan, so the first message's request for one gives way to `PLAN_PROGRESS`. */
   planned: boolean;
+  /** BYOK's one re-estimate, once offered (`reestimateNotice`); '' before that. Said the turn it opens. */
+  reestimate?: string;
 }
 
 /**
@@ -1111,6 +1320,7 @@ export function deltaRuleNotices(now: DeltaRuleState, before: DeltaRuleState): s
     ].join('\n'));
   }
   if (now.planned && !before.planned) notices.push(PLAN_PROGRESS.join('\n'));
+  if (now.reestimate && !before.reestimate) notices.push(now.reestimate);
   if (now.offload) notices.push(OFFLOAD_HINT.join('\n'));
   if (now.runtimeContext && now.runtimeContext !== before.runtimeContext) {
     notices.push(evidenceSections(now.runtimeContext, '').join('\n').trim());
@@ -1187,6 +1397,7 @@ export function buildDeltaPrompt(
 ): string {
   const finished = planComplete(plan);
   const answerInFinish = recapHook ? `${ANSWER_IN_FINISH} ${RECAP_HOOK}` : ANSWER_IN_FINISH;
+  const siteReminder = providerUrl && siteFileRules(providerUrl).length > 0 ? ` ${SITE_FILES_DELTA}` : '';
   const firstIndex = lastIndex - entries.length + 1;
   const heading = (entry: ScratchEntry, offset: number): string => (entries.length === 1
     ? `Observation from step ${lastIndex} — ${entry.tool}:`
@@ -1203,7 +1414,7 @@ export function buildDeltaPrompt(
       ? `You have reached the step limit. Output ONLY the "finish" JSON object now, whose "content" is your best written answer synthesized from every observation above.${recapHook ? ` ${RECAP_HOOK}` : ''}`
       : finished
         ? `${PLAN_DONE_NUDGE}\n${answerInFinish}`
-        : `Decide the next single action. Output ONLY one JSON object, in one of the shapes defined earlier — no prose, no markdown code fences. ${answerInFinish}`,
+        : `Decide the next single action. Output ONLY one JSON object, in one of the shapes defined earlier — no prose, no markdown code fences. ${answerInFinish}${siteReminder}`,
   ].join('\n');
 
   const observed = entries.map((entry) => sealClosingTag(OBSERVATION_TAG, entry.deltaObservation || entry.observation || '(empty)'));
@@ -1265,6 +1476,8 @@ export interface FinishPromptOptions {
   linkedPage?: AgentLinkedPage;
   /** Same as the turn prompt's (`answerLanguageLine`). */
   answerLanguage?: string;
+  /** A delegated helper's synthesis: it reports to the lead agent (`HELPER_ROLE`). */
+  helper?: boolean;
 }
 
 export function buildFinishPrompt(opts: FinishPromptOptions): string {
@@ -1272,6 +1485,7 @@ export function buildFinishPrompt(opts: FinishPromptOptions): string {
     goal, scratch, lean,
     scratchSlots = SCRATCH_IN_PROMPT, totalBudget = SCRATCH_TOTAL_BUDGET,
     history = '', plan = emptyPlan(), writesAllFailed = false, actions = '', userMemory = '', answerLanguage,
+    helper = false,
   } = opts;
   // The observations are the LAST block here, so overflowing the cap trims them and their
   // closing fence rather than an instruction — still an unterminated fence around someone
@@ -1289,8 +1503,9 @@ export function buildFinishPrompt(opts: FinishPromptOptions): string {
       ];
   return [
     'You are Yobi\'s agent. Below are the user\'s GOAL and the OBSERVATIONS you gathered from tools.',
-    'Write the FINAL answer for the user, in the ANSWER LANGUAGE.',
+    helper ? 'Write the FINAL report, in the ANSWER LANGUAGE.' : 'Write the FINAL answer for the user, in the ANSWER LANGUAGE.',
     '',
+    ...(helper ? [...HELPER_ROLE, ''] : []),
     envContextLine(),
     answerLanguageLine(answerLanguage),
     '',

@@ -1,5 +1,5 @@
 /** The sites whose links Yobi reads as a post: text, media and replies. */
-export type PostSiteId = 'x' | 'threads' | 'instagram' | 'facebook' | 'tiktok' | 'ptt' | 'dcard' | 'reddit' | 'weibo';
+export type PostSiteId = 'x' | 'threads' | 'instagram' | 'facebook' | 'tiktok' | 'ptt' | 'dcard' | 'reddit' | 'weibo' | 'appstore' | 'googleplay';
 /**
  * The sites whose links Yobi reads as a video with a quality menu (SoundCloud's: its MP3 alone),
  * and a bare HLS playlist link on any host (`m3u8`).

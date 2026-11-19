@@ -71,6 +71,13 @@ export function registerTelegramHandlers(ctx: IpcContext): void {
     { failure: 'Failed to update Telegram group setting' },
   );
 
+  // Read on each pasted link, so the bot needs no restart.
+  ipcMain.handle(IPC.UPDATE_TELEGRAM_REPLACE_LINK_MESSAGE, (_event, value: unknown) => {
+    config.telegram.replaceLinkMessage = value === true;
+    saveConfig({ telegram: config.telegram });
+    return true;
+  });
+
   ipcMain.handle(IPC.UPDATE_TELEGRAM_LLM_DIRECT, (_event, value: unknown) => {
     config.telegram.llmDirect = normalizeLlmDirect(value);
     saveConfig({ telegram: config.telegram });

@@ -1,6 +1,6 @@
 import type {
-  AgentFlowRecipient, AgentStageLabel, FlowAssessment, FlowBuildEvent, FlowBuildPhase,
-  FlowDefinition, FlowExecutionResult, TriggerType,
+  AgentFlowRecipient, AgentStageLabel, FlowAssessment, FlowBuildEvent, FlowBuildIssue, FlowBuildPhase,
+  FlowDefinition,FlowExecutionResult, TriggerType,
 } from '../../../shared/types';
 import { describeRecipientSetup, withRecipientQuestion } from '../../../shared/botRecipientQuestion';
 import type { RecipientDirectory } from '../../../shared/botRecipients';
@@ -11,7 +11,9 @@ import type { FlowRef } from '../flowEdit';
 import { FlowAbortError } from '../runtime';
 import { sendLog } from '../../helpers';
 import type { FlowExecutorDeps } from '../types';
-import { buildHoldReason, describeSavedFlow, holdingSave, sensitiveTypesOf } from './agentFlowShared';
+import { buildHoldReason, describeSavedFlow, holdingSave, oneTimeMomentPassed, sensitiveTypesOf } from './agentFlowShared';
+import type { SavedFlowState } from './agentFlowShared';
+import { localIsoMinute, oneTimeRunAt } from '../../../shared/flowRunAt';
 import type { FlowHold, FlowSaveRequest, FlowWriteConfirmRequest } from './agentFlowShared';
 import { runEditFlowTool } from './agentFlowEdit';
 import { RUN_FLOW_LINE, runRunFlowTool } from './agentFlowRun';
@@ -21,13 +23,19 @@ import { AGODA_REVIEWS_BRIEF, AGODA_REVIEWS_LINE, runAgodaReviews } from './agen
 import { EXPORT_FILE_BRIEF, EXPORT_FILE_LINE, runExportFile } from './agentExportFile';
 import type { ExportFile } from './agentExportFile';
 import { MOVIE_INFO_LINE, movieInfoDeps, runMovieInfo } from './agentMovie';
+import { PRICE_SEARCH_LINE, runPriceSearchTool } from './agentPrice';
+import { AI_USAGE_LINE, runAiUsage } from './agentAiUsage';
+import type { AiUsageContext } from './agentAiUsage';
 import type { ResearchSource } from './agentCitations';
 import { USE_SKILL_LINE, runUseSkill } from './agentSkillTool';
 import type { SkillRunState } from './agentSkillTool';
+import { KB_SEARCH_LINE, knowledgeBrief, runKnowledgeSearch } from './agentKnowledge';
+import type { KnowledgeScopeEntry } from './agentKnowledge';
+import type { SearchAsker } from '../../search/types';
 
 export type { FlowSaveRequest, FlowWriteConfirmRequest } from './agentFlowShared';
 
-export const AGENT_BUILTIN_TOOLS = ['assess_flow', 'build_flow', 'edit_flow', 'run_flow', 'delegate', 'draw_image', 'agoda_reviews', 'export_file', 'use_skill', 'movie_info'] as const;
+export const AGENT_BUILTIN_TOOLS = ['assess_flow', 'build_flow', 'edit_flow', 'run_flow', 'delegate', 'draw_image', 'agoda_reviews', 'export_file', 'use_skill', 'movie_info', 'price_search', 'ai_usage', 'kb_search'] as const;
 
 export type AgentBuiltinTool = typeof AGENT_BUILTIN_TOOLS[number];
 
@@ -37,7 +45,7 @@ export function isBuiltinTool(name: string): name is AgentBuiltinTool {
   return BUILTIN_SET.has(name);
 }
 
-export interface BuiltinDeps {
+export interface BuiltinDeps extends AiUsageContext {
   deps: FlowExecutorDeps;
   providerUrl: string;
   saveFlow?: (flow: FlowDefinition) => Promise<FlowDefinition>;
@@ -87,6 +95,10 @@ export interface BuiltinDeps {
   exportCalls?: number;
   /** The run's installed skills and which it has loaded. Absent = no skills are installed. */
   skills?: SkillRunState;
+  /** The knowledge bases this run may search (`kb_search`). Absent = none. */
+  knowledge?: readonly KnowledgeScopeEntry[];
+  /** The user a `kb_search` answers, as research's asker: their words are searched too. */
+  asker?: SearchAsker;
 }
 
 const MIN_BUILTIN_TIMEOUT_MS = 30_000;
@@ -101,9 +113,11 @@ function budgetedDeps(ctx: BuiltinDeps): FlowExecutorDeps {
 
 /**
  * Framed as the rung above `research`, not as an overflow valve. It still costs a whole helper
- * loop, so a sub-question one `research` call answers must not come here.
+ * loop, so a sub-question one `research` call answers must not come here. It invites one helper
+ * per independent multi-step part, all sent in one batch, in a line short enough for the catalog
+ * budget.
  */
-const DELEGATE_LINE = '- "delegate": Hand a READ-ONLY sub-question that needs SEVERAL steps of its own (find, then read pages or messages) to a helper with a fresh context. Use it when one tool call cannot answer it; send several at once in "call_tools". It never changes anything or asks the user. config keys: "task" (self-contained: what to find and what to report back, since it cannot see this conversation; REQUIRED) → returns: the helper\'s written findings.';
+const DELEGATE_LINE = '- "delegate": Hand a READ-ONLY part that needs SEVERAL steps of its own (find, then read pages or messages) to a helper with a fresh context: one per independent part, sent together in "call_tools"; not for what one call answers. It never changes anything or asks the user. config keys: "task" (self-contained: what to find and what to report back, since it cannot see this conversation; REQUIRED) → returns: the helper\'s written findings.';
 
 /*
  * Keep these lines budget-neutral: the catalog is the largest fixed deduction from Gemini's cap,
@@ -111,7 +125,7 @@ const DELEGATE_LINE = '- "delegate": Hand a READ-ONLY sub-question that needs SE
  */
 const FLOW_TOOL_LINES = [
   '- "assess_flow": Can Yobi AUTOMATE this as a saved flow, and how? Read-only. config keys: "goal" (what to automate, user\'s words; REQUIRED) → returns: verdict, outline, gaps, questions.',
-  '- "build_flow": SAVE a new flow, DISABLED for review. Call "assess_flow" first; ask what it reports missing, never invent it. config keys: "goal" (the request plus what the user said since; REQUIRED) → returns: name, steps, what to check.',
+  '- "build_flow": SAVE a new flow, OFF for review; ONE-TIME ones (anything LATER) go ON when approved, never wait. Call "assess_flow" first; ask what it lacks. config keys: "goal" (request + replies; REQUIRED) → returns: name, steps, checks.',
   // `run_flow` rides on this line (same "flow" key): a line of its own did not fit Gemini's budget.
   '- "edit_flow": Change a flow the user has (never build a copy); saves over it once they approve. Bot tokens and chat IDs are already set — never ask for them. config keys: "change" (user\'s words; REQUIRED), "flow" (its name; omit = the last one in this chat) → returns: what changed. "run_flow" (same "flow") test-runs it once.',
 ];
@@ -123,6 +137,7 @@ export function buildBuiltinCatalog(
   includeHotelReviews = false,
   includeDocuments = false,
   includeSkills = false,
+  knowledge: readonly KnowledgeScopeEntry[] = [],
 ): string {
   return [
     ...(includeFlows ? FLOW_TOOL_LINES : []),
@@ -131,6 +146,7 @@ export function buildBuiltinCatalog(
     ...(includeHotelReviews ? [AGODA_REVIEWS_BRIEF] : []),
     ...(includeDocuments ? [EXPORT_FILE_BRIEF] : []),
     ...(includeSkills ? [USE_SKILL_LINE] : []),
+    ...(knowledge.length > 0 ? [knowledgeBrief(knowledge)] : []),
   ].join('\n');
 }
 
@@ -143,6 +159,9 @@ export function builtinToolEntry(tool: AgentBuiltinTool): string {
   if (tool === 'use_skill') return USE_SKILL_LINE;
   if (tool === 'run_flow') return RUN_FLOW_LINE;
   if (tool === 'movie_info') return MOVIE_INFO_LINE;
+  if (tool === 'price_search') return PRICE_SEARCH_LINE;
+  if (tool === 'ai_usage') return AI_USAGE_LINE;
+  if (tool === 'kb_search') return KB_SEARCH_LINE;
   return FLOW_TOOL_LINES.find((line) => line.startsWith(`- "${tool}"`)) ?? '';
 }
 
@@ -154,6 +173,7 @@ export function builtinRequiredFields(tool: AgentBuiltinTool): string[] {
   if (tool === 'export_file') return ['format'];
   if (tool === 'use_skill') return ['skill'];
   if (tool === 'movie_info') return ['title'];
+  if (tool === 'price_search') return ['query'];
   return tool === 'assess_flow' || tool === 'build_flow' ? ['goal'] : [];
 }
 
@@ -161,10 +181,12 @@ export function builtinRequiredFields(tool: AgentBuiltinTool): string[] {
 export function builtinConfigKeys(tool: AgentBuiltinTool): string[] {
   if (tool === 'draw_image') return ['prompt', 'provider'];
   if (tool === 'agoda_reviews') return ['url', 'question'];
-  if (tool === 'export_file') return ['format', 'content', 'title'];
+  if (tool === 'export_file') return ['format', 'content', 'title', 'file', 'crop', 'width', 'track'];
   if (tool === 'use_skill') return ['skill', 'file', 'page', 'run', 'args', 'stdin'];
   if (tool === 'run_flow') return ['flow'];
   if (tool === 'movie_info') return ['title', 'year', 'id'];
+  if (tool === 'price_search') return ['query', 'exclude', 'minPrice', 'maxPrice', 'sort', 'limit', 'stores'];
+  if (tool === 'kb_search') return ['query', 'base', 'files'];
   return tool === 'edit_flow' ? ['change', 'flow'] : builtinRequiredFields(tool);
 }
 
@@ -322,10 +344,12 @@ async function runBuild(goal: string, ctx: BuiltinDeps): Promise<BuiltinOutcome>
       }
       if (!ctx.confirm) return false;
       const stepTypes = flow.steps.map((step) => String(step.type));
+      const runAt = oneTimeRunAt(flow);
       ctx.onStage?.('confirming');
       return ctx.confirm({
         kind: 'flow', flowName: flow.name, stepTypes, sensitiveTypes: sensitiveTypesOf(stepTypes),
         ...(recipients.length > 0 ? { recipients } : {}),
+        ...(runAt ? { runAt: localIsoMinute(runAt) } : {}),
       });
     },
   });
@@ -361,10 +385,31 @@ async function runBuild(goal: string, ctx: BuiltinDeps): Promise<BuiltinOutcome>
     };
   }
 
-  sendLog(`🧩 [Agent] built flow "${outcome.flow.name}" (${outcome.flow.steps.length} steps, disabled)`);
+  const { flow: saved, state } = await switchOnOneTime(outcome.flow, outcome.report.issues, ctx);
+  sendLog(`🧩 [Agent] built flow "${saved.name}" (${saved.steps.length} steps, ${saved.enabled ? 'on' : 'disabled'})`);
   // What a later "change it" in this conversation refers to.
-  ctx.recentFlows?.push({ id: outcome.flow.id, name: outcome.flow.name });
-  return { observation: describeSavedFlow(outcome.flow, outcome.report.issues), status: 'ok' };
+  ctx.recentFlows?.push({ id: saved.id, name: saved.name });
+  return { observation: describeSavedFlow(saved, outcome.report.issues, state), status: 'ok' };
+}
+
+/**
+ * A one-time flow ("send it tomorrow at 8") is useless saved off for review: by the time the user
+ * finds it in the list, the moment may be gone. The dialog showed when it runs, so its approval
+ * switches it on — unless it has a step that acts on the computer or something still to fill in
+ * (the same holds as a bot admin's approval), or the moment passed while the dialog was open.
+ */
+async function switchOnOneTime(
+  flow: FlowDefinition,
+  issues: readonly FlowBuildIssue[],
+  ctx: BuiltinDeps,
+): Promise<{ flow: FlowDefinition; state: SavedFlowState }> {
+  const review = { flow, state: { how: 'review' } as SavedFlowState };
+  if (!oneTimeRunAt(flow) || !ctx.enableFlow) return review;
+  if (buildHoldReason(flow, issues, { owner: true })) return review;
+  if (oneTimeMomentPassed(flow)) return { flow, state: { how: 'off', why: 'passed' } };
+  // Read back rather than assumed: a flow missing a required setting stays off.
+  const enabled = await ctx.enableFlow(flow.id);
+  return enabled?.enabled ? { flow: enabled, state: { how: 'on' } } : { flow, state: { how: 'off', why: 'settings' } };
 }
 
 export async function runBuiltinTool(
@@ -387,6 +432,18 @@ export async function runBuiltinTool(
     return ctx.skills ? runUseSkill(config, ctx.skills, ctx.signal) : { observation: 'ERROR: no skills are installed.', status: 'error' };
   }
   if (tool === 'movie_info') return runMovieInfo(config, movieInfoDeps(), ctx.signal);
+  if (tool === 'price_search') return runPriceSearchTool(config, ctx.signal);
+  if (tool === 'ai_usage') return runAiUsage(config, ctx);
+  if (tool === 'kb_search') {
+    if (!ctx.knowledge?.length) return { observation: 'ERROR: no knowledge base is available to this run.', status: 'error' };
+    return runKnowledgeSearch(config, {
+      entries: ctx.knowledge,
+      providerUrl: ctx.providerUrl,
+      ...(ctx.asker ? { asker: ctx.asker } : {}),
+      ...(ctx.signal ? { signal: ctx.signal } : {}),
+      ...(ctx.onStage ? { onStage: ctx.onStage } : {}),
+    });
+  }
   if (tool === 'agoda_reviews') {
     return runAgodaReviews(config, { deps: budgetedDeps(ctx), providerUrl: ctx.providerUrl, ...(ctx.signal ? { signal: ctx.signal } : {}) });
   }

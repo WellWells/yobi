@@ -288,9 +288,9 @@ export const MemoryCurateModal: React.FC<Props> = ({ open, focus, snapshot, onCl
                 ? t('settings.memory.curate.undone')
                 : applied.applied > 0 ? count('settings.memory.curate.done', applied.applied) : t('settings.memory.curate.none')}
             </Text>
-            {undone === false && <Text fz="var(--font-size-sm)" c="var(--mantine-color-warning)">{t('settings.memory.curate.undoFailed')}</Text>}
-            {applied.skipped > 0 && <Text fz="var(--font-size-sm)" c="var(--mantine-color-warning)">{count('settings.memory.curate.skipped', applied.skipped)}</Text>}
-            {applied.failed > 0 && <Text fz="var(--font-size-sm)" c="var(--mantine-color-warning)">{count('settings.memory.curate.failedItems', applied.failed)}</Text>}
+            {undone === false && <Text fz="var(--font-size-sm)" c="var(--warning-text)">{t('settings.memory.curate.undoFailed')}</Text>}
+            {applied.skipped > 0 && <Text fz="var(--font-size-sm)" c="var(--warning-text)">{count('settings.memory.curate.skipped', applied.skipped)}</Text>}
+            {applied.failed > 0 && <Text fz="var(--font-size-sm)" c="var(--warning-text)">{count('settings.memory.curate.failedItems', applied.failed)}</Text>}
             <Group justify="flex-end" gap="xs" mt={4}>
               {applied.undoable && undone === null && (
                 <AppButton variant="default" size="xs" leftSection={<Undo2 size={13} />} loading={busy} onClick={() => { void undo(); }}>

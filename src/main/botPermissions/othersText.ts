@@ -53,10 +53,15 @@ function groupCeiling(): BotRights {
     web: true,
     download: true,
     preview: true,
+    analyze: true,
     local: false,
     shell: false,
     admin: false,
+    // Someone else's words never steer Yobi's own settings.
+    manage: false,
     connectors: connectors.length > 0 ? connectors : 'none',
+    // The owner's documents are never quoted into a chat someone else is writing in.
+    knowledge: 'none',
   };
 }
 

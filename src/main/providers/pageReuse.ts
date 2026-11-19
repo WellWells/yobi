@@ -32,6 +32,7 @@ import {
   PPLX_INPUT_SELECTORS,
   PPLX_RESPONSE_SELECTOR,
   PPLX_STOP_ICON_ID,
+  pplxInComposerBox,
 } from './perplexityReadScript';
 import {
   DEEPSEEK_DISABLED_CLASS,
@@ -158,7 +159,7 @@ const PERPLEXITY_READY = `(function () {
   var composer = document.querySelector(${JSON.stringify(PPLX_INPUT_SELECTORS.join(', '))});
   if (!composer) return false;
   if ((composer.innerText || composer.textContent || '').trim()) return false;
-  var stops = document.querySelectorAll('[data-ask-input-container="true"] button use');
+  var stops = document.querySelectorAll(${JSON.stringify(pplxInComposerBox('button use'))});
   for (var i = 0; i < stops.length; i++) {
     var href = stops[i].getAttribute('href') || stops[i].getAttribute('xlink:href') || '';
     if (href === ${JSON.stringify(PPLX_STOP_ICON_ID)}) return false;

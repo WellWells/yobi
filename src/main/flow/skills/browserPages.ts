@@ -47,7 +47,8 @@ function revealPage(win: BrowserWindow): void {
   muteWindow(win, false);
   win.setBounds({ x: 100, y: 100, width: 1_280, height: 900 });
   if (process.platform !== 'darwin') win.setSkipTaskbar(false);
-  win.setOpacity(1);
+  // Opacity stays untouched: the window was never transparent, and on Windows any opacity call makes
+  // it layered for good, which costs it its title bar and frame (see hideBeforeMapping).
   win.show();
   win.focus();
 }

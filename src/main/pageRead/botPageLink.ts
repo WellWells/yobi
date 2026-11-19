@@ -10,6 +10,7 @@ import { linksIn, asksAboutLink } from '../../shared/linkQuestion';
 import type { LinkSiteFilter } from '../../shared/linkRecognition';
 import { matchLink } from '../../shared/linkSites/rows';
 import { pageAnalyzeLink } from '../../shared/pageAnalyzeLine';
+import { pictureLinkOf } from '../../shared/pictureLink';
 import type { AgentLinkedPage, AgentRunState, BotPageForward } from '../../shared/types';
 import { escapePostMarkdown } from '../../shared/xMedia';
 import { linkRequestText } from '../botChat/wakeWord';
@@ -24,9 +25,12 @@ const PAGE_FORWARD_IMAGES_MAX = 4;
 
 export type BotPageRead = { kind: 'forward'; page: PageRead } | { kind: 'agent'; linked: AgentLinkedPage };
 
-/** A link with its own way in stays on it: Maps and videos have no page text, and a switched-off site is the user's call. */
+/**
+ * A link with its own way in stays on it: Maps and videos have no page text, a picture goes to
+ * the model as a picture (the URL shortcut's `pictures`), and a switched-off site is the user's call.
+ */
 function readsAsPage(link: string, allows: LinkSiteFilter): boolean {
-  if (isMapsUrl(link)) return false;
+  if (isMapsUrl(link) || pictureLinkOf(link)) return false;
   const match = matchLink(link);
   return !match || (match.ref.shape !== 'video' && allows(match.ref.site));
 }
@@ -52,7 +56,7 @@ export function askedPageLinkOf(goal: string, allows: LinkSiteFilter): string | 
 }
 
 function linkedPageOf(page: PageRead): AgentLinkedPage {
-  return { url: page.url, title: page.title, text: page.text, truncated: page.truncated };
+  return { url: page.url, title: page.title, text: page.text, truncated: page.truncated, ...(page.archived ? { archived: page.archived } : {}) };
 }
 
 function forTheAgent(read: BotPageRead): BotPageRead {
@@ -102,7 +106,8 @@ export async function readBotRunPage(state: AgentRunState, scope: BotRunPageScop
 
 /** The page as a message: its main text alone. Replies are for the analysis, and they run to thousands of characters. */
 export function pageForwardOf(page: PageRead, strings: Record<string, string>): BotPageForward {
-  const source = [page.site, page.publishedAt].filter(Boolean).join(' · ');
+  const archived = page.archived ? t(strings, 'bot.page.archived', { date: page.archived.day }) : '';
+  const source = [page.site, page.publishedAt, archived].filter(Boolean).join(' · ');
   const replies = page.replyCount ? t(strings, 'bot.page.replies', { count: String(page.replyCount) }) : '';
   const body = page.mainText ?? page.text;
   // A post's title is its own first line: who wrote it says more.
@@ -112,6 +117,7 @@ export function pageForwardOf(page: PageRead, strings: Record<string, string>): 
     images: page.images.slice(0, PAGE_FORWARD_IMAGES_MAX),
     opening: [heading, source].filter(Boolean).map(escapePostMarkdown).join('\n'),
     body: escapePostMarkdown(body),
-    closing: [replies, page.url].filter(Boolean).join('\n'),
+    // The site's own link opens nothing any more: the archived copy does.
+    closing: [replies, page.archived?.url ?? page.url].filter(Boolean).join('\n'),
   };
 }

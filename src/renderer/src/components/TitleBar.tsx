@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import { Box, Flex, Group } from '@mantine/core';
 import { useMediaQuery } from '@mantine/hooks';
 import { useShallow } from 'zustand/react/shallow';
-import { drawnView, useAppStore } from '../store/appStore';
+import { drawnView, isMainView, useAppStore } from '../store/appStore';
 import { useI18nStore } from '../store/i18nStore';
 import { AppWindow, ListOrdered } from 'lucide-react';
 import { agentApi, flowApi, systemApi } from '../api/electronApi';
@@ -17,6 +17,7 @@ import { AppButton } from './AppButton';
 import { useCaptionStore } from '../store/captionStore';
 import styles from './TitleBar.module.css';
 import { fillTemplate } from '../../../shared/fillTemplate';
+import { useSystemTextScale } from '../styles/systemTextScale';
 
 /**
  * The window width from which 「瀏覽器視窗」 shows its name (the default window is 1100). From here
@@ -57,15 +58,18 @@ function usePublishedWidth(ref: React.RefObject<HTMLElement | null>, variable: s
  * the one drawn behind it.
  */
 export const TitleBar: React.FC = () => {
-  const { status, queue, currentView } = useAppStore(
+  const { status, queue, currentView, overBackdrop } = useAppStore(
     useShallow((s) => ({
       status: s.status,
       queue: s.queue,
       currentView: drawnView(s),
+      // The Settings dialog is open, and its backdrop dims the row under the controls.
+      overBackdrop: !isMainView(s.currentView),
     })),
   );
   const t = useI18nStore((s) => s.t);
-  const wideWindow = useMediaQuery(`(min-width: ${WORKER_LABEL_MIN_WINDOW}px)`, true, { getInitialValueInEffect: false });
+  const textScale = useSystemTextScale();
+  const wideWindow = useMediaQuery(`(min-width: ${WORKER_LABEL_MIN_WINDOW * textScale}px)`, true, { getInitialValueInEffect: false });
   const narrowPane = useCaptionStore((s) => s.narrowIn.includes(currentView));
   const workerLabelled = wideWindow && !narrowPane;
   const agentTraces = useAgentRunStore((state) => state.traces);
@@ -163,7 +167,6 @@ export const TitleBar: React.FC = () => {
   const statusLabel = isProcessing
     ? fillTemplate(t('status.processing'), { count: String(queue.total) })
     : fillTemplate(t('status.queuePending'), { count: String(queuePending) });
-  const statusColor = isProcessing ? 'var(--mantine-color-warning)' : 'var(--mantine-color-accent)';
 
   return (
     <>
@@ -173,7 +176,7 @@ export const TitleBar: React.FC = () => {
         </Flex>
       )}
       {/* The window buttons end it at the window's edge; without them (macOS) it keeps a toolbar's inset. */}
-      <Flex ref={clusterRef} {...CAPTION_ROW} h={TOP_ROW_HEIGHT} pr={isMac ? 10 : 0} align="center" gap={6} className={`${styles.caption} ${styles.cluster}`}>
+      <Flex ref={clusterRef} {...CAPTION_ROW} h={TOP_ROW_HEIGHT} pr={isMac ? 10 : 0} align="center" gap={6} className={`${styles.caption} ${styles.cluster}`} data-over-backdrop={overBackdrop || undefined}>
         {/* Left of the browser-window button, so appearing and disappearing pushes nothing else. */}
         {hasQueueItems && (
           <Box
@@ -188,20 +191,9 @@ export const TitleBar: React.FC = () => {
               px={12}
               h={30}
               className={styles.statusBadge}
-              style={{
-                background: `color-mix(in srgb, ${statusColor} 14%, transparent)`,
-                color: statusColor,
-                border: `1px solid color-mix(in srgb, ${statusColor} 34%, transparent)`,
-                cursor: 'pointer',
-              }}
+              data-tone={isProcessing ? 'processing' : 'queued'}
             >
-              <Box
-                component="span"
-                w={7}
-                h={7}
-                display="inline-block"
-                style={{ borderRadius: '50%', flexShrink: 0, background: statusColor }}
-              />
+              <Box component="span" w={7} h={7} display="inline-block" className={styles.statusDot} />
               <ListOrdered size={12} />
               {statusLabel}
             </Group>

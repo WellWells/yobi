@@ -2,8 +2,9 @@ import { BrowserWindow, session } from 'electron';
 import { YOUTUBE_PARTITION, youtubeLane } from './flow/lanes';
 import { num, obj, str } from './flow/skills/jsonPick';
 import type { Json } from './flow/skills/jsonPick';
-import { SILENT_WEB_PREFERENCES, muteWindow, parkWindowOffscreen } from './silentWindow';
+import { SILENT_WEB_PREFERENCES, muteWindow, hideBeforeMapping, parkWindowOffscreen } from './silentWindow';
 import { userAgentForUrl } from './userAgent';
+import { carryYoutubeClearance } from './youtubeClearance';
 import type { YoutubeCaptionTrack } from './youtubeVideoInfo';
 import { youtubeWatchUrl } from '../shared/youtubeUrl';
 import { raceAbort } from './promiseRace';
@@ -215,9 +216,11 @@ async function readInWindow(videoId: string, track: YoutubeCaptionTrack, signal:
     // Mapped, not merely created: a never-shown window stalls rendering, and the watch page then
     // never builds its player. Transparent before it is mapped, so it never
     // flashes at its default spot before parking.
-    win.setOpacity(0);
+    hideBeforeMapping(win);
     win.showInactive();
     parkWindowOffscreen(win);
+    // Google's pass for this address, if a person answered its check (`youtubeClearance.ts`).
+    await carryYoutubeClearance(win.webContents.session);
     void win.loadURL(url).catch(() => {});
     while (Date.now() - started < CAPTIONS_READ_MS) {
       signal?.throwIfAborted();

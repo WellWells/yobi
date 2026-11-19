@@ -40,7 +40,7 @@ export const RunConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => 
         size="sm"
       />
       {lookedUp && (
-        <Text fz="xs" c="var(--mantine-color-warning)" data-run-relative="">{t('flow.skill.run.path.relative')}</Text>
+        <Text fz="xs" c="var(--warning-text)" data-run-relative="">{t('flow.skill.run.path.relative')}</Text>
       )}
       {script && (
         <Text fz="xs" c="var(--text-muted)" data-run-console="">{t('flow.skill.run.path.console')}</Text>

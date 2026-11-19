@@ -13,9 +13,9 @@ export const PROGRESS_ROW_STYLE = { display: 'flex', alignItems: 'center', gap: 
 const SLOT_STYLE = { flexShrink: 0, display: 'inline-flex', width: MARK_SLOT, justifyContent: 'center' } as const;
 
 function MarkIcon({ state }: { state: ProgressState }) {
-  if (state === 'done') return <Check size={11} color="var(--mantine-color-success)" />;
-  if (state === 'failed') return <X size={11} color="var(--mantine-color-error)" />;
-  if (state === 'softFailed') return <CircleX size={11} color="var(--mantine-color-warning)" />;
+  if (state === 'done') return <Check size={11} color="var(--success-text)" />;
+  if (state === 'failed') return <X size={11} color="var(--error-text)" />;
+  if (state === 'softFailed') return <CircleX size={11} color="var(--warning-text)" />;
   if (state === 'active') return <Loader size={10} />;
   if (state === 'skipped') return <CircleSlash size={10} color="var(--mantine-color-dimmed)" />;
   return <Circle size={9} color="var(--mantine-color-dimmed)" />;

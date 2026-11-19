@@ -27,9 +27,20 @@ export const NavItem: React.FC<{
   notice?: boolean;
   /** A tab in the row of tabs (a narrow dialog, as Claude's): its name alone on one line, as wide as it. */
   tab?: boolean;
+  /**
+   * In a nav with roving focus, whether this is its one Tab stop (the active page, or the first
+   * entry while searching; arrows walk the rest). Unset: every entry is a stop (a short list).
+   */
+  tabbable?: boolean;
   onClick: () => void;
-}> = ({ icon, label, active, hasMatch, alert = false, notice = false, tab = false, onClick }) => (
+}> = ({ icon, label, active, hasMatch, alert = false, notice = false, tab = false, tabbable = true, onClick }) => (
+  // A button, not Mantine's default `<a>` without href, which Tab skips (WCAG 2.1.1).
   <NavLink
+    component="button"
+    type="button"
+    data-nav-item
+    tabIndex={tabbable ? 0 : -1}
+    aria-current={active ? 'page' : undefined}
     label={label}
     leftSection={tab ? undefined : icon}
     noWrap={tab}
@@ -49,7 +60,8 @@ export const NavItem: React.FC<{
       root: {
         borderRadius: 'var(--radius)',
         fontSize: 'var(--font-size-base)',
-        color: active ? 'var(--mantine-color-accent)' : 'var(--mantine-color-default-color)',
+        // The accent as text, not the raw accent: #0969da on the selected fill was 3.96:1 (WCAG 1.4.3).
+        color: active ? 'var(--mantine-color-accent-text)' : 'var(--mantine-color-default-color)',
         background: active ? 'var(--mantine-color-accent-dim)' : undefined,
         boxShadow: alert ? 'inset 0 0 0 1px var(--mantine-color-error)' : undefined,
         ...(tab ? { width: 'auto', flex: '0 0 auto', paddingInline: 12 } : {}),

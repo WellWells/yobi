@@ -30,7 +30,7 @@ import {
   findChatMode,
   type ChatMode,
 } from '../../config/chatModes';
-import { renderServerIcon } from '../../config/connectorIcons';
+import { renderCandidateIcon } from '../../config/connectorIcons';
 import { composerNoticeText, pickComposerNotice } from '../../utils/composerNotice';
 import { looksLikeFlowRequest } from '../../../../shared/flowIntent';
 import { looksLikeWebSearchRequest } from '../../../../shared/webIntent';
@@ -54,7 +54,7 @@ import {
 } from '../../../../shared/types';
 import { shellBangCommand } from '../../../../shared/shellBang';
 import { attachmentApi, shellApi } from '../../api/electronApi';
-import { composerFrameStyle, SHELL_COLOR } from './composerFrame';
+import { composerFrameStyle, frameClickFocusesPrompt, SHELL_COLOR } from './composerFrame';
 import { mcpCommandFlowId, parseMcpCommandFlowId } from '../../../../shared/mcpCommand';
 import { composerConnectors, type KeywordCandidate } from '../../../../shared/connectorKeywords';
 import { desktopLinkFlowFor } from '../../../../shared/builtinFlows';
@@ -109,6 +109,12 @@ interface PromptInputAreaProps {
   webOff: boolean;
   onToggleWeb: () => void;
   onSetWeb: (on: boolean) => void;
+  /** Answers from the attached knowledge bases alone (`useConversationConnectors`). */
+  knowledgeOnly?: boolean;
+  onSetKnowledgeOnly?: (on: boolean) => void;
+  /** Documents "knowledge base only" is limited to (0 = whole bases), and lifting that limit. */
+  knowledgeFileCount?: number;
+  onWholeKnowledge?: () => void;
   /** Bumped when an agent run went online on its own; shows the same undo notice as a typed search. */
   autoWebSignal?: number;
   connectors: KeywordCandidate[];
@@ -163,7 +169,11 @@ interface SendSource {
 
 const NOOP = (): void => {};
 
-export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInputAreaProps>(({
+/*
+ * Memoised: ChatView draws again several times while a conversation opens, and its props then
+ * stay the same (only the connector ones change, between conversations). Keep them stable.
+ */
+export const PromptInputArea = React.memo(React.forwardRef<PromptInputAreaHandle, PromptInputAreaProps>(({
   t,
   activeModelUrl,
   onChangeModel,
@@ -188,6 +198,10 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
   webOff,
   onToggleWeb,
   onSetWeb,
+  knowledgeOnly = false,
+  onSetKnowledgeOnly,
+  knowledgeFileCount = 0,
+  onWholeKnowledge,
   autoWebSignal = 0,
   connectors,
   activeConnectorIds,
@@ -441,7 +455,7 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
   // One brand mark only when one connector is named. Showing LINE's glyph next to "LINE, Notion"
   // reads as "LINE did this", so several fall back to the generic connector icon.
   const noticeIcon = composerNotice?.kind === 'connectors'
-    ? renderServerIcon(autoAttachedConnectors.length === 1 ? autoAttachedConnectors[0].url : undefined, 15)
+    ? renderCandidateIcon(autoAttachedConnectors.length === 1 ? autoAttachedConnectors[0] : undefined, 15)
     : composerNotice?.kind === 'flow'
       ? <AgentGlyph size={15} />
       : composerNotice?.kind === 'web' ? <Globe size={15} />
@@ -772,7 +786,7 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
   return (
     <Stack
       gap={8}
-      bg="var(--mantine-color-body)"
+      bg="var(--page-bg)"
       p="12px"
       w="100%"
       maw={centered ? CENTERED_MAX_WIDTH : undefined}
@@ -809,7 +823,7 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
         withBorder
         onFocusCapture={() => setInputFocused(true)}
         onBlurCapture={() => setInputFocused(false)}
-        onClick={() => promptInputRef.current?.focus()}
+        onClick={(event) => { if (frameClickFocusesPrompt(event)) promptInputRef.current?.focus(); }}
         onPaste={handlePaste}
         style={composerFrameStyle({ temporary: tempChatMode, shell: shellDraft, focused: inputFocused })}
       >
@@ -846,11 +860,14 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
           <AppTextarea
             ref={promptInputRef}
             tone="prompt"
+            aria-label={t('a11y.f.prompt')}
             value={promptInput}
             onChange={(event) => { setPromptInput(event.target.value); setMenuDismissed(false); }}
             onKeyDown={handleKeyDown}
             placeholder={placeholder}
             minRows={2}
+            // Shift+Tab cycles the model only here; elsewhere it moves focus back (WCAG 2.1.1).
+            data-shortcut-area="composer"
           />
         </Box>
 
@@ -864,12 +881,18 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
           />
           <ModeDropdown
             value={chatMode}
-            onChangeMode={pickMode}
+            // Not `pickMode`: a row of an open menu keeps focus in the menu (a mouse click still
+            // reaches the prompt through the frame's own click).
+            onChangeMode={onPickMode ?? onChangeMode}
             web={web}
             onToggleWeb={onToggleWeb}
             connectors={connectors}
             activeConnectorIds={activeConnectorIds}
             onToggleConnector={onToggleConnector}
+            knowledgeOnly={knowledgeOnly}
+            {...(onSetKnowledgeOnly ? { onSetKnowledgeOnly } : {})}
+            knowledgeFileCount={knowledgeFileCount}
+            {...(onWholeKnowledge ? { onWholeKnowledge } : {})}
             t={t}
             menuDirection={menuDirection}
           />
@@ -887,9 +910,9 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
               <ActionIcon
                 onClick={onStop}
                 aria-label={t('input.stop')}
+                variant="filled"
                 radius="xl"
                 size={34}
-                style={{ background: 'var(--mantine-color-accent)', color: '#fff' }}
               >
                 <Square size={12} fill="currentColor" strokeWidth={0} />
               </ActionIcon>
@@ -900,11 +923,11 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
               onClick={handleSendPrompt}
               disabled={!promptInput.trim()}
               aria-label={t('input.send')}
+              variant="filled"
               radius="xl"
               size={34}
               style={{
-                background: promptInput.trim() ? 'var(--mantine-color-accent)' : 'var(--mantine-color-default)',
-                color: promptInput.trim() ? '#fff' : 'var(--mantine-color-dimmed)',
+                ...(promptInput.trim() ? {} : { background: 'var(--mantine-color-default)', color: 'var(--mantine-color-dimmed)' }),
                 transition: 'background 0.15s ease, box-shadow 0.15s ease',
               }}
             >
@@ -918,7 +941,7 @@ export const PromptInputArea = React.forwardRef<PromptInputAreaHandle, PromptInp
       </Box>
     </Stack>
   );
-});
+}));
 
 PromptInputArea.displayName = 'PromptInputArea';
 

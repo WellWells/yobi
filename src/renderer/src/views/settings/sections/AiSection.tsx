@@ -1,5 +1,6 @@
 import React from 'react';
 import { Box, Group, Stack, Text } from '@mantine/core';
+import { SearchSection } from '../FreezeWhileHidden';
 import { Eye, RotateCcw, SlidersHorizontal, Timer, MonitorPlay } from 'lucide-react';
 import { NumberStepper } from '../NumberStepper';
 import { AppButton } from '../../../components/AppButton';
@@ -27,7 +28,9 @@ type PromptPrefs = ReturnType<typeof usePromptPrefs>;
 const PROMPT_INPUT_STYLES = {
   input: {
     background: 'var(--mantine-color-body)',
-    border: '1.5px solid var(--mantine-color-default-border)',
+    // Width only: the colour is Mantine's --input-bd (globals.css: --border-control, --focus-ring on
+    // focus). A decorative border here is 1.24:1 and hides focus (WCAG 1.4.11).
+    borderWidth: '1.5px',
     borderRadius: 'var(--radius-sm)',
     color: 'var(--mantine-color-default-color)',
     fontSize: 'var(--font-size-base)',
@@ -96,7 +99,7 @@ export const AiSection: React.FC<Props> = ({
   system, prefs, t, localeLabel, showSection, sectionGap, children,
 }) => (
   <Box>
-    <Box display={showSection(TAG_SETS.prompt, 'ai') ? 'block' : 'none'}>
+    <SearchSection shown={showSection(TAG_SETS.prompt, 'ai')}>
       <SectionCard style={{ marginBottom: sectionGap }}>
 
         <SectionTitle icon={<SlidersHorizontal size={15} />} label={t('settings.prompt.persona.title')} />
@@ -108,6 +111,7 @@ export const AiSection: React.FC<Props> = ({
             alignStart
             control={
               <ToggleSwitch
+                aria-label={t('settings.prompt.localeSync.title')}
                 checked={prefs.syncSystemLanguageToModel}
                 onChange={() => { void prefs.handleToggleSyncSystemLanguageToModel(); }}
               />
@@ -186,9 +190,9 @@ export const AiSection: React.FC<Props> = ({
 
       <PromptPreviewCard prefs={prefs} localeLabel={localeLabel} t={t} sectionGap={sectionGap} />
 
-    </Box>
+    </SearchSection>
 
-    <Box display={showSection(TAG_SETS.youtube, 'ai') ? 'block' : 'none'}>
+    <SearchSection shown={showSection(TAG_SETS.youtube, 'ai')}>
       <SectionCard style={{ marginBottom: sectionGap }}>
         <SectionTitle
           icon={<MonitorPlay size={15} />}
@@ -233,13 +237,14 @@ export const AiSection: React.FC<Props> = ({
         <Text fz="var(--font-size-sm)" mt={6} c="dimmed">{t('settings.youtube.prompt.hint')}</Text>
         {prefs.youtubeSaveFailed && <StatusLine tone="error">{t('settings.youtube.prompt.saveFailed')}</StatusLine>}
       </SectionCard>
-    </Box>
+    </SearchSection>
 
     {children}
 
     <SectionCard style={{ marginBottom: sectionGap, display: showSection(TAG_SETS.timeout, 'ai') ? 'block' : 'none' }}>
       <SectionTitle icon={<Timer size={15} />} label={t('settings.responseTimeout.title')} />
       <NumberStepper
+        aria-label={t('settings.responseTimeout.title')}
         value={system.responseTimeoutSec}
         input={system.responseTimeoutInput}
         onInputChange={system.setResponseTimeoutInput}
@@ -256,7 +261,7 @@ export const AiSection: React.FC<Props> = ({
         fz="var(--font-size-sm)"
         mt={8}
         lh={1.6}
-        c={system.timeoutInvalid ? 'var(--mantine-color-error)' : 'dimmed'}
+        c={system.timeoutInvalid ? 'var(--error-text)' : 'dimmed'}
       >
         {system.timeoutInvalid
           ? t('settings.responseTimeout.invalid')

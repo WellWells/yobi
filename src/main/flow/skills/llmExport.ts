@@ -42,6 +42,7 @@ export async function exportLlmAnswer(
     cardTheme: style.cardTheme,
     width: requestedWidth ?? style.width,
     margin: style.margin,
+    cardOpacity: style.cardOpacity,
     pixelRatio: style.pixelRatio,
   };
   const provider = getProviderLabel(providerUrl);

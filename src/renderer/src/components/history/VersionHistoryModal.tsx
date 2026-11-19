@@ -69,6 +69,9 @@ export const VersionHistoryModal: React.FC<VersionHistoryModalProps> = ({
               {items.map((item) => (
                 <NavLink
                   key={item.id}
+                  component="button"
+                  type="button"
+                  aria-current={item.id === selectedId ? 'true' : undefined}
                   active={item.id === selectedId}
                   onClick={() => onSelect(item.id)}
                   label={<Text fz="var(--font-size-sm)" style={NUMERIC}>{item.time}</Text>}

@@ -25,9 +25,9 @@ function ResultMark({ result, t }: { result: ResearchResult; t: Translate }) {
   const label = result.state ? t(`agent.research.mark.${result.state}`) : undefined;
   return (
     <Box component="span" style={SLOT_STYLE} aria-label={label} title={label}>
-      {result.state === 'used' && <Check size={11} color="var(--mantine-color-success)" />}
+      {result.state === 'used' && <Check size={11} color="var(--success-text)" />}
       {result.state === 'read' && <Check size={11} color="var(--mantine-color-dimmed)" />}
-      {result.state === 'unreadable' && <X size={11} color="var(--mantine-color-error)" />}
+      {result.state === 'unreadable' && <X size={11} color="var(--error-text)" />}
     </Box>
   );
 }
@@ -59,7 +59,7 @@ function ResultRow({ result, t }: { result: ResearchResult; t: Translate }) {
 function SearchRow({ search, t }: { search: ResearchSearch; t: Translate }) {
   const [open, setOpen] = useState(false);
   const count = search.refused
-    ? <Text component="span" style={{ ...LINE_STYLE, flexShrink: 0, color: 'var(--mantine-color-error)' }}>· {t('agent.research.refused')}</Text>
+    ? <Text component="span" style={{ ...LINE_STYLE, flexShrink: 0, color: 'var(--error-text)' }}>· {t('agent.research.refused')}</Text>
     : <Text component="span" style={{ ...LINE_STYLE, flexShrink: 0 }}>· {fill(t('agent.research.resultCount'), { count: search.results.length })}</Text>;
   const row = (
     <>

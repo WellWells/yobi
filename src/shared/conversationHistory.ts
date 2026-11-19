@@ -159,13 +159,15 @@ export function keepConversationId(current: string, thread: ThreadMeta): ThreadM
 export function threadAfterRestore(version: ThreadMeta, current: ThreadMeta): ThreadMeta {
   const {
     threadUrl: _url, threadTurns: _turns, threadAt: _at, summary: _summary, summarizedTurns: _covered,
-    id: _id, mcp: _mcp, web: _web, agent: _agent, notion: _notion, pinned: _pinned, ...rest
+    id: _id, mcp: _mcp, kb: _kb, kbOnly: _kbOnly, web: _web, agent: _agent, notion: _notion, pinned: _pinned, ...rest
   } = version;
   return {
     ...rest,
     // A Notion document stays linked to the page it is now; restoring old text does not unlink it.
     ...(current.notion !== undefined ? { notion: current.notion } : {}),
     ...(current.mcp !== undefined ? { mcp: current.mcp } : {}),
+    ...(current.kb !== undefined ? { kb: current.kb } : {}),
+    ...(current.kbOnly === true ? { kbOnly: true } : {}),
     ...(current.web !== undefined ? { web: current.web } : {}),
     ...(current.agent !== undefined ? { agent: current.agent } : {}),
     // Restoring old text does not pin or unpin the conversation.

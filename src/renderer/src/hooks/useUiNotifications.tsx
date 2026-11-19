@@ -5,6 +5,7 @@ import { fileApi, ipcEvents, systemApi } from '../api/electronApi';
 import { useAppStore } from '../store/appStore';
 import { useI18nStore } from '../store/i18nStore';
 import { useSecretHealthStore } from '../store/secretHealthStore';
+import { announce } from '../store/announcerStore';
 import { SECRET_SCOPE_META } from '../../../shared/types';
 import type { UiNotificationPayload } from '../../../shared/types';
 
@@ -145,7 +146,13 @@ export function showAppNotice(notice: AppNotice): string {
   let autoClose: number | false = level === 'error' ? DISMISS_MS_ERROR : DISMISS_MS;
   if (notice.undo) autoClose = UNDO_NOTICE_MS;
   else if (hasActions) autoClose = false;
+  // Screen readers (WCAG 4.1.3): an error is an alert, said at once. Anything else goes through the
+  // window's polite live region, which is already in the DOM — a status region inserted together
+  // with its text is often missed — so the card itself is a plain group, not a second announcement.
+  const isError = level === 'error';
+  if (!isError) announce([heading, detail].filter(Boolean).join(' '));
   id = notifications.show({
+    role: isError ? 'alert' : 'group',
     title: heading,
     message: noticeBody(detail, notice, () => id),
     autoClose,

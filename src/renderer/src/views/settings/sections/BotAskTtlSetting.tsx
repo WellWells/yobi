@@ -19,8 +19,9 @@ interface Props {
 
 /**
  * How long the next message in a chat counts as the answer when the AI asked something back.
- * One value for every bot (it lives with the shared commands config), shown in each bot's
- * reply section; both copies read and write the same hook.
+ * One value for every bot (it lives with the shared commands config), so it is shown once, in
+ * the shared built-in commands card — not in each platform's card, where every copy looked like
+ * a setting of that platform alone.
  */
 export const BotAskTtlSetting: React.FC<Props> = ({ botCommands, t }) => {
   const saved = botCommands.builtinCommands?.askTtlMinutes;

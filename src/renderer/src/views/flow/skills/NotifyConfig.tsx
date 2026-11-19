@@ -30,7 +30,7 @@ export const NotifyConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) 
     <Stack gap="xs">
       {!notificationsOn && (
         <Group gap="xs" align="center" wrap="nowrap">
-          <Text fz="xs" c="var(--mantine-color-warning)" style={{ flex: 1 }}>{t('flow.skill.notify.off')}</Text>
+          <Text fz="xs" c="var(--warning-text)" style={{ flex: 1 }}>{t('flow.skill.notify.off')}</Text>
           <AppButton
             variant="light"
             size="compact-xs"

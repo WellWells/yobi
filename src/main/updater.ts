@@ -22,6 +22,8 @@ let checking = false;
 /** The update being downloaded or waiting to install; a check repeats it instead of starting over. */
 let pendingUpdate: UpdateAvailablePayload | null = null;
 let readyToInstall = false;
+/** What the last check that finished said, for a caller that reads the state instead of the events. */
+let lastCheck: 'latest' | 'error' | null = null;
 let sendLogRef: UpdaterDeps['sendLog'] = () => {};
 let sendToRendererRef: UpdaterDeps['sendToRenderer'] = () => {};
 
@@ -94,6 +96,7 @@ export function initializeUpdater(deps: UpdaterDeps): void {
     const version = normalizeVersion(readStringField(info, 'version'));
     const releaseUrl = resolveReleaseUrl(info, version);
     const payload: UpdateAvailablePayload = { version, releaseUrl, autoDownload: selfInstalling };
+    lastCheck = null;
     sendLogRef(`⬆️ Update available: ${version}`);
     sendToRendererRef(IPC.UPDATE_AVAILABLE, payload);
 
@@ -131,6 +134,7 @@ export function initializeUpdater(deps: UpdaterDeps): void {
   });
 
   autoUpdater.on('update-not-available', () => {
+    lastCheck = 'latest';
     sendLogRef('✅ Already on latest version');
     sendToRendererRef(IPC.UPDATE_NOT_AVAILABLE);
   });
@@ -141,6 +145,7 @@ export function initializeUpdater(deps: UpdaterDeps): void {
     // A failed download or install falls back to the manual route, and the next check retries.
     pendingUpdate = null;
     readyToInstall = false;
+    lastCheck = 'error';
     // Offline included: a check that never reached the server has not shown we are up to date.
     sendToRendererRef(IPC.UPDATE_ERROR);
   });
@@ -180,4 +185,35 @@ export function installUpdate(): boolean {
   if (!readyToInstall) return false;
   autoUpdater.quitAndInstall(true, true);
   return true;
+}
+
+/**
+ * Where updates stand, for the Yobi connector: `unsupported` where this build never checks (dev,
+ * the Store), then what the last finished check found. A newer version names itself; `downloaded`
+ * is one the app can install now (`installUpdate`).
+ */
+export interface UpdateState {
+  current: string;
+  state: 'unsupported' | 'unchecked' | 'checking' | 'latest' | 'error' | 'available' | 'downloaded';
+  version?: string;
+  releaseUrl?: string;
+  /** This build replaces itself; elsewhere a newer version is downloaded by hand. */
+  installsItself: boolean;
+}
+
+export function updateState(): UpdateState {
+  const current = getAppVersion();
+  const installsItself = installsUpdatesItself();
+  if (process.windowsStore || !app.isPackaged || !initialized) return { current, state: 'unsupported', installsItself };
+  if (pendingUpdate) {
+    return {
+      current,
+      state: readyToInstall ? 'downloaded' : 'available',
+      version: pendingUpdate.version,
+      releaseUrl: pendingUpdate.releaseUrl,
+      installsItself,
+    };
+  }
+  if (checking) return { current, state: 'checking', installsItself };
+  return { current, state: lastCheck ?? 'unchecked', installsItself };
 }

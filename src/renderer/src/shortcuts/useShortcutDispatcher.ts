@@ -1,6 +1,8 @@
 import { useEffect } from 'react';
-import { activeCombos, digitPrefixOf, isDispatchable, matchesCombo, SHORTCUTS } from '../../../shared/shortcuts';
-import type { ShortcutDef, ShortcutOverride } from '../../../shared/shortcuts';
+import {
+  activeCombos, digitPrefixOf, isDispatchable, matchesCombo, SHORTCUT_AREA_ATTR, SHORTCUTS,
+} from '../../../shared/shortcuts';
+import type { ShortcutDef, ShortcutFocusArea, ShortcutOverride } from '../../../shared/shortcuts';
 import { SETTINGS_DIALOG_ID } from '../components/SettingsDialog';
 import { NAV_ORDER, useAppStore } from '../store/appStore';
 import type { View } from '../store/appStore';
@@ -30,6 +32,11 @@ function modalIsOpen(): boolean {
  */
 export function isMenuTextField(target: EventTarget | null): boolean {
   return isTypingTarget(target) && target instanceof HTMLElement && target.closest('[data-menu-dropdown]') !== null;
+}
+
+/** Whether the key was pressed on (or inside) the element marked as `area`. */
+export function isInFocusArea(target: EventTarget | null, area: ShortcutFocusArea): boolean {
+  return target instanceof Element && target.closest(`[${SHORTCUT_AREA_ATTR}="${area}"]`) !== null;
 }
 
 function digitCombos(def: ShortcutDef): string[] {
@@ -80,6 +87,7 @@ function dispatch(event: KeyboardEvent, phase: 'bubble' | 'capture'): void {
     if (!matched) continue;
 
     if (def.guards?.requireNoModal && modalIsOpen()) continue;
+    if (def.guards?.requireFocusIn && !isInFocusArea(event.target, def.guards.requireFocusIn)) continue;
     if (def.guards?.blockWhileTyping && isTypingTarget(event.target)) continue;
 
     const handler = pickHandler(handlers[def.id], currentView);

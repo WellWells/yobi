@@ -89,6 +89,26 @@ const BubbleBody: React.FC<{ request: MarkdownCaptureRequest }> = ({ request: { 
   </div>
 );
 
+/** Only what changes the words on the card; the look (background, opacity, margin, width) does not. */
+function sameContent(prev: { request: MarkdownCaptureRequest }, next: { request: MarkdownCaptureRequest }): boolean {
+  const [a, b] = [prev.request, next.request];
+  return a.payload === b.payload
+    && a.options.cardLayout === b.options.cardLayout
+    && a.options.showPrompt === b.options.showPrompt
+    && a.options.showProvider === b.options.showProvider
+    && a.options.showTimestamp === b.options.showTimestamp
+    && a.options.showTokens === b.options.showTokens;
+}
+
+/**
+ * The markdown, parsed and highlighted, kept across look changes: a preview re-renders on every
+ * swatch hover and slider step, and re-parsing a long document each time is what made it lag.
+ * The code theme still follows the card through its context.
+ */
+const CardContent = React.memo<{ request: MarkdownCaptureRequest }>(({ request }) => (
+  request.options.cardLayout === 'bubble' ? <BubbleBody request={request} /> : <DocumentBody request={request} />
+), sameContent);
+
 interface CaptureCardProps {
   request: MarkdownCaptureRequest;
   rootId?: string;
@@ -107,7 +127,7 @@ export const CaptureCard: React.FC<CaptureCardProps> = ({ request, rootId }) => 
           {...(rootId ? { id: rootId } : {})}
           className="capture-card-root"
           style={{
-            ...captureCardCssVars(options.cardTheme),
+            ...captureCardCssVars(options.cardTheme, { opacity: options.cardOpacity, background: options.background }),
             ...cardReadingVars(request.readingFont),
             width: options.width,
             background: options.background,
@@ -122,7 +142,7 @@ export const CaptureCard: React.FC<CaptureCardProps> = ({ request, rootId }) => 
               {options.showTokens && payload.tokensTotal && (
                 <div className="capture-total-tokens">{payload.tokensTotal}</div>
               )}
-              {bubble ? <BubbleBody request={request} /> : <DocumentBody request={request} />}
+              <CardContent request={request} />
             </article>
           </div>
         </div>

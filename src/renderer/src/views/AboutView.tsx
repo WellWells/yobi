@@ -148,13 +148,13 @@ export const AboutView = React.memo(() => {
               <Group justify="space-between" align="center" wrap="nowrap">
                 <Stack gap={2} style={{ minWidth: 0 }}>
                   <Group gap="xs" wrap="nowrap">
-                    <Box c={status === 'failed' ? 'var(--mantine-color-error)' : hasNews ? 'var(--mantine-color-accent)' : 'dimmed'}>
+                    <Box c={status === 'failed' ? 'var(--error-text)' : hasNews ? 'var(--mantine-color-accent)' : 'dimmed'}>
                       <RefreshCw
                         size={13}
                         className={isBusy ? styles.spinning : undefined}
                       />
                     </Box>
-                    <Text fz="var(--font-size-sm)" fw={600} c={status === 'failed' ? 'var(--mantine-color-error)' : undefined}>
+                    <Text fz="var(--font-size-sm)" fw={600} c={status === 'failed' ? 'var(--error-text)' : undefined}>
                       {statusTitle}
                     </Text>
                   </Group>

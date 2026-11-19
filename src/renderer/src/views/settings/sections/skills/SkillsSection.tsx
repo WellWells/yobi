@@ -1,10 +1,13 @@
 import React, { useState } from 'react';
-import { ActionIcon, Badge, Box, Group, Menu, Stack, Text, Tooltip } from '@mantine/core';
+import { ActionIcon, Badge, Group, Menu, Stack, Text } from '@mantine/core';
+import { SearchSection } from '../../FreezeWhileHidden';
 import {
   Bot, Download, ExternalLink, FileArchive, Folder, FolderOpen, Link, ListChecks, EllipsisVertical, Pencil, Plus, Puzzle, RefreshCw, Trash, Upload,
 } from 'lucide-react';
 import { ClaudeIcon, OpenAiIcon } from '../../../../config/brandIcons';
 import { AppButton } from '../../../../components/AppButton';
+import { DangerMenuItem } from '../../../../components/DangerMenuItem';
+import { TooltipTarget } from '../../../../components/TooltipTarget';
 import { EmptyState } from '../../../../components/EmptyState';
 import { WebDialog } from '../../../../components/WebDialog';
 import { SectionCard, SectionTitle, StatusLine, ToggleSwitch } from '../../components';
@@ -77,11 +80,11 @@ const SkillRow: React.FC<{
         <ToggleSwitch checked={skill.enabled} onChange={onToggle} aria-label={skill.name} />
         <Menu position="bottom-end" withinPortal zIndex={Z_POPOVER}>
           <Menu.Target>
-            <Tooltip label={t('common.moreActions')} position="bottom">
+            <TooltipTarget label={t('common.moreActions')} position="bottom">
               <ActionIcon variant="subtle" size={30} aria-label={t('common.moreActions')}>
                 <EllipsisVertical size={15} />
               </ActionIcon>
-            </Tooltip>
+            </TooltipTarget>
           </Menu.Target>
           <Menu.Dropdown>
             {skill.update && (
@@ -95,7 +98,7 @@ const SkillRow: React.FC<{
             <Menu.Item leftSection={<Upload size={14} />} onClick={() => { void skillsApi.exportZip(skill.name); }}>
               {t('settings.skills.export')}
             </Menu.Item>
-            <Menu.Item leftSection={<Trash size={14} />} c="red" onClick={onDelete}>{t('settings.skills.delete')}</Menu.Item>
+            <DangerMenuItem leftSection={<Trash size={14} />} onClick={onDelete}>{t('settings.skills.delete')}</DangerMenuItem>
           </Menu.Dropdown>
         </Menu>
       </Group>
@@ -145,7 +148,7 @@ export const SkillsSection: React.FC<Props> = ({ t, showSection, sectionGap }) =
   const fromGithub = skills?.some((skill) => skill.source.startsWith('https://github.com/')) ?? false;
 
   return (
-    <Box display={visible ? 'block' : 'none'}>
+    <SearchSection shown={visible}>
       <BundledSkillsCard
         skills={bundled}
         t={t}
@@ -244,6 +247,6 @@ export const SkillsSection: React.FC<Props> = ({ t, showSection, sectionGap }) =
         }}
         onCancel={() => setConfirmDelete(null)}
       />
-    </Box>
+    </SearchSection>
   );
 };

@@ -217,10 +217,10 @@ const SECTIONED_GROUPS_RULE =
   '- TRANSCRIPT SHAPE: when the transcript carries "## <group name>" headings, each one starts a DIFFERENT group with different people. Keep them apart, and never carry a name, a decision or a commitment from one across into another. With no such heading the whole transcript is a single group.';
 
 export function telegramDigestPrompt(locale: string): string {
-  return `Summarize what these Telegram groups talked about over the last day. The transcript below is one line per message, oldest first, under date lines.
+  return `Summarize what these Telegram groups talked about over the last day. The transcript below is one line per message, oldest first, under date lines. A line may carry "#<number>" after its time: that number is the message's id.
 
 Output exactly:
-- One short paragraph per group, under its group name, on what was actually discussed.
+- Under each group name, its topics, the most discussed first. Per topic: a short title line, then one to three bullets on what was actually said and by whom, then the link line described under LINKS. Fold small talk that leads nowhere into one closing "Other chatter" line instead of a topic.
 - A "Decisions / open questions" bullet list. Name the group on each bullet when there is more than one. Omit the heading entirely if the transcript supports none.
 - A "Waiting on" line naming who owes what. Omit it if the transcript does not say.
 
@@ -230,11 +230,18 @@ ${outputOnlyRule('the first group name')}
 ${SECTIONED_GROUPS_RULE}
 - Use only what the transcript says. Never invent a name, a number or a commitment.
 - Pictures and files appear as a short placeholder such as [photo]. Mention one only when the conversation turns on it.
+- Never copy the "#<number>" ids into the prose; they exist only for the links.
+
+LINKS:
+- MESSAGE LINKS below gives "<group name>: <prefix>" for each group whose messages can be linked. End each topic of such a group with one line holding a Markdown link: its text means "Back to the discussion" in the output language, its URL is that group's prefix followed by the digits of the id of the topic's first message (prefix https://t.me/c/123/ and #456 give https://t.me/c/123/456).
+- Use only ids that appear in that group's lines. A group missing from MESSAGE LINKS, or a topic with no id, gets no link line.
 
 ${localeInstruction(locale)}
 
 Groups: {{tg_1.groupNames}}
 From {{tg_1.firstAt}} to {{tg_1.lastAt}}
+MESSAGE LINKS:
+{{tg_1.messageLinks}}
 Transcript:
 {{tg_1}}`;
 }

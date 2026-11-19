@@ -6,6 +6,7 @@ import { runAgent } from '../flow/agent/agentEngine';
 import { skillTestScope } from '../flow/agent/agentTools';
 import type { FlowExecutorDeps } from '../flow/types';
 import { sendLog } from '../helpers';
+import { getByokContextTokensForUrl } from '../providers/byokModelLimits';
 import type { AgentSkillEntry } from './skillStore';
 import { stageSkillDraft } from './skillTextFiles';
 
@@ -78,6 +79,8 @@ export async function runSkillTry(run: SkillTryRun): Promise<SkillTryResult> {
       skillEntries: entries,
       skillDirOf: (name) => (name === draft.name ? staged.dir : null),
       maxTurns: TRY_MAX_TURNS,
+      // A try on a BYOK key is held to the sizes the real run would get.
+      getContextTokens: getByokContextTokensForUrl,
       onTrace: watcher.onTrace,
       ...(run.signal ? { signal: run.signal } : {}),
     });

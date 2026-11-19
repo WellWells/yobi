@@ -7,7 +7,10 @@ import { executeAgentRun } from './chat/agentCommand';
 import {
   BOT_CHAT_TOOL_SCOPE, BOT_TOOL_SCOPE, withFlowCapability, withLocalCapability, withPictureCapability, withShellCapability,
   withDocumentCapability, withWebCapability,
+  withKnowledgeCapability,
 } from './flow/agent/agentTools';
+import { knowledgeEntriesFor } from './flow/agent/agentKnowledge';
+import { withoutKbLinks } from '../shared/knowledgeBase';
 import { runSearchCommand } from './chat/searchCommand';
 import { runImageCommand } from './chat/imageCommand';
 import type { ImageRunOutcome } from './chat/imageCommand';
@@ -23,11 +26,12 @@ import { getProviderLabel } from './providers';
 import type { FlowManager } from './flow';
 import { botChatMemoryResolver } from './chat/agentMemory';
 import { withMemoryNotes } from './memory';
-import { applyBotRunGrants, botAccessDeniedText, botChatApprovesConnectorChanges, botChatFlowBuilder, botChatRights } from './botPermissions';
+import { applyBotRunGrants, botAccessDeniedText, botChatApprovesConnectorChanges, botChatFlowBuilder, botChatRights, botRunConnectorScope } from './botPermissions';
 import { othersTextApprovals, othersTextRights, runCarriesOthersText } from './botPermissions/othersText';
 import { parseBotChatKey } from './memory/memoryContext';
 import { discloseBotConnectors, rememberBotConnectors } from './botConnectorScope';
 import { builtinCommandGrant, rightsAllowBuiltin } from '../shared/botPermissions';
+import { BUILTIN_YOBI_SERVER_ID } from '../shared/builtinConnectors';
 
 type Strings = Record<string, string>;
 
@@ -181,7 +185,8 @@ function toResult(
 ): BotBuiltinRunResult {
   const elapsedSeconds = ((Date.now() - startedAt) / 1_000).toFixed(1);
   const providerLabel = getProviderLabel(targetUrl);
-  const answer = outcome.answer?.trim() ?? '';
+  // A cited document opens only on this computer: the chat gets its name, the saved conversation the link.
+  const answer = withoutKbLinks(outcome.answer?.trim() ?? '');
 
   if (!outcome.success || !answer) {
     // A failed turn may still be in the file, someone else's words with it: the mark is kept.
@@ -244,7 +249,7 @@ function imageResult(outcome: ImageRunOutcome, strings: Strings, startedAt: numb
   };
 }
 
-type BotRunScope = Pick<AgentRunRequest, 'toolScope' | 'linkQuestions' | 'allowedMcpServerIds' | 'shellInChat' | 'connectorChangesInChat' | 'flowsInChat'>;
+type BotRunScope = Pick<AgentRunRequest, 'toolScope' | 'linkQuestions' | 'allowedMcpServerIds' | 'deniedMcpServerIds' | 'shellInChat' | 'connectorChangesInChat' | 'flowsInChat'>;
 
 /** What the person behind a chat key may approve in the chat, read now (a start and every resume). */
 interface BotChatApprovals {
@@ -297,17 +302,26 @@ function botRunScope(state: AgentRunState, approvals: BotChatApprovals, chatKey:
   // either kit; with it, `draw_image` is offered whatever the words and the model decides.
   // A file of the answer is the answer in another form: either kit, wherever the chat can take one.
   const platform = parseBotChatKey(chatKey)?.platform;
-  const toolScope = withDocumentCapability(withFlowCapability(withPictureCapability(withWebCapability(
+  // The knowledge bases this account holds (`kb:<id>`, all for the owner and an admin), agent kit only.
+  const knowledge = full ? grants?.knowledge ?? 'none' : 'none';
+  const toolScope = withKnowledgeCapability(withDocumentCapability(withFlowCapability(withPictureCapability(withWebCapability(
     withShellCapability(withLocalCapability(full ? BOT_TOOL_SCOPE : BOT_CHAT_TOOL_SCOPE, grants?.local === true), shell),
     web,
-  ), web), flows !== null), platform ? SENDS_FILES[platform] : false);
-  const connectors = grants?.connectors;
+  ), web), flows !== null), platform ? SENDS_FILES[platform] : false), knowledgeEntriesFor(knowledge === 'none' ? [] : knowledge, [], ''));
+  const reach = botRunConnectorScope(grants);
+  const manage = full && grants?.manage === true;
+  // The owner's own chat asks about any connector's change; anyone else holding `manage` only
+  // about Yobi's own (each still confirmed in the chat), and every other connector's is refused.
+  const changes = full && approvals.connectorChanges && grants?.connectors !== 'none'
+    ? { connectorChangesInChat: true as const }
+    : manage ? { connectorChangesInChat: [BUILTIN_YOBI_SERVER_ID] } : {};
   return {
     toolScope,
     linkQuestions: true,
-    ...(Array.isArray(connectors) ? { allowedMcpServerIds: connectors } : {}),
+    ...(reach.allowed ? { allowedMcpServerIds: reach.allowed } : {}),
+    ...(reach.denied ? { deniedMcpServerIds: reach.denied } : {}),
     ...(shell ? { shellInChat: true } : {}),
-    ...(full && approvals.connectorChanges && connectors !== 'none' ? { connectorChangesInChat: true } : {}),
+    ...changes,
     ...(flows ? { flowsInChat: flows } : {}),
   };
 }

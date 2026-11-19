@@ -14,6 +14,9 @@ export interface KeywordCandidate {
   name: string;
   url: string;
   connected: boolean;
+  /** A knowledge base (`kb:<id>`), offered in its own list; its aliases match like its name. */
+  knowledge?: boolean;
+  aliases?: readonly string[];
 }
 
 /** A one-character name would answer for half the alphabet, so it never becomes a keyword. */
@@ -63,6 +66,7 @@ function keywordsFor(candidate: KeywordCandidate): string[] {
   const entry = findCatalogEntry(candidate.url);
   const words = [
     candidate.name,
+    ...(candidate.aliases ?? []),
     ...(entry ? [entry.name, ...(entry.keywords ?? [])] : []),
     ...(findBuiltinConnector(candidate.id)?.keywords ?? []),
   ];

@@ -24,11 +24,27 @@ import { appQueueState, type QueueManager } from '../queueManager';
 import type { TelegramRuntime } from '../telegram';
 import type { LineRuntime } from '../line';
 import type { SocketBotRuntimes } from './socketBotSetup';
+import type { YobiControlHost } from '../yobiControl/yobiControlHost';
 
 export function broadcastMergedQueueState(queue: QueueManager, flowManager: FlowManager | null): void {
   const state = appQueueState(queue, flowManager);
   sendToRenderer(IPC.QUEUE_UPDATE, state);
   sendToRenderer(IPC.STATUS, state.status);
+}
+
+/** What the Yobi connector reaches of the flows and the queue (`yobiControl/yobiControlHost.ts`). */
+export function yobiControlHostFor(flowManager: FlowManager, queue: QueueManager): YobiControlHost {
+  return {
+    listFlows: () => flowManager.getAll(),
+    setFlowsEnabled: async (ids, enabled) => {
+      const before = new Map(flowManager.getAll().map((flow) => [flow.id, flow.enabled]));
+      const flows = await flowManager.setEnabledMany([...ids], enabled);
+      const changed = flows.filter((flow) => ids.includes(flow.id) && before.get(flow.id) !== flow.enabled);
+      for (const flow of changed) sendToRenderer(IPC.FLOW_UPDATED, flow);
+      return changed.map((flow) => flow.id);
+    },
+    queueSize: () => appQueueState(queue, flowManager).total,
+  };
 }
 
 export function initFlowManager(deps: {
@@ -91,6 +107,8 @@ export function initFlowManager(deps: {
           zip: options?.zip === true,
           width: options?.width ?? DEFAULT_CAPTURE_WIDTH,
           margin: options?.margin,
+          // A flow card wears the same Card style opacity as every other export unless the step says.
+          cardOpacity: options?.cardOpacity ?? config.captureSettings.cardOpacity,
           background,
           cardTheme: options?.cardTheme ?? 'dark',
         },

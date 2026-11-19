@@ -1,3 +1,5 @@
+import { providerAttachmentCapacity } from '../botChat/attachmentPlan';
+import { deleteTempAttachments } from '../botChat/mediaTemp';
 import { config } from '../config';
 import { executeSkill } from '../flow/skills';
 import { resolveStepTimeoutMs } from '../flow/runtime';
@@ -51,20 +53,30 @@ export async function runUrlShortcut(
     onLog: sendLog,
     ...(signal ? { signal } : {}),
     ...(options.hotelReviews ? { hotelReviews: true } : {}),
+    ...(providerAttachmentCapacity(targetUrl) > 0 ? { pictures: true } : {}),
   });
 
   if (resolved.prompt.trim() === text) return null;
 
   const providerUrl = resolved.forceProviderUrl ?? targetUrl;
   const timeoutMs = resolveStepTimeoutMs('llm', deps);
-  const answer = await executeSkill(
-    'llm',
-    URL_SHORTCUT_STEP_ID,
-    { prompt: withInstruction(resolved.prompt, options.instruction), provider: providerUrl },
-    deps,
-    timeoutMs,
-    signal,
-  );
-
-  return { answer, title: resolved.title, providerUrl };
+  const { picture } = resolved;
+  try {
+    const answer = await executeSkill(
+      'llm',
+      URL_SHORTCUT_STEP_ID,
+      {
+        prompt: withInstruction(resolved.prompt, options.instruction),
+        provider: providerUrl,
+        // The picture a picture link was: a file this send made, allowed as such.
+        ...(picture ? { attachments: picture, __attachmentAllowlist: JSON.stringify([picture]) } : {}),
+      },
+      deps,
+      timeoutMs,
+      signal,
+    );
+    return { answer, title: resolved.title, providerUrl };
+  } finally {
+    if (picture) await deleteTempAttachments([picture]);
+  }
 }

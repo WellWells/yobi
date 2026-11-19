@@ -2,14 +2,15 @@ import React from 'react';
 import { MultiSelect } from '@mantine/core';
 import type { MultiSelectProps } from '@mantine/core';
 import { Z_POPOVER } from '../config/zLayers';
+import type { AccessibleNameProps } from './a11y';
 
 type SelectOption = { value: string; label: string; disabled?: boolean };
 type SelectOptionGroup = { group: string; items: SelectOption[] };
 
-export type MultiSelectDropdownProps = Omit<MultiSelectProps, 'data' | 'onChange'> & {
+export type MultiSelectDropdownProps = Omit<MultiSelectProps, 'data' | 'onChange' | 'label' | 'aria-label' | 'aria-labelledby'> & {
   options: (SelectOption | SelectOptionGroup)[];
   onChange: (value: string[]) => void;
-};
+} & AccessibleNameProps;
 
 /**
  * The multi-value twin of SelectDropdown, styled from the same tokens so a single-choice and a
@@ -36,8 +37,7 @@ export const MultiSelectDropdown: React.FC<MultiSelectDropdownProps> = ({
     styles={{
       input: {
         background: 'var(--mantine-color-bg-tertiary)',
-        borderColor: 'var(--mantine-color-default-border)',
-        color: disabled ? 'var(--mantine-color-dimmed)' : 'var(--mantine-color-text)',
+        color: disabled ? 'var(--text-disabled)' : 'var(--mantine-color-text)',
         fontSize: 'var(--font-size-base)',
         ...(typeof styles === 'object' && styles !== null && 'input' in styles ? (styles as Record<string, object>).input : {}),
       },
@@ -52,7 +52,7 @@ export const MultiSelectDropdown: React.FC<MultiSelectDropdownProps> = ({
       },
       pill: {
         background: 'var(--mantine-color-accent-dim)',
-        color: 'var(--mantine-color-accent)',
+        color: 'var(--mantine-color-accent-text)',
         ...(typeof styles === 'object' && styles !== null && 'pill' in styles ? (styles as Record<string, object>).pill : {}),
       },
     }}

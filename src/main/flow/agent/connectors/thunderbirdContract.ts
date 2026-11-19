@@ -6,7 +6,7 @@ import type {
 } from '../toolContracts';
 import {
   accountForFolder, emailsIn, extractThunderbirdFacts, findIdentity, identities, identityLabel,
-  isOwnAuthor, mentionedByUser, messageLabel, normalizeSubject, rowsOf, TB_MESSAGE,
+  isOwnAuthor, mentionedByUser, messageLabel, normalizeSubject, rowsOf, TB_FOLDER, TB_MESSAGE,
 } from './thunderbirdFacts';
 import type { MailIdentity } from './thunderbirdFacts';
 
@@ -409,7 +409,10 @@ async function verifyStored(tool: string, args: Args, at: string, ledger: Ledger
     };
   }
   const locations = [str(match.folderPath), ...(Array.isArray(match.dupLocations) ? match.dupLocations.map(str) : [])].filter(Boolean);
-  const folder = locations.find((path) => /draft|草稿|sent|寄件/i.test(path)) ?? locations[0] ?? '';
+  // Which copy to name goes by the folder's type as the add-on reports it, never by its name: a
+  // Drafts folder is "草稿", "Entwürfe" or "下書き" depending on the mail server's language.
+  const wanted = drafts ? 'drafts' : 'sent';
+  const folder = locations.find((path) => ledger.fact(TB_FOLDER, path)?.fields.type === wanted) ?? locations[0] ?? '';
   const folderName = decodeURIComponent(folder.split('/').pop() ?? folder);
   const account = str(match.author).replace(/"/g, '').trim();
   return {

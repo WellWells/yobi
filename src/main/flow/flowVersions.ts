@@ -20,7 +20,7 @@ import type {
 import { writeFileAtomic } from '../atomicWrite';
 import { flowHistoryRoot } from '../history/historyPaths';
 import { Mutex } from './lanes';
-import { diffFlows, restoredTriggers, SENSITIVE_STEP_TYPES } from './flowRevision';
+import { diffFlows, restoredTriggers, sameStep, SENSITIVE_STEP_TYPES } from './flowRevision';
 
 /*
  * Every save that changes what a flow does is kept in `history/flows/<flowId>.json`, newest last,
@@ -77,13 +77,17 @@ async function writeRecords(flowId: string, records: FlowVersionRecord[]): Promi
 export function summarizeFlowChange(before: FlowDefinition, after: FlowDefinition): FlowChangeSummary {
   const diff = diffFlows(before, after);
   const beforeIds = before.steps.map((step) => step.id);
+  const beforeById = new Map(before.steps.map((step) => [step.id, step]));
   const afterIds = after.steps.map((step) => step.id);
   const kept = afterIds.filter((id) => beforeIds.includes(id));
   const order = kept.join('\n') !== beforeIds.filter((id) => afterIds.includes(id)).join('\n');
   return {
     added: diff.added,
     removed: diff.removed,
-    changed: diff.changed,
+    changed: after.steps.filter((step) => {
+      const previous = beforeById.get(step.id);
+      return previous && (!sameStep(previous, step) || previous.color !== step.color);
+    }).map((step) => ({ label: step.label, type: step.type })),
     ...(diff.renamedFrom !== undefined ? { renamedFrom: diff.renamedFrom } : {}),
     trigger: diff.trigger,
     ...((before.description ?? '') !== (after.description ?? '') ? { description: true } : {}),

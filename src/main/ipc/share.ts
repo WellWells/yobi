@@ -26,18 +26,20 @@ export async function refreshInstanceExpires(url: string): Promise<void> {
   );
 }
 
+export function applyShareSettings(patch: Partial<ShareSettings>): ShareSettings {
+  const previousUrl = config.share.instanceUrl;
+  config.share = normalizeShareSettings({ ...config.share, ...patch });
+  saveConfig({ share: config.share });
+  // The probe can take its full timeout, so the URL is saved and answered first; holding the
+  // reply would overwrite a field the user edited during the wait.
+  if (config.share.instanceUrl !== previousUrl) void refreshInstanceExpires(config.share.instanceUrl);
+  return config.share;
+}
+
 export function registerShareHandlers(): void {
   ipcMain.handle(IPC.GET_SHARE_SETTINGS, (): ShareSettings => config.share);
 
-  ipcMain.handle(IPC.UPDATE_SHARE_SETTINGS, (_event, patch: Partial<ShareSettings>): ShareSettings => {
-    const previousUrl = config.share.instanceUrl;
-    config.share = normalizeShareSettings({ ...config.share, ...patch });
-    saveConfig({ share: config.share });
-    // The probe can take its full timeout, so the URL is saved and answered first; holding the
-    // reply would overwrite a field the user edited during the wait.
-    if (config.share.instanceUrl !== previousUrl) void refreshInstanceExpires(config.share.instanceUrl);
-    return config.share;
-  });
+  ipcMain.handle(IPC.UPDATE_SHARE_SETTINGS, (_event, patch: Partial<ShareSettings>): ShareSettings => applyShareSettings(patch));
 
   ipcMain.handle(IPC.SHARE_CREATE_LINK, async (_event, request: ShareLinkRequest): Promise<ShareLinkResult> => {
     if (!config.share.consentedAt) return { ok: false, error: 'noConsent' };

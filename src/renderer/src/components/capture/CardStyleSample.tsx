@@ -12,13 +12,14 @@ export interface CardStyleSampleProps {
   cardLayout: CardLayout;
   width: number;
   margin: number;
+  cardOpacity: number;
   hiDpi: boolean;
   t: (key: string) => string;
 }
 
 /** The preview card's request; every word on it comes from the locale pack. */
 export function sampleCardRequest(props: Omit<CardStyleSampleProps, 't'>, t: (key: string) => string): MarkdownCaptureRequest {
-  const { palette, backgroundStyle, direction, cardLayout, width, margin, hiDpi } = props;
+  const { palette, backgroundStyle, direction, cardLayout, width, margin, cardOpacity, hiDpi } = props;
   const prompt = t('settings.cardStyle.sample.prompt');
   const response = [
     `### ${t('settings.cardStyle.sample.heading')}`,
@@ -47,6 +48,7 @@ export function sampleCardRequest(props: Omit<CardStyleSampleProps, 't'>, t: (ke
       showTokens: false,
       width,
       margin,
+      cardOpacity,
       background: captureBackgroundCss(palette, backgroundStyle, (direction || 'se') as CaptureDirection),
       cardTheme: paletteCardTheme(palette),
       cardLayout,
@@ -57,11 +59,11 @@ export function sampleCardRequest(props: Omit<CardStyleSampleProps, 't'>, t: (ke
 }
 
 export const CardStyleSample: React.FC<CardStyleSampleProps> = ({
-  palette, backgroundStyle, direction, cardLayout, width, margin, hiDpi, t,
+  palette, backgroundStyle, direction, cardLayout, width, margin, cardOpacity, hiDpi, t,
 }) => {
   const request = useMemo<MarkdownCaptureRequest>(
-    () => sampleCardRequest({ palette, backgroundStyle, direction, cardLayout, width, margin, hiDpi }, t),
-    [palette, backgroundStyle, direction, cardLayout, width, margin, hiDpi, t],
+    () => sampleCardRequest({ palette, backgroundStyle, direction, cardLayout, width, margin, cardOpacity, hiDpi }, t),
+    [palette, backgroundStyle, direction, cardLayout, width, margin, cardOpacity, hiDpi, t],
   );
 
   return (

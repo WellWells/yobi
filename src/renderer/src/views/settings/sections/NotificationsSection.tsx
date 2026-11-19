@@ -1,5 +1,6 @@
 import React from 'react';
 import { Box, Stack } from '@mantine/core';
+import { SearchSection } from '../FreezeWhileHidden';
 import { SectionCard, SettingRow, ToggleSwitch, SettingDivider } from '../components';
 import { TAG_SETS } from '../hooks/useSettingsNav';
 import type { useSystemSettings } from '../hooks/useSystemSettings';
@@ -7,7 +8,7 @@ import type { useSystemSettings } from '../hooks/useSystemSettings';
 type SystemSettings = ReturnType<typeof useSystemSettings>;
 type NotifyEvent = keyof SystemSettings['notifyEvents'];
 
-const EVENTS: readonly NotifyEvent[] = ['chatComplete', 'chatFailure', 'flowSuccess', 'flowFailure'];
+const EVENTS: readonly NotifyEvent[] = ['chatComplete', 'chatFailure', 'flowSuccess', 'flowFailure', 'botRequests'];
 
 interface Props {
   system: SystemSettings;
@@ -25,13 +26,13 @@ export const NotificationsSection: React.FC<Props> = ({ system, t, showSection, 
   const enabled = system.notifyOnComplete;
 
   return (
-    <Box display={showSection(TAG_SETS.notify, 'notifications') ? 'block' : 'none'}>
+    <SearchSection shown={showSection(TAG_SETS.notify, 'notifications')}>
       <SectionCard style={{ marginBottom: sectionGap }}>
         <Stack gap={14}>
           <SettingRow
             label={t('settings.notifications.master')}
             hint={t('settings.notifications.master.hint')}
-            control={<ToggleSwitch checked={enabled} onChange={() => { void system.handleToggleNotification(); }} />}
+            control={<ToggleSwitch aria-label={t('settings.notifications.master')} checked={enabled} onChange={() => { void system.handleToggleNotification(); }} />}
           />
           <SettingDivider />
           <Box style={{ opacity: enabled ? 1 : 0.45, pointerEvents: enabled ? 'auto' : 'none' }}>
@@ -43,6 +44,7 @@ export const NotificationsSection: React.FC<Props> = ({ system, t, showSection, 
                   hint={t(`settings.notifications.${event}.hint`)}
                   control={(
                     <ToggleSwitch
+                      aria-label={t(`settings.notifications.${event}`)}
                       checked={enabled && system.notifyEvents[event]}
                       disabled={!enabled}
                       onChange={() => { void system.handleToggleNotifyEvent(event); }}
@@ -54,6 +56,6 @@ export const NotificationsSection: React.FC<Props> = ({ system, t, showSection, 
           </Box>
         </Stack>
       </SectionCard>
-    </Box>
+    </SearchSection>
   );
 };

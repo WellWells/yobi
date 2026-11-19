@@ -57,10 +57,14 @@ export const WebDialog: React.FC<WebDialogProps> = ({
       {description}
     </Text>
     <Group justify="flex-end" gap={8}>
+      {/* A destructive confirm opens on Cancel (WCAG 3.3.4 spirit): an Enter
+          pressed by habit must not delete. Any other confirm opens on its action. */}
       <Button
         variant="default"
         onClick={onCancel}
         data-dialog-action="cancel"
+        data-autofocus={danger || undefined}
+        autoFocus={danger}
       >
         {cancelText}
       </Button>
@@ -69,8 +73,8 @@ export const WebDialog: React.FC<WebDialogProps> = ({
         color={danger ? 'red' : undefined}
         onClick={onConfirm}
         data-dialog-action="confirm"
-        data-autofocus
-        autoFocus
+        data-autofocus={!danger || undefined}
+        autoFocus={!danger}
       >
         {confirmText}
       </Button>

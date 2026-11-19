@@ -2,7 +2,7 @@ import { stripUnreadableRegions } from './connectorKeywords';
 
 /**
  * Whether a plain-chat message asks for something only a lookup can answer: weather, air quality,
- * a stock price, an exchange rate or how either moved, the lunar date or the almanac, the receipt lottery, or what is new right now. Such a message runs as an agent turn
+ * a stock price, an exchange rate or how either moved, the lunar date or the almanac, the receipt lottery, an App Store or Google Play price or in-app purchases, what a product costs in the shops, or what is new right now. Such a message runs as an agent turn
  * (that message only; the composer mode is left as the user set it). Each topic must come with a
  * question about it, so mentioning the weather in passing does not count. Code and quoted lines
  * never count.
@@ -51,6 +51,17 @@ const TOOL_PHRASES: readonly RegExp[] = [
   new RegExp('(?:這期|这期|本期|上期|上一期|最新一期)(?:的)?(?:統一|统一)?(?:發票|发票)'),
   new RegExp('(?<![\\dA-Za-z])(?:[A-Za-z]{2}[-\\s]?)?\\d{8}(?!\\d)[^。\\n]{0,6}?(?:有沒有中|有没有中|中了嗎|中了吗|有中嗎|有中吗|中獎|中奖)'),
   /(?<![a-z])(?:receipt|uniform[-\s]+invoice|invoice)\s+(?:lottery|winning\s+numbers?)(?![a-z])/i,
+  // App Store / Google Play prices: in-app purchases change and differ per store; a model's memory is a guess.
+  new RegExp(`(?:內購|内购|App內購買|App 內購買|應用程式內購買|应用内购买|訂閱方案|订阅方案)${ASKING}`, 'i'),
+  new RegExp(`(?:App\\s?Store|iOS|iPhone|iPad|Google\\s?Play|Play\\s?Store|Android|安卓)[^。\\n]{0,16}?(?:價格|价格|售價|售价|要錢|要钱|免費|免费)${ASKING}`, 'i'),
+  /(?<![a-z])in[-\s]app\s+purchases?(?![a-z])[^.\n]{0,40}(?:\?|cost|price|how much)/i,
+  /(?<![a-z])how\s+much\s+(?:is|does)[^.\n]{0,40}(?:on\s+(?:the\s+app\s+store|google\s+play|the\s+play\s+store)|in[-\s]app)(?![a-z])/i,
+  // Shop prices: they change by the hour and differ per shop, so a remembered one is a guess.
+  // 多少錢 alone is not here: it also asks about a share, a fare or a bill.
+  new RegExp(`(?:最便宜|最低價|最低价|均價|均价|平均價格|平均价格|價位|价位|比價|比价|哪家便宜|哪裡便宜|哪里便宜|哪裡買|哪里买)${ASKING}`),
+  /(?:幫我|帮我|幫忙|帮忙|請|请)[^。\n]{0,12}?(?:比價|比价)/,
+  // The asking word first, and often no question mark: 「哪裡最便宜」「去哪買最划算」.
+  /(?:哪裡|哪里|哪家|哪間|哪间|哪邊|哪边|哪個通路|哪个渠道|去哪)[^。\n]{0,3}?(?:最便宜|比較便宜|比较便宜|最划算|比較划算|比较划算|最低價|最低价)/,
   // What is new right now (releases, launches, the news): only when asked about, not merely named.
   new RegExp(`(?:新上映|上映中|即將上映|近期上映|院線|新上市|新推出|剛發表|新發表|最新款|最新版|最新型號|最新消息|新聞|新闻|頭條|头条|快訊|快讯)${LISTING}`),
   new RegExp(`最新(?:的)?[^。\\n]{0,12}?(?:有哪些|是哪|哪款|哪個|哪个|是什麼|是什么)`),

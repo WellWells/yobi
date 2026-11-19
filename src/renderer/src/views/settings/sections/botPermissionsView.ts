@@ -14,6 +14,9 @@ import {
   grantAllows,
   isDefaultableGrant,
   isGrantAvailableOn,
+  isKnowledgeGrant,
+  knowledgeGrant,
+  KNOWLEDGE_GRANT_PREFIX,
   normalizeGrantList,
   ownerImpliesGrant,
   sortBotGrants,
@@ -23,11 +26,13 @@ import {
   BUILTIN_CALENDAR_SERVER_ID,
   BUILTIN_CONNECTOR_TITLES,
   BUILTIN_MAIL_SERVER_ID,
+  BUILTIN_OFFICE_SERVER_ID,
   BUILTIN_PAGE_SERVER_ID,
   BUILTIN_PTT_SERVER_ID,
   BUILTIN_RAIL_SERVER_ID,
   BUILTIN_THUNDERBIRD_SERVER_ID,
   BUILTIN_TRANSLATE_SERVER_ID,
+  BUILTIN_TWLAW_SERVER_ID,
   BUILTIN_X_SERVER_ID,
   PUBLIC_DATA_CONNECTOR_IDS,
 } from '../../../../../shared/builtinConnectors';
@@ -54,8 +59,8 @@ export interface BotConnectorOption {
 }
 
 const BUILTIN_ORDER: readonly string[] = [
-  BUILTIN_LINE_SERVER_ID, BUILTIN_THUNDERBIRD_SERVER_ID, BUILTIN_X_SERVER_ID, BUILTIN_RAIL_SERVER_ID, BUILTIN_PTT_SERVER_ID,
-  BUILTIN_MAIL_SERVER_ID, BUILTIN_CALENDAR_SERVER_ID, BUILTIN_TRANSLATE_SERVER_ID, BUILTIN_PAGE_SERVER_ID,
+  BUILTIN_LINE_SERVER_ID, BUILTIN_THUNDERBIRD_SERVER_ID, BUILTIN_X_SERVER_ID, BUILTIN_RAIL_SERVER_ID, BUILTIN_PTT_SERVER_ID, BUILTIN_TWLAW_SERVER_ID,
+  BUILTIN_MAIL_SERVER_ID, BUILTIN_CALENDAR_SERVER_ID, BUILTIN_TRANSLATE_SERVER_ID, BUILTIN_PAGE_SERVER_ID, BUILTIN_OFFICE_SERVER_ID,
   ...SITE_CONNECTOR_ROWS.map((row) => siteConnectorServerId(row.site)),
 ];
 
@@ -76,7 +81,7 @@ export function botConnectorOptions(
   return [...builtins, ...external];
 }
 
-export type GrantGroupKey = 'commands' | 'links' | 'agent' | 'connectors' | 'manage';
+export type GrantGroupKey = 'commands' | 'links' | 'agent' | 'connectors' | 'knowledge' | 'manage';
 
 /** A boundary main enforces on a grant, shown as a tag instead of a parenthetical. */
 export type GrantLimit = 'dmOnly' | 'readOnly';
@@ -107,16 +112,22 @@ function connectorIdOf(grant: BotGrant): string | null {
   return grant.slice(CONNECTOR_GRANT_PREFIX.length);
 }
 
-/** The chip text of one grant. A connector that was removed since keeps a chip, so it can be taken off. */
-export function grantLabel(grant: BotGrant, connectors: readonly BotConnectorOption[], t: Translate): string {
+/** The chip text of one grant. A connector or knowledge base removed since keeps a chip, so it can be taken off. */
+export function grantLabel(grant: BotGrant, connectors: readonly BotConnectorOption[], t: Translate, knowledge: readonly BotConnectorOption[] = []): string {
+  if (isKnowledgeGrant(grant)) {
+    const id = grant.slice(KNOWLEDGE_GRANT_PREFIX.length);
+    return knowledge.find((option) => option.id === id)?.name ?? t('settings.bot.perm.grant.missingKnowledge');
+  }
   switch (grant) {
     case 'agent': return t('settings.bot.perm.grant.agent');
     case 'web': return t('settings.bot.perm.grant.web');
     case 'download': return t('settings.bot.perm.grant.download');
     case 'preview': return t('settings.bot.perm.grant.preview');
+    case 'analyze': return t('settings.bot.perm.grant.analyze');
     case 'local': return t('settings.bot.perm.grant.local');
     case 'shell': return t('settings.bot.perm.grant.shell');
     case 'admin': return t('settings.bot.perm.grant.admin');
+    case 'manage': return t('settings.bot.perm.grant.manage');
     case ALL_CONNECTORS_GRANT: return t('settings.bot.perm.grant.allConnectors');
     default: {
       const id = connectorIdOf(grant);
@@ -128,14 +139,17 @@ export function grantLabel(grant: BotGrant, connectors: readonly BotConnectorOpt
 
 /** The one-line explanation under a menu item and in a chip's tooltip. */
 export function grantDescription(grant: BotGrant, t: Translate): string {
+  if (isKnowledgeGrant(grant)) return t('settings.bot.perm.grant.knowledge.desc');
   switch (grant) {
     case 'agent': return t('settings.bot.perm.grant.agent.desc');
     case 'web': return t('settings.bot.perm.grant.web.desc');
     case 'download': return t('settings.bot.perm.grant.download.desc');
     case 'preview': return t('settings.bot.perm.grant.preview.desc');
+    case 'analyze': return t('settings.bot.perm.grant.analyze.desc');
     case 'local': return t('settings.bot.perm.grant.local.desc');
     case 'shell': return t('settings.bot.perm.grant.shell.desc');
     case 'admin': return t('settings.bot.perm.grant.admin.desc');
+    case 'manage': return t('settings.bot.perm.grant.manage.desc');
     case ALL_CONNECTORS_GRANT: return t('settings.bot.perm.grant.allConnectors.desc');
     default: return t('settings.bot.perm.grant.connector.desc');
   }
@@ -146,7 +160,7 @@ export function grantDescription(grant: BotGrant, t: Translate): string {
  * alone, which groups get too; bots never write to a connector.
  */
 export function grantLimits(grant: BotGrant): GrantLimit[] {
-  if (grant === 'local' || grant === 'shell') return ['dmOnly'];
+  if (grant === 'local' || grant === 'shell' || grant === 'manage' || isKnowledgeGrant(grant)) return ['dmOnly'];
   if (grant.startsWith(CONNECTOR_GRANT_PREFIX) && PUBLIC_DATA_CONNECTOR_IDS.includes(grant.slice(CONNECTOR_GRANT_PREFIX.length))) return ['readOnly'];
   if (grant.startsWith(CONNECTOR_GRANT_PREFIX)) return ['dmOnly', 'readOnly'];
   return [];
@@ -156,13 +170,15 @@ export interface GrantViewInput {
   platform: BotPlatform;
   isOwner: boolean;
   connectors: readonly BotConnectorOption[];
+  /** The knowledge bases that exist now (`kb:<id>` grants). */
+  knowledge?: readonly BotConnectorOption[];
   t: Translate;
 }
 
 function item(grant: BotGrant, input: GrantViewInput): GrantItem {
   return {
     grant,
-    label: grantLabel(grant, input.connectors, input.t),
+    label: grantLabel(grant, input.connectors, input.t, input.knowledge),
     description: grantDescription(grant, input.t),
     limits: grantLimits(grant),
   };
@@ -171,7 +187,7 @@ function item(grant: BotGrant, input: GrantViewInput): GrantItem {
 /** A single connector's sentence is the same on every row; in the menu its name is enough. */
 function menuItem(grant: BotGrant, input: GrantViewInput): GrantItem {
   const entry = item(grant, input);
-  return connectorIdOf(grant) === null ? entry : { ...entry, description: '' };
+  return connectorIdOf(grant) === null && !isKnowledgeGrant(grant) ? entry : { ...entry, description: '' };
 }
 
 function sharedLimits(items: readonly GrantItem[]): GrantLimit[] {
@@ -206,18 +222,21 @@ export function grantMenuGroups(grants: readonly BotGrant[], input: GrantViewInp
   };
   if (!input.isOwner) {
     push('commands', 'settings.bot.perm.group.commands', ['web']);
-    push('links', 'settings.bot.perm.group.links', ['download', 'preview']);
+    push('links', 'settings.bot.perm.group.links', ['download', 'preview', 'analyze']);
     // Agent is not a command: it widens what an account's ordinary messages may use.
     push('agent', 'settings.bot.perm.group.agent', ['agent', 'local', 'shell']);
     const singles = has.has(ALL_CONNECTORS_GRANT)
       ? []
       : input.connectors.map((option) => connectorGrant(option.id));
     push('connectors', 'settings.bot.perm.group.connectors', [ALL_CONNECTORS_GRANT, ...singles]);
+    // An admin already holds every base; "me" too (`ownerImpliesGrant`).
+    if (!has.has('admin')) push('knowledge', 'settings.bot.perm.group.knowledge', (input.knowledge ?? []).map((option) => knowledgeGrant(option.id)));
   } else {
     push('links', 'settings.bot.perm.group.links', ['preview']);
     push('agent', 'settings.bot.perm.group.agent', ['shell']);
   }
-  push('manage', 'settings.bot.perm.group.manage', ['admin']);
+  // "Me" already controls Yobi (`ownerImpliesGrant`); anyone else only by this grant.
+  push('manage', 'settings.bot.perm.group.manage', input.isOwner ? ['admin'] : ['admin', 'manage']);
   return groups;
 }
 
@@ -237,7 +256,12 @@ export function defaultGrantMenuGroups(grants: readonly BotGrant[], input: Grant
 }
 
 /** A grant that does nothing without another: added with it, taken away with it. */
-const GRANT_NEEDS: Partial<Record<BotGrant, BotGrant>> = { shell: 'agent', preview: 'download' };
+const GRANT_NEEDS: Partial<Record<BotGrant, BotGrant>> = { shell: 'agent', manage: 'agent', preview: 'download' };
+
+/** What a grant needs; a knowledge base only exists on the agent kit. */
+function grantNeeds(grant: BotGrant): BotGrant | undefined {
+  return isKnowledgeGrant(grant) ? 'agent' : GRANT_NEEDS[grant];
+}
 
 /**
  * Adds one grant. All connectors replaces the single ones it already covers; shell brings agent
@@ -248,13 +272,14 @@ export function addGrant(grants: readonly BotGrant[], grant: BotGrant): BotGrant
   const kept = grant === ALL_CONNECTORS_GRANT
     ? grants.filter((existing) => connectorIdOf(existing) === null)
     : grants;
-  const added: BotGrant[] = GRANT_NEEDS[grant] ? [GRANT_NEEDS[grant], grant] : [grant];
+  const needs = grantNeeds(grant);
+  const added: BotGrant[] = needs ? [needs, grant] : [grant];
   return sortBotGrants([...new Set<BotGrant>([...kept, ...added])]);
 }
 
 /** Removes one grant; taking agent (or the downloader) away takes shell (or the preview) with it, for the same reason. */
 export function removeGrant(grants: readonly BotGrant[], grant: BotGrant): BotGrant[] {
-  return grants.filter((existing) => existing !== grant && GRANT_NEEDS[existing] !== grant);
+  return grants.filter((existing) => existing !== grant && grantNeeds(existing) !== grant);
 }
 
 export function sameGrants(a: readonly BotGrant[], b: readonly BotGrant[]): boolean {

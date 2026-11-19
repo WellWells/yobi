@@ -1,7 +1,8 @@
 import React from 'react';
-import { Group, Menu, Text } from '@mantine/core';
+import { Group, Menu, Text, VisuallyHidden } from '@mantine/core';
 import { Check, ChevronRight } from 'lucide-react';
 import type { PickerModel } from '../../config/models';
+import { useI18nStore } from '../../store/i18nStore';
 
 /** The only thing the submenu needs from a provider's catalog entry. */
 export interface SubmenuModelEntry {
@@ -35,6 +36,7 @@ export const ProviderModelSubmenu: React.FC<ProviderModelSubmenuProps> = ({
   model, entries, selectedModelId, summary, isSelected, badges, itemStyle, itemRef, onChange, onPickModel,
 }) => {
   const Icon = model.icon;
+  const t = useI18nStore((s) => s.t);
 
   return (
     // Fixed: the parent dropdown scrolls and would clip an absolute submenu.
@@ -45,18 +47,22 @@ export const ProviderModelSubmenu: React.FC<ProviderModelSubmenuProps> = ({
           ref={itemRef}
           leftSection={<Icon size={15} />}
           closeMenuOnClick
+          // A row that opens a submenu stays a `menuitem`, so the pick is told as "current".
+          aria-current={isSelected ? 'true' : undefined}
           onClick={() => onChange(model.url)}
           rightSection={
             <Group gap={6} wrap="nowrap">
               {summary}
               {badges}
-              {isSelected && <Check size={13} color="var(--mantine-color-accent)" />}
+              {isSelected && <Check size={13} color="var(--mantine-color-accent-text)" />}
               <ChevronRight size={14} color="var(--mantine-color-dimmed)" />
             </Group>
           }
           style={itemStyle}
         >
           {model.label}
+          {/* Screen readers rarely speak aria-current on a menuitem; the name says it too. */}
+          {isSelected && <VisuallyHidden>{` ${t('a11y.f.currentChoice')}`}</VisuallyHidden>}
         </Menu.Sub.Item>
       </Menu.Sub.Target>
 

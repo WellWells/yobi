@@ -41,7 +41,7 @@ export const YtdlToolsSetup: React.FC<Props> = ({ onLater, onReady }) => {
 
   if (usable) {
     return (
-      <Text fz="sm" c="var(--mantine-color-success)">
+      <Text fz="sm" c="var(--success-text)">
         {fillTemplate(t('ytdl.tools.ready'), { version: state.ytdlpVersion ?? '' })}
       </Text>
     );

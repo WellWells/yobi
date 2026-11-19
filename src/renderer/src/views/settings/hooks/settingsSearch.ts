@@ -39,6 +39,7 @@ export const TAG_SETS = {
   // Calendars are entered on the Calendar connector's card, so their words find this card.
   mcp: ['settings.mcp', 'settings.calendars', 'settings.search.alias.mcp', 'settings.search.alias.calendars'],
   skills: ['settings.skills', 'settings.search.alias.skills'],
+  knowledge: ['settings.knowledge', 'settings.search.alias.knowledge'],
   // The shared commands card, and each platform card on its own: one platform's name must not
   // pull in the other platform's card. The per-account permission editor renders inside each
   // platform's paired list, so both carry its strings; the admin grant is on the platforms with
@@ -60,7 +61,7 @@ export const CATEGORY_TAG_MAP: Record<Category, (keyof typeof TAG_SETS)[]> = {
   accounts: ['modelDefaults', 'accounts', 'byok'],
   ai: ['prompt', 'youtube', 'mapsPrompt', 'timeout'],
   memory: ['memory'],
-  connectors: ['mcp'],
+  connectors: ['knowledge', 'mcp'],
   skills: ['skills'],
   bots: ['telegram', 'line', 'lineSelf', 'discord', 'slack', 'bots'],
   general: ['language', 'tray', 'editor'],

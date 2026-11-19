@@ -133,6 +133,20 @@ export function sendSecurityNotification(
 }
 
 /**
+ * For the notice the app is stuck without: an AI site signed out, a site asking for a human
+ * check. It ignores the "notify me" preference like the security notice does — muted, a scheduled
+ * flow fails and nobody is told why.
+ */
+export function sendActionNeededNotification(
+  title: string,
+  body: string,
+  level: UiNotificationPayload['level'],
+  action?: UiNotificationPayload['action'],
+): void {
+  emitNotification(title, body, level, action);
+}
+
+/**
  * How long the native notification gets to report `show` (emitted once the OS accepts it)
  * before the in-app toast steps in.
  */

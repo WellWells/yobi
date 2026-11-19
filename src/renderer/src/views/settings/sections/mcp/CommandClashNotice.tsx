@@ -63,8 +63,8 @@ export const CommandClashNotice: React.FC<{ lines: readonly string[] }> = ({ lin
     <Stack gap={2}>
       {lines.map((line) => (
         <Group key={line} gap={6} align="flex-start" wrap="nowrap">
-          <TriangleExclamationPoint size={13} color="var(--mantine-color-warning)" style={{ marginTop: 2, flexShrink: 0 }} />
-          <Text fz="xs" c="var(--mantine-color-warning)" lh={1.5}>{line}</Text>
+          <TriangleExclamationPoint size={13} color="var(--warning-text)" style={{ marginTop: 2, flexShrink: 0 }} />
+          <Text fz="xs" c="var(--warning-text)" lh={1.5}>{line}</Text>
         </Group>
       ))}
     </Stack>

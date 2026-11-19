@@ -63,7 +63,7 @@ export const ChatHeaderRow: React.FC<ChatHeaderRowProps> = ({ children, atWindow
       mih={47}
       pl={narrow ? captionPad('left', 'left', 8) : 14}
       pr={captionPad(atWindowEdge ? 'right' : undefined, 'right', 14)}
-      bg="var(--mantine-color-body)"
+      bg="var(--page-bg)"
       style={{ borderBottom: '1px solid transparent', flexShrink: 0, minWidth: 0 }}
     >
       {narrow && <NarrowLead />}

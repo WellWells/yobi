@@ -9,16 +9,19 @@ import type { StepSpec as Step } from './steps';
  * to sum up it ends the run with "no captions" (`requireTranscript`) rather than summarizing
  * nothing.
  */
-function summarySteps(summaryPrompt: string, provider: string): Step[] {
-  return [['youtube', { url: '{{info.url}}', requireTranscript: 'true' }, 'yt_1'], llmStep(summaryPrompt, provider)];
+function summarySteps(summaryPrompt: string, provider: string, once: boolean): Step[] {
+  return [['youtube', { url: '{{info.url}}', requireTranscript: 'true' }, 'yt_1'], llmStep(summaryPrompt, provider, undefined, once)];
 }
 
-/** The "summary" branch, for a site whose menu has it (`summaryPrompt` given); nothing otherwise. */
+/**
+ * The "summary" branch, for a site whose menu has it (`summaryPrompt` given); nothing otherwise.
+ * In a bot chat (a `reply` to send) the same summary is asked of the model once (`llmStep`'s `once`).
+ */
 function summaryBranch(summaryPrompt: string | null, provider: string, reply: Step[] = []): Step[] {
   if (summaryPrompt === null) return [];
   return [
     ['if', { left: '{{info.quality}}', operator: 'equals', right: 'summary' }],
-    ...summarySteps(summaryPrompt, provider),
+    ...summarySteps(summaryPrompt, provider, reply.length > 0),
     ...reply,
     END_IF,
   ];
@@ -54,10 +57,11 @@ export function videoMenuFlow(ids: VideoIds, name: string, summaryPrompt: string
     // A slow read says "working" once, never which site it reads.
     ['youtube_info', { input: '{{input}}', destination: 'auto', emitFailFlag: 'false', progress: 'brief' }, 'info'],
     // A preview comes only with a menu, so `info.pick` is empty there: both stops end the run.
-    // It is downloaded in the background — "working" until the video itself, nothing in between —
-    // and the answer to a link pasted alone takes that message's place, the link in its caption.
+    // It is downloaded in the background — "preparing the preview" until the video itself, nothing
+    // in between — and the answer to a link pasted alone takes that message's place, the link in
+    // its caption.
     ['if', { left: '{{info.preview}}', operator: 'is_true', right: '' }],
-    ['youtube_download', { url: '{{info.url}}', quality: '{{info.preview}}', destination: 'auto', folder: '', emitFailFlag: 'true', progress: 'brief' }, 'preview_dl'],
+    ['youtube_download', { url: '{{info.url}}', quality: '{{info.preview}}', destination: 'auto', folder: '', emitFailFlag: 'true', progress: 'preview' }, 'preview_dl'],
     ['if', { left: '{{preview_dl.savedLocally}}', operator: 'equals', right: '0' }],
     ['bot', {
       ...REPLY, message: '{{info.previewCaption}}', attachment: '{{preview_dl}}', attachmentType: 'video', buttons: '{{info.buttons}}',

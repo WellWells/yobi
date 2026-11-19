@@ -7,7 +7,7 @@ import { llmLane } from '../flow/lanes';
 import { ensureWorkerWindow, isWorkerRevealed } from '../windows';
 import { getAccountStatus } from '../providers/authStatus';
 
-type ModelListProvider = 'gemini' | 'claude' | 'chatgpt';
+type ModelListProvider = 'gemini' | 'claude' | 'chatgpt' | 'perplexity';
 
 export interface ModelListSource {
   provider: ModelListProvider;

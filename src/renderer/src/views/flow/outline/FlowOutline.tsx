@@ -16,7 +16,8 @@ import type { FlowDefinition, SkillInstance } from '../../../../../shared/types'
 import { ATOMIC_STEPS } from '../StepCard';
 import { useNamedModels } from '../useNamedModels';
 import { locateStep } from './locateStep';
-import { hiddenByFold, matchRow, outlineRows, searchRows, selectionAfterDelete, usedBy, type OutlineRow as Row, type RowMatch } from './outlineModel';
+import { guardTexts } from './guardText';
+import { guardBlocks, hiddenByFold, hiddenByGuards, matchRow, outlineRows, searchRows, selectionAfterDelete, usedBy, type OutlineRow as Row, type RowMatch } from './outlineModel';
 import { OutlineRow } from './OutlineRow';
 import { rowText, summaryContext } from './rowText';
 import { stepDisplayName, stepSearchText } from '../stepSummary';
@@ -70,14 +71,16 @@ const MATCH_FIELD_KEY: Record<RowMatch['field'], string> = {
 export const FlowOutline: React.FC<FlowOutlineProps> = ({ flow, t, issues, runStates, runSummary, triggerSummary, onPicked }) => {
   const models = useNamedModels();
   const locale = useI18nStore((s) => s.locale);
-  const { selected, folded, visible, focusSearch, select, toggleFold, unfold } = useFlowOutlineStore(useShallow((s) => ({
+  const { selected, folded, openGuardIds, focusSearch, select, toggleFold, unfold, toggleGuard, openGuardsOf } = useFlowOutlineStore(useShallow((s) => ({
     selected: s.selected[flow.id],
     folded: s.folded[flow.id],
-    visible: s.visible,
+    openGuardIds: s.openGuards[flow.id],
     focusSearch: s.focusSearch,
     select: s.select,
     toggleFold: s.toggleFold,
     unfold: s.unfold,
+    toggleGuard: s.toggleGuard,
+    openGuardsOf: s.openGuardsOf,
   })));
   const [query, setQuery] = useState('');
   const deferredQuery = useDeferredValue(query);
@@ -134,22 +137,29 @@ export const FlowOutline: React.FC<FlowOutlineProps> = ({ flow, t, issues, runSt
     return found;
   }, [rows, ctx, deferredQuery]);
 
+  // Skip-only conditions read as one row, as in the editor; one with a problem inside stays open.
+  const guards = useMemo(() => {
+    const all = guardBlocks(rows);
+    for (const [id, guard] of all) {
+      if (rowIssues.has(guard.action.id) || rowIssues.has(guard.endId)) all.delete(id);
+    }
+    return all;
+  }, [rows, rowIssues]);
+  const openGuards = useMemo(() => new Set(openGuardIds ?? []), [openGuardIds]);
+  const guardLines = useMemo(() => guardTexts(rows, guards, flow.steps, t), [rows, guards, flow.steps, t]);
+  const isFolded = (id: string): boolean => (guards.has(id) ? !openGuards.has(id) : foldedSet.has(id));
+  const toggleRow = (id: string): void => {
+    if (guards.has(id)) toggleGuard(flow.id, id);
+    else toggleFold(flow.id, id);
+  };
+
   const searching = deferredQuery.trim() !== '';
   const shown = useMemo(() => {
     if (searching) return searchRows(rows, matches);
     const hidden = hiddenByFold(rows, foldedSet);
+    hiddenByGuards(guards, openGuards).forEach((id) => hidden.add(id));
     return rows.filter((row) => !hidden.has(row.step.id)).map((row) => ({ row, context: false }));
-  }, [searching, rows, matches, foldedSet]);
-
-  const inView = useMemo(() => {
-    const ids = new Set<string>();
-    if (!visible || visible.flowId !== flow.id) return ids;
-    const first = rows.findIndex((row) => row.step.id === visible.first);
-    const last = rows.findIndex((row) => row.step.id === visible.last);
-    if (first < 0 || last < 0) return ids;
-    for (let i = first; i <= last; i++) ids.add(rows[i].step.id);
-    return ids;
-  }, [visible, rows, flow.id]);
+  }, [searching, rows, matches, foldedSet, guards, openGuards]);
 
   const pickable = useMemo(() => shown.filter((entry) => !entry.context).map((entry) => entry.row.step.id), [shown]);
   const tabbableId = (focusId && pickable.includes(focusId) ? focusId : undefined)
@@ -161,9 +171,10 @@ export const FlowOutline: React.FC<FlowOutlineProps> = ({ flow, t, issues, runSt
     if (!row) return;
     select(flow.id, id);
     unfold(flow.id, row.ancestors);
+    openGuardsOf(flow.id, row.ancestors);
     locateStep(id, { expand: !ATOMIC_STEPS.includes(row.step.type), focus: focusCard });
     onPicked?.();
-  }, [rows, select, unfold, flow.id, onPicked]);
+  }, [rows, select, unfold, openGuardsOf, flow.id, onPicked]);
 
   const focusRow = (id: string | undefined): void => {
     if (!id) return;
@@ -201,7 +212,7 @@ export const FlowOutline: React.FC<FlowOutlineProps> = ({ flow, t, issues, runSt
     if (!id || rowEl.dataset.context) return;
     const fold = target.closest<HTMLElement>('[data-outline-fold]');
     if (fold?.dataset.outlineFold && !searching) {
-      toggleFold(flow.id, id);
+      toggleRow(id);
       return;
     }
     setFocusId(id);
@@ -222,12 +233,12 @@ export const FlowOutline: React.FC<FlowOutlineProps> = ({ flow, t, issues, runSt
       case 'End': event.preventDefault(); focusRow(pickable[pickable.length - 1]); break;
       case 'ArrowLeft':
         event.preventDefault();
-        if (foldable && !foldedSet.has(id)) toggleFold(flow.id, id);
+        if (foldable && !isFolded(id)) toggleRow(id);
         else focusRow(row?.ancestors[row.ancestors.length - 1]);
         break;
       case 'ArrowRight':
         event.preventDefault();
-        if (foldable && foldedSet.has(id)) toggleFold(flow.id, id);
+        if (foldable && isFolded(id)) toggleRow(id);
         break;
       case 'Enter': event.preventDefault(); pick(id, true); break;
       case ' ': event.preventDefault(); pick(id, false); break;
@@ -307,8 +318,8 @@ export const FlowOutline: React.FC<FlowOutlineProps> = ({ flow, t, issues, runSt
           <GroupHeader variant="plain" label={fillTemplate(t('flow.outline.steps'), { count: String(flow.steps.length) })} />
           {issueIds.length > 0 && (
             <UnstyledButton onClick={nextIssue} aria-label={fillTemplate(t('flow.outline.issues'), { count: String(issueIds.length) })} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-              <TriangleExclamationPoint size={12} color="var(--mantine-color-error)" />
-              <Text fz={12} c="var(--mantine-color-error)">{fillTemplate(t('flow.outline.issues'), { count: String(issueIds.length) })}</Text>
+              <TriangleExclamationPoint size={12} color="var(--error-text)" />
+              <Text fz={12} c="var(--error-text)">{fillTemplate(t('flow.outline.issues'), { count: String(issueIds.length) })}</Text>
             </UnstyledButton>
           )}
         </Group>
@@ -326,8 +337,8 @@ export const FlowOutline: React.FC<FlowOutlineProps> = ({ flow, t, issues, runSt
                 issue={rowIssues.get(row.step.id)}
                 runState={runStates.get(row.step.id)}
                 selected={row.step.id === selected}
-                inView={inView.has(row.step.id)}
-                folded={foldedSet.has(row.step.id)}
+                folded={isFolded(row.step.id)}
+                guardText={!searching && guards.has(row.step.id) && !openGuards.has(row.step.id) ? guardLines.get(row.step.id) : undefined}
                 searching={searching}
                 tabbable={row.step.id === tabbableId}
                 byId={byId}
@@ -353,7 +364,7 @@ function FlowEntry({ label, value, error, onClick }: { label: string; value: str
   return (
     <UnstyledButton onClick={onClick} px={10} py={3} style={{ borderRadius: 6, display: 'block', minWidth: 0 }}>
       <Text fz={12} c="var(--text-muted)" lineClamp={1}>{label}</Text>
-      <Text fz={13} lineClamp={1} c={error ? 'var(--mantine-color-error)' : undefined} style={{ wordBreak: 'break-all' }}>{value}</Text>
+      <Text fz={13} lineClamp={1} c={error ? 'var(--error-text)' : undefined} style={{ wordBreak: 'break-all' }}>{value}</Text>
     </UnstyledButton>
   );
 }
@@ -375,8 +386,9 @@ interface EntryProps {
   issue?: StepIssue;
   runState?: ProgressState;
   selected: boolean;
-  inView: boolean;
   folded: boolean;
+  /** A closed skip-only condition: what it does when it holds, in place of its second line. */
+  guardText?: string;
   searching: boolean;
   tabbable: boolean;
   byId: ReadonlyMap<string, SkillInstance>;
@@ -386,7 +398,7 @@ interface EntryProps {
 }
 
 /** Turns a row's model into the primitives the memoised row compares. */
-function OutlineEntry({ row, context, text, match, issue, runState, selected, inView, folded, searching, tabbable, byId, usedByText, t, onMenu }: EntryProps) {
+function OutlineEntry({ row, context, text, match, issue, runState, selected, folded, guardText, searching, tabbable, byId, usedByText, t, onMenu }: EntryProps) {
   const { step } = row;
   const typeName = t(`flow.skill.${step.type}`);
   const end = step.type === 'end_loop' || step.type === 'end_if';
@@ -405,9 +417,11 @@ function OutlineEntry({ row, context, text, match, issue, runState, selected, in
       id={step.id}
       index={row.index}
       type={step.type}
+      color={step.color}
       depth={row.depth}
       primary={text.primary}
-      secondary={text.secondary ?? (folded && row.childCount ? fillTemplate(t('flow.outline.foldedCount'), { count: String(row.childCount) }) : undefined)}
+      /* An end says whose it is in its first line and its corner shows where it belongs: one line. */
+      secondary={end ? undefined : guardText ?? text.secondary ?? (folded && row.childCount ? fillTemplate(t('flow.outline.foldedCount'), { count: String(row.childCount) }) : undefined)}
       match={match && match.field !== 'name' && match.field !== 'summary' ? match : undefined}
       matchLabel={match ? t(MATCH_FIELD_KEY[match.field]) : undefined}
       issue={issue?.text}
@@ -415,7 +429,6 @@ function OutlineEntry({ row, context, text, match, issue, runState, selected, in
       runState={runState}
       runLabel={runState ? t(RUN_LABEL_KEY[runState]) : undefined}
       selected={selected}
-      inView={inView}
       context={context}
       end={end}
       foldable={foldable}

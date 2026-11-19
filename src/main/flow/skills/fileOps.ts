@@ -167,6 +167,13 @@ export async function execFileRead(config: Record<string, string>): Promise<stri
   let resolved = filePath;
   try {
     resolved = await resolveUserPath(filePath);
+    // Word, Excel and PowerPoint are zip packages: read through OfficeCLI, loaded only when one is read.
+    const office = await import('../../office/officeDocumentText');
+    if (office.isOfficeTextFile(resolved)) {
+      const text = await office.readOfficeText(resolved);
+      sendLog(`📖 [Flow] File read: ${resolved} (Office, ${text.length} chars)`);
+      return text;
+    }
     const bytes = await fs.readFile(resolved);
     const pdf = isPdfFile(resolved, bytes);
     const content = pdf ? await readPdfText(bytes, path.basename(resolved)) : bytes.toString('utf-8');

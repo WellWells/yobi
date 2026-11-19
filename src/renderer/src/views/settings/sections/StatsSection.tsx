@@ -1,1 +1,1 @@
-export { StatsSection } from './stats/StatsSection';
+export { LiveStatsSection, StatsSection } from './stats/StatsSection';

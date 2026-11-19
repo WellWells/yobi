@@ -39,6 +39,8 @@ export const SKILL_CATALOG: SkillCategory[] = [
     { type: 'calendar', keywords: ['calendar', 'schedule', 'agenda', 'event', 'meeting', 'ics', 'ical', 'google calendar', 'outlook', 'today', '行事曆', '日曆', '行程', '日程', '會議', '活動', '今天', '明天'] },
     { type: 'mail_fetch', keywords: ['mail', 'email', 'gmail', 'inbox', 'imap', 'unread', 'new mail', 'sender', '信箱', '郵件', '信件', '收信', '新信', '未讀', '寄件人', '邮件', '邮箱'] },
     { type: 'almanac', keywords: ['almanac', 'lunar', 'chinese calendar', 'auspicious', 'zodiac', 'solar term', '農民曆', '农民历', '農曆', '农历', '黃曆', '黄历', '宜忌', '吉日', '黃道', '沖煞', '節氣', '生肖', '擇日'] },
+    { type: 'app_store', keywords: ['app store', 'appstore', 'google play', 'play store', 'googleplay', 'android', '安卓', 'apple', 'ios', 'iphone', 'ipad', 'app', 'in-app purchase', 'iap', 'subscription', 'price', 'App Store', '內購', '内购', 'App內購買', '訂閱', '订阅', '價格', '价格', '應用程式', '应用'] },
+    { type: 'price_search', keywords: ['price', 'compare', 'shopping', 'cheapest', 'lowest', 'deal', 'taiwan', 'pchome', 'momo', 'yahoo', 'ruten', 'rakuten', 'costco', 'shopee', 'coupang', 'feebee', '比價', '比价', '價格', '价格', '最低價', '最便宜', '均價', '降價', '購物', '電商', '商品', '蝦皮', '酷澎', '露天', '樂天', '好市多', '台灣'] },
     { type: 'tw_invoice', keywords: ['invoice', 'receipt', 'lottery', 'uniform invoice', 'taiwan', 'winning numbers', '發票', '发票', '統一發票', '统一发票', '對獎', '对奖', '兌獎', '中獎', '中奖', '開獎', '开奖', '特別獎', '頭獎', '財政部'] },
   ] },
   { key: 'browser', labelKey: 'flow.category.browser', skills: [

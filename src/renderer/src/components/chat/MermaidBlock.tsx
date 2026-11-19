@@ -91,7 +91,7 @@ export const MermaidBlock = React.memo<MermaidBlockProps>(({ code }) => {
           size={CODE_CHROME.control}
           onClick={handleCopy}
           aria-label={copied ? t('mermaid.copied') : t('mermaid.copySource')}
-          style={{ color: copied ? 'var(--success)' : 'var(--text-muted)' }}
+          style={{ color: copied ? 'var(--success-text)' : 'var(--text-muted)' }}
         >
           {copied ? <Check size={12} /> : <Copy size={12} />}
         </ActionIcon>

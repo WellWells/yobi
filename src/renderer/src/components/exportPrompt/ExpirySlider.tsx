@@ -34,7 +34,8 @@ export const ExpirySlider: React.FC<Props> = ({ label, options, value, onChange 
         label={(at) => options[at]?.label ?? ''}
         size="sm"
         color="brand"
-        aria-label={label}
+        thumbLabel={label}
+        thumbValueText={(at) => options[at]?.label ?? ''}
         styles={{
           markLabel: { fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' },
           mark: { borderColor: 'var(--border)' },

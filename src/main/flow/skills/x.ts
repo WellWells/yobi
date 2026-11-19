@@ -1,15 +1,16 @@
 import { sendLog } from '../../helpers';
 import { makeCheckpointStore } from '../checkpoint';
 import { Semaphore } from '../lanes';
-import { cacheWindowMs, readSeenEntries, reconcileSeenCache, type SeenCheckpoint } from '../seenCache';
+import { cacheWindowMs, openSeenCache, type SeenCheckpoint } from '../seenCache';
 import { FlowUserError } from '../userError';
 import { BROWSER_STEP_TIMEOUT_MS } from '../runtime';
 import { parseXHandle, splitXAccountLines } from '../../../shared/xHandles';
-import { parseXMediaInput } from '../../../shared/xMedia';
+import { parseXMediaInput, photoUrl } from '../../../shared/xMedia';
 import { X_POSTS_MAX_PER_RUN } from '../../../shared/flowFeedCaps';
 import { readLinkedThread, siteName } from './postReader';
 import { readAccessOf } from './readAccess';
 import { buildPushThreadEnvelope } from './pushThread';
+import { OPTIONAL_IMAGES_MAX } from './llmOptionalImages';
 import { formatPostTime, readAccountPosts, readTrendPosts, readXTrends, XSignInRequiredError, type XRead } from './xReader';
 import type { XPost, XThread, XTrend } from './xPosts';
 
@@ -102,11 +103,8 @@ export async function execXPosts(config: Record<string, string>, stepId: string)
   const now = Date.parse(nowIso);
   const windowMs = cacheWindowMs(undefined);
   const windowDays = Math.round(windowMs / DAY_MS);
-  const seen = new Set(
-    readSeenEntries(await xPostsCheckpoints.load(stepId), nowIso)
-      .filter((entry) => now - Date.parse(entry.seenAt) <= windowMs)
-      .map((entry) => entry.link),
-  );
+  const cache = await openSeenCache(xPostsCheckpoints, stepId);
+  const seen = { has: cache.isKnown };
   const isFresh = (post: XPost): boolean => now - post.createdAt <= windowMs;
 
   const gate = new Semaphore(X_FETCH_CONCURRENCY);
@@ -146,17 +144,22 @@ export async function execXPosts(config: Record<string, string>, stepId: string)
   if (readable === 0) {
     throw new FlowUserError('flow.error.xUnreadable', {}, 'X Posts: none of the listed accounts could be read');
   }
-  if (allKeys.length > 0) await reconcileSeenCache(xPostsCheckpoints, stepId, allKeys, undefined);
-
-  if (emitted.length === 0) {
-    sendLog('🐦 [Flow] X Posts: no new posts since last run');
-    return '[]';
-  }
   let out = [...emitted].sort((a, b) => b.createdAt - a.createdAt);
+  // Over the cap: left new, so the next run hands them on.
+  let deferred: XPost[] = [];
   if (out.length > MAX_NEW_PER_RUN) {
     sendLog(`🐦 [Flow] X Posts: capping to the latest ${MAX_NEW_PER_RUN} new post(s)`);
-    for (const p of out.slice(MAX_NEW_PER_RUN)) sendLog(`🐦 [Flow] X Posts: dropped by the cap: ${describePost(p, now)}`);
+    deferred = out.slice(MAX_NEW_PER_RUN);
+    for (const p of deferred) sendLog(`🐦 [Flow] X Posts: held for the next run by the cap: ${describePost(p, now)}`);
     out = out.slice(0, MAX_NEW_PER_RUN);
+  }
+  if (allKeys.length > 0) {
+    await cache.commit({ observed: allKeys, handed: out.map((p) => p.link), deferred: deferred.map((p) => p.link) });
+  }
+
+  if (out.length === 0) {
+    sendLog('🐦 [Flow] X Posts: no new posts since last run');
+    return '[]';
   }
   sendLog(`🐦 [Flow] X Posts: returning ${out.length} post(s)`);
   return JSON.stringify(out.map(postItem));
@@ -173,8 +176,17 @@ function byline(post: XPost): string {
   return [who, formatPostTime(post.createdAt)].filter(Boolean).join(' · ');
 }
 
+/**
+ * A post's own opening block when it says what the text does not (an App Store app's card: price,
+ * in-app purchases); "" otherwise. A PTT article's heading only repeats its card.
+ */
+function ownOpening(post: XPost): string {
+  return post.heading?.trim() && !post.card ? post.heading : '';
+}
+
+/** The post as the analysis reads it: its own opening block, else who wrote it and when. */
 function postBlock(post: XPost): string {
-  return [byline(post), post.text, post.link].filter(Boolean).join('\n');
+  return [ownOpening(post) || byline(post), post.text, post.link].filter(Boolean).join('\n');
 }
 
 /** A reply as the analysis reads it: who and what. Its own link says nothing about either. */
@@ -194,8 +206,25 @@ function postRecord(post: XPost): Record<string, string> {
 }
 
 /**
+ * The post's own photos for an analysis to look at, at the medium size, one URL per line — the
+ * quoted post's when it has none of its own. Videos and GIFs stay out: a model reads a picture,
+ * not a clip, and a poster frame says little.
+ */
+export function analysisPhotoUrls(post: Pick<XPost, 'media' | 'quoteMedia'>): string {
+  const photosOf = (media: XPost['media']) => media.filter((item) => item.kind === 'photo' && item.image);
+  const own = photosOf(post.media);
+  const photos = own.length > 0 ? own : photosOf(post.quoteMedia);
+  return photos
+    .slice(0, OPTIONAL_IMAGES_MAX)
+    .map((item) => photoUrl(item, 'medium'))
+    .filter((url) => url.startsWith('https://'))
+    .join('\n');
+}
+
+/**
  * The step's output. `subject` says what was read — `post` and its replies, or a whole `account`
  * (an Instagram profile, `account` its summed-up text) — so the analysis picks its prompt.
+ * `photos` are the post's pictures for the analysis to look at; an account has none.
  */
 export function buildXThreadEnvelope(focal: XPost, replies: XPost[], platform = 'X', account?: XThread['account']): string {
   const replyText = replies.map(replyBlock).join('\n\n---\n\n');
@@ -203,7 +232,10 @@ export function buildXThreadEnvelope(focal: XPost, replies: XPost[], platform = 
     output: account ? account.text : [postBlock(focal), replyText].filter(Boolean).join('\n\n---\n\n'),
     subject: account ? 'account' : 'post',
     ...(account ? { posts: String(account.posts) } : {}),
+    photos: account ? '' : analysisPhotoUrls(focal),
     platform,
+    // Only a post whose opening block says more than its text (App Store): a page read forwards it.
+    ...(ownOpening(focal) ? { opening: ownOpening(focal) } : {}),
     text: focal.text,
     author: handleOf(focal),
     name: focal.name,
@@ -222,7 +254,7 @@ export async function execXThread(config: Record<string, string>, signal?: Abort
   const url = (config.url ?? '').trim().split(/\s+/)[0] ?? '';
   const link = parseXMediaInput(url);
   if (!link) {
-    throw new FlowUserError('flow.error.xPostUrl', { url }, `X Thread: not an X, Threads, Instagram, Facebook, TikTok, PTT, Dcard, Reddit or Weibo post URL: ${url}`);
+    throw new FlowUserError('flow.error.xPostUrl', { url }, `X Thread: not an X, Threads, Instagram, Facebook, TikTok, PTT, Dcard, Reddit or Weibo post URL, or an App Store app link: ${url}`);
   }
   const parsedMax = parseInt(config.maxReplies ?? '', 10);
   const maxReplies = Number.isFinite(parsedMax) && parsedMax >= 0 ? parsedMax : DEFAULT_MAX_REPLIES;

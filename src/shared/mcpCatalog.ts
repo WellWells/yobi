@@ -36,7 +36,7 @@ export const MCP_CATALOG: readonly McpCatalogEntry[] = [
   { id: 'asana', name: 'Asana', url: 'https://mcp.asana.com/mcp', auth: 'oauth', category: 'work' },
   // Jira and Confluence only: the Atlassian MCP does not serve Bitbucket, so naming it would
   // spend an agent run on a server that cannot answer.
-  { id: 'atlassian', name: 'Atlassian', url: 'https://mcp.atlassian.com/v1/mcp', auth: 'oauth', category: 'work', keywords: ['jira', 'confluence'] },
+  { id: 'atlassian', name: 'Atlassian', url: 'https://mcp.atlassian.com/v2/mcp', auth: 'oauth', category: 'work', keywords: ['jira', 'confluence'] },
   { id: 'airtable', name: 'Airtable', url: 'https://mcp.airtable.com/mcp', auth: 'oauth', category: 'work' },
   { id: 'dropbox', name: 'Dropbox', url: 'https://mcp.dropbox.com/mcp', auth: 'oauth', category: 'work' },
   { id: 'zapier', name: 'Zapier', url: 'https://mcp.zapier.com/api/mcp/mcp', auth: 'oauth', category: 'work' },
@@ -69,8 +69,24 @@ export function normalizeMcpUrl(url: string): string {
   }
 }
 
+/**
+ * Endpoints a vendor has retired, keyed by normalized URL, mapped to their replacement. A
+ * connector saved with one of these is moved to the replacement as config loads (and as a backup
+ * restores), or it would stop working on the vendor's cut-off date with nothing in the app saying why.
+ * Atlassian retires its V1 endpoints on 2027-03-01.
+ */
+const RETIRED_MCP_URLS: Readonly<Record<string, string>> = {
+  'https://mcp.atlassian.com/v1/mcp': 'https://mcp.atlassian.com/v2/mcp',
+  'https://mcp.atlassian.com/v1/sse': 'https://mcp.atlassian.com/v2/mcp',
+};
+
+/** The URL to connect to: the replacement when `url` is a retired endpoint, otherwise `url` unchanged. */
+export function currentMcpUrl(url: string): string {
+  return RETIRED_MCP_URLS[normalizeMcpUrl(url)] ?? url;
+}
+
 export function findCatalogEntry(url: string): McpCatalogEntry | undefined {
-  const target = normalizeMcpUrl(url);
+  const target = normalizeMcpUrl(currentMcpUrl(url));
   return MCP_CATALOG.find((entry) => normalizeMcpUrl(entry.url) === target);
 }
 
@@ -86,8 +102,12 @@ export function connectorHoldsUserData(url: string): boolean {
   const trimmed = (url ?? '').trim().toLowerCase();
   // X and the sign-in site connectors are read as the user but hold public posts, not the user's
   // own data: "look in your own data first" would send a question about the news to a search of
-  // strangers' posts. PTT is a public forum read signed out; translation and news hold nothing at all.
-  if (trimmed === 'builtin://x' || trimmed === 'builtin://ptt' || trimmed === 'builtin://translate' || trimmed === 'builtin://page' || isSiteConnectorUrl(trimmed)) return false;
+  // strangers' posts. PTT is a public forum read signed out; translation and news hold nothing at all;
+  // the Taiwan law index is the ministry's published text.
+  if (
+    trimmed === 'builtin://x' || trimmed === 'builtin://ptt' || trimmed === 'builtin://translate' || trimmed === 'builtin://page'
+    || trimmed === 'builtin://twlaw' || isSiteConnectorUrl(trimmed)
+  ) return false;
   if (trimmed.startsWith('builtin://')) return true;
   const entry = findCatalogEntry(trimmed);
   return entry ? entry.category !== 'docs' : false;

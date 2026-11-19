@@ -111,7 +111,7 @@ export const ConversationFindBar: React.FC<ConversationFindBarProps> = ({ contai
           />
           <Text
             fz="var(--font-size-xs)"
-            c={count === 0 && query.trim() ? 'var(--mantine-color-error)' : 'var(--text-muted)'}
+            c={count === 0 && query.trim() ? 'var(--error-text)' : 'var(--text-muted)'}
             miw={52}
             ta="center"
             aria-live="polite"

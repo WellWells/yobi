@@ -1,5 +1,6 @@
 import { load } from 'cheerio';
 import type { FeedCandidate } from '../shared/types';
+import { parseRssFeed } from './feedParse';
 
 const FEED_LINK_TYPES = new Set(['application/rss+xml', 'application/atom+xml']);
 
@@ -30,48 +31,7 @@ export function extractFeedLinks(html: string, baseUrl: string): FeedCandidate[]
   return out;
 }
 
-export interface RssFeedItem {
-  link: string;
-  title?: string;
-  pubDate?: string;
-}
-
-export function parseRssFeed(rawXml: string): RssFeedItem[] {
-  const $xml = load(rawXml, { xmlMode: true });
-  const items: RssFeedItem[] = [];
-
-  const toIso = (raw: string): string | undefined => {
-    if (!raw) return undefined;
-    const d = new Date(raw);
-    return isNaN(d.getTime()) ? undefined : d.toISOString();
-  };
-
-  $xml('item').each((_, el) => {
-    const link = $xml(el).find('link').first().text().trim();
-    if (!link || !/^https?:\/\//i.test(link)) return;
-    const title = $xml(el).find('title').first().text().trim() || undefined;
-    const pubDate = toIso($xml(el).find('pubDate').first().text().trim());
-    items.push({ link, title, pubDate });
-  });
-
-  if (items.length === 0) {
-    $xml('entry').each((_, el) => {
-      const href = $xml(el).find('link').attr('href') ?? '';
-      const text = $xml(el).find('link').first().text().trim();
-      const link = href || text;
-      if (!link || !/^https?:\/\//i.test(link)) return;
-      const title = $xml(el).find('title').first().text().trim() || undefined;
-      // <published> first: some feeds bump <updated> on old entries.
-      const rawDate =
-        $xml(el).find('published').first().text().trim() ||
-        $xml(el).find('updated').first().text().trim();
-      const pubDate = toIso(rawDate);
-      items.push({ link, title, pubDate });
-    });
-  }
-
-  return items;
-}
+export { parseRssFeed, type RssFeedItem } from './feedParse';
 
 export type ParserBlockType =
   | 'extractLinks'
@@ -189,23 +149,7 @@ export function runParserBlocks(html: string, sourceUrl: string, blocks: ParserB
     }
 
     if (block.type === 'parseRss') {
-      const $xml = load(html, { xmlMode: true });
-      const links: string[] = [];
-
-      $xml('item').each((_, el) => {
-        const link = $xml(el).find('link').first().text().trim();
-        if (link && /^https?:\/\//i.test(link)) links.push(link);
-      });
-
-      if (links.length === 0) {
-        $xml('entry').each((_, el) => {
-          const href = $xml(el).find('link').attr('href') ?? '';
-          const text = $xml(el).find('link').first().text().trim();
-          const link = href || text;
-          if (link && /^https?:\/\//i.test(link)) links.push(link);
-        });
-      }
-
+      const links = parseRssFeed(html, sourceUrl).map((item) => item.link);
       lastOutput = JSON.stringify(applyMaxItems(links, block.maxItems));
       continue;
     }

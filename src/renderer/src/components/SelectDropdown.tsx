@@ -2,14 +2,15 @@ import React from 'react';
 import { Select } from '@mantine/core';
 import type { SelectProps } from '@mantine/core';
 import { Z_POPOVER } from '../config/zLayers';
+import type { AccessibleNameProps } from './a11y';
 
 type SelectOption = { value: string; label: string };
 type SelectOptionGroup = { group: string; items: SelectOption[] };
 
-export type SelectDropdownProps = Omit<SelectProps, 'data' | 'onChange'> & {
+export type SelectDropdownProps = Omit<SelectProps, 'data' | 'onChange' | 'label' | 'aria-label' | 'aria-labelledby'> & {
   options: (SelectOption | SelectOptionGroup)[];
   onChange: (value: string) => void;
-};
+} & AccessibleNameProps;
 
 export const SelectDropdown: React.FC<SelectDropdownProps> = ({
   value,
@@ -31,8 +32,7 @@ export const SelectDropdown: React.FC<SelectDropdownProps> = ({
     styles={{
       input: {
         background: 'var(--mantine-color-bg-tertiary)',
-        borderColor: 'var(--mantine-color-default-border)',
-        color: disabled ? 'var(--mantine-color-dimmed)' : 'var(--mantine-color-text)',
+        color: disabled ? 'var(--text-disabled)' : 'var(--mantine-color-text)',
         fontSize: 'var(--font-size-base)',
         ...(typeof styles === 'object' && styles !== null && 'input' in styles ? (styles as Record<string, object>).input : {}),
       },

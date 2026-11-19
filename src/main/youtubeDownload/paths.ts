@@ -38,9 +38,4 @@ export const MANAGED_DIRS = { ytdlp: 'yt-dlp', ffmpeg: 'ffmpeg' } as const;
 /** Each managed folder's own record of the version it holds. */
 export const VERSION_FILE = 'version.txt';
 
-/** `child` is `root` itself or somewhere below it, after resolving `..` segments. */
-export function isInsideDir(root: string, child: string): boolean {
-  const rel = path.relative(path.resolve(root), path.resolve(child));
-  if (rel === '') return true;
-  return rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel);
-}
+export { isInsideDir } from '../managedTools/paths';

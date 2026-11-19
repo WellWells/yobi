@@ -5,7 +5,10 @@ import type { CaptureFormat, FlowButton } from '../../../shared/types';
 import { parseLlmExportFormats } from '../../../shared/fileOutputStep';
 import { getProviderLabel, preparePromptForProvider, runAutomation } from '../../providers';
 import { byokTargetTakesImages, runByokCompletion } from '../../providers/byokClient';
-import { loadByokImages, withByokImages } from '../../providers/byokImages';
+import { withByokImages } from '../../providers/byokImages';
+import { parseUploadFailure } from '../../providers/fileDrop';
+import { byokImagesFor, fetchOptionalImages, removeOptionalImages, withOptionalFiles } from './llmOptionalImages';
+import { cachedLlmAnswer, llmAnswerKey, rememberLlmAnswer } from './llmAnswerCache';
 import { resendIfGeminiCapFell } from '../../providers/geminiPromptTooLong';
 import { attachmentRefusalFor, isByokImageFile, megabytesLabel } from '../../../shared/attachmentFormats';
 import { repairSplitTableRows } from '../../../shared/markdownTableRepair';
@@ -31,6 +34,7 @@ import { exportLlmAnswer } from './llmExport';
 import { sendLog, sendWebNotification } from '../../helpers';
 import { clipboardLane, llmLane, pageFetchLane } from '../lanes';
 import { yieldRunSlot } from '../flowQueue';
+import { CAPTION_BUDGET_KEY, withCaptionBudget } from '../captionBudget';
 import { FlowAbortError, llmIdleTimeoutMs, resolveDelayMs, withAbort, withStepTimeout } from '../runtime';
 import type { BotSendExtras, FlowExecutorDeps, TelegramSendAs } from '../types';
 import { FlowUserError } from '../userError';
@@ -379,6 +383,35 @@ async function resolveLlmAttachments(
 }
 
 /**
+ * A built-in analysis's step (`answerCache`, a built-in field only): the answer the same model
+ * already gave to this exact prompt and these pictures is handed back without asking again. A step
+ * that exports or keeps flow memory does more than answer, so it always runs.
+ */
+async function execLlmOnce(
+  config: Record<string, string>,
+  deps: FlowExecutorDeps,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<string> {
+  const plain = { ...config, answerCache: '' };
+  const prompt = withCaptionBudget(config.prompt ?? '', Number(config[CAPTION_BUDGET_KEY] ?? 0));
+  if (!prompt.trim() || config.useMemory === 'true' || config.useUserMemory === 'true' || parseLlmExportFormats(config.exportFormat).length > 0) {
+    return execLlm(plain, deps, timeoutMs, signal);
+  }
+  const providerUrl = config.provider || deps.getTargetUrl();
+  const key = llmAnswerKey(providerUrl, prompt, config.imageUrls ?? '');
+  const cached = cachedLlmAnswer(key);
+  if (cached !== null) {
+    sendLog(`♻️ [Flow] ${getProviderLabel(providerUrl)} answered this a moment ago — sending that answer again`);
+    deps.onStepOutput?.({ text: cached, file: '', png: '', webp: '', pdf: '' });
+    return cached;
+  }
+  const answer = await execLlm(plain, deps, timeoutMs, signal);
+  rememberLlmAnswer(key, answer);
+  return answer;
+}
+
+/**
  * `timeoutMs` bounds the whole step (a caller's run budget may shorten it); the provider stops on
  * its own after the response timeout passes with no new word, as it does in chat.
  */
@@ -388,6 +421,7 @@ export async function execLlm(
   timeoutMs: number,
   signal?: AbortSignal,
 ): Promise<string> {
+  if (config.answerCache === 'true') return execLlmOnce(config, deps, timeoutMs, signal);
   const prompt = config.prompt ?? '';
   const files: Record<CaptureFormat, string> = { png: '', webp: '', pdf: '' };
   deps.onStepOutput?.({ text: '', file: '', ...files });
@@ -401,7 +435,7 @@ export async function execLlm(
 
   const useMemory = config.useMemory === 'true';
   const flowId = (config.__flowId ?? '').trim();
-  let effectivePrompt = prompt;
+  let effectivePrompt = withCaptionBudget(prompt, Number(config[CAPTION_BUDGET_KEY] ?? 0));
   if (config.useUserMemory === 'true') {
     // Ahead of the prompt (flow memory, when on, follows it). Read-only: nothing a flow's model says is remembered.
     const { entries } = await resolveMemory({ surface: 'flow', flowOptIn: true });
@@ -422,52 +456,74 @@ export async function execLlm(
 
   let promptForModel = effectivePrompt;
 
-  const attachments = await resolveLlmAttachments(config, providerUrl);
-
-  // The wait for the model and the request lend the run's queue slot (`yieldRunSlot`); the step
-  // timeout stays inside, so taking the slot back afterwards never times out an answered step.
+  // Pictures the step may send but does not need (a post analysis's photos): fetched for this
+  // step alone, and deleted once the model has answered or the step failed.
+  const optionalImages = await fetchOptionalImages(config.imageUrls ?? '', signal);
   let response: string;
-  if (isByokTarget) {
-    const byokAbort = new AbortController();
-    const images = attachments.length > 0 ? await loadByokImages(attachments) : undefined;
-    const result = await withAbort(yieldRunSlot(() => withStepTimeout(
-      runByokCompletion(providerUrl, withByokImages(promptForModel, images), idleMs, byokAbort.signal),
-      timeoutMs,
-      'llm',
-      () => byokAbort.abort(),
-      signal,
-    )), signal);
-    response = result.response;
-  } else {
-    const result = await withAbort(
-      yieldRunSlot(() => llmLane.runExclusive(async () => {
-        if (signal?.aborted) throw new FlowAbortError();
-        // Prepared once the lane is ours, and again when the Gemini page refused it unsent because
-        // its cap fell on the way: the step is then cut to the cap that holds, as it would have been
-        // had that cap been known up front.
-        return resendIfGeminiCapFell(async () => {
-          const preparedPrompt = preparePromptForProvider(effectivePrompt, providerUrl);
-          if (preparedPrompt.removedBlankLines) {
-            sendLog(`✂️ [Flow] Removed blank lines for ${getProviderLabel(providerUrl)} input`);
-          }
-          if (preparedPrompt.truncated) {
-            sendLog(`✂️ [Flow] Truncated ${getProviderLabel(providerUrl)} input to ${preparedPrompt.capLabel}`);
-          }
-          promptForModel = preparedPrompt.prompt;
-          const workerWin = deps.ensureWorkerWin ? await deps.ensureWorkerWin() : deps.getWorkerWin();
-          if (!workerWin || workerWin.isDestroyed()) throw workerWindowUnavailable();
-          return withStepTimeout(
-            runAutomation(workerWin, promptForModel, idleMs, providerUrl, attachments),
-            timeoutMs,
-            'llm',
-            () => { workerWin.webContents.loadURL('about:blank').catch(() => {}); },
-            signal,
-          );
-        }, (cap) => sendLog(`✂️ [Flow] ${getProviderLabel(providerUrl)} takes only ${cap} characters now — sending the step again`));
-      })),
-      signal,
-    );
-    response = result.response;
+  try {
+    const optionalFiles = new Set(optionalImages?.files ?? []);
+    const attachments = await resolveLlmAttachments(withOptionalFiles(config, optionalImages?.files ?? []), providerUrl);
+    // What the step sends when the provider will not take the optional pictures.
+    const requiredAttachments = attachments.filter((file) => !optionalFiles.has(file));
+    const sendsOptional = requiredAttachments.length < attachments.length;
+
+    // The wait for the model and the request lend the run's queue slot (`yieldRunSlot`); the step
+    // timeout stays inside, so taking the slot back afterwards never times out an answered step.
+    if (isByokTarget) {
+      const byokAbort = new AbortController();
+      const images = await byokImagesFor(attachments, requiredAttachments, sendsOptional, () => getProviderLabel(providerUrl));
+      const result = await withAbort(yieldRunSlot(() => withStepTimeout(
+        runByokCompletion(providerUrl, withByokImages(promptForModel, images), idleMs, byokAbort.signal),
+        timeoutMs,
+        'llm',
+        () => byokAbort.abort(),
+        signal,
+      )), signal);
+      response = result.response;
+    } else {
+      const result = await withAbort(
+        yieldRunSlot(() => llmLane.runExclusive(async () => {
+          if (signal?.aborted) throw new FlowAbortError();
+          // Prepared once the lane is ours, and again when the Gemini page refused it unsent because
+          // its cap fell on the way: the step is then cut to the cap that holds, as it would have been
+          // had that cap been known up front.
+          return resendIfGeminiCapFell(async () => {
+            const preparedPrompt = preparePromptForProvider(effectivePrompt, providerUrl);
+            if (preparedPrompt.removedBlankLines) {
+              sendLog(`✂️ [Flow] Removed blank lines for ${getProviderLabel(providerUrl)} input`);
+            }
+            if (preparedPrompt.truncated) {
+              sendLog(`✂️ [Flow] Truncated ${getProviderLabel(providerUrl)} input to ${preparedPrompt.capLabel}`);
+            }
+            promptForModel = preparedPrompt.prompt;
+            const workerWin = deps.ensureWorkerWin ? await deps.ensureWorkerWin() : deps.getWorkerWin();
+            if (!workerWin || workerWin.isDestroyed()) throw workerWindowUnavailable();
+            const send = (files: string[]) => withStepTimeout(
+              runAutomation(workerWin, promptForModel, idleMs, providerUrl, files),
+              timeoutMs,
+              'llm',
+              () => { workerWin.webContents.loadURL('about:blank').catch(() => {}); },
+              signal,
+            );
+            if (!sendsOptional) return send(attachments);
+            try {
+              return await send(attachments);
+            } catch (err) {
+              // The page refused the pictures before the prompt was typed (out of uploads, signed
+              // out, a file it would not take): nothing was sent, so the text goes on its own.
+              const upload = parseUploadFailure(err instanceof Error ? err.message : String(err ?? ''));
+              if (!upload || signal?.aborted) throw err;
+              sendLog(`⚠️ [Flow] ${getProviderLabel(providerUrl)} did not take the pictures (${upload.phase}) — sending the prompt as text only`);
+              return send(requiredAttachments);
+            }
+          }, (cap) => sendLog(`✂️ [Flow] ${getProviderLabel(providerUrl)} takes only ${cap} characters now — sending the step again`));
+        })),
+        signal,
+      );
+      response = result.response;
+    }
+  } finally {
+    if (optionalImages) await removeOptionalImages(optionalImages.dir);
   }
 
   // A wrapped table row has to be rejoined here rather than at each sink: this answer goes on
@@ -802,9 +858,10 @@ export async function execBot(
     const buttonsLine = items.length === 1
       ? t(getLangCache(), 'flow.bot.albumButton', { label: items[0].label })
       : t(getLangCache(), 'flow.bot.albumButtons');
-    // The album quotes the asking message; the buttons line under it does not quote it again.
+    // The album quotes the asking message — unless it takes its place; the buttons line under it
+    // does not quote it again.
     const albumTo = (target: number): Promise<void> => {
-      const replyTo = triggerMessageIn(config, target);
+      const replyTo = replacesTrigger(config) ? undefined : triggerMessageIn(config, target);
       return replyTo ? sendAlbum(target, album, caption, authorizedPaths, replyTo) : sendAlbum(target, album, caption, authorizedPaths);
     };
     await broadcast(
@@ -818,6 +875,7 @@ export async function execBot(
       },
     );
     sendLog(`📤 [Bot] Sent an album of ${album.length} files${sendButtons ? ', its buttons after it' : ''}`);
+    await deleteReplacedTrigger(config, deps, explicitIds);
     return attachment;
   }
   if (attachment) {

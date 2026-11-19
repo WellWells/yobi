@@ -45,6 +45,10 @@ interface FileItemProps {
   /** The hover card's second line: provider · time · turns, whichever are known. */
   detail: string;
   registerItemRef: (path: string, node: HTMLDivElement | null) => void;
+  /** The list's one Tab stop (roving focus: the arrows walk the rest). */
+  tabbable: boolean;
+  /** Its depth in the tree: 2 under a section heading, 3 inside a folder. */
+  level: number;
 }
 
 /**
@@ -57,7 +61,7 @@ export const FileItem: React.FC<FileItemProps> = React.memo(({
   file, selected, unread, unreadLabel, isEditing, editingText, setEditingText,
   selectMode, checked, onToggleSelect,
   onRowClick, onOpenMenu, onOpenMenuAt, menuOpen, moreLabel, onDragOut, onDelete, onTogglePin, swipeLabels,
-  onCommitEdit, onCancelEdit, providerIcon: ProviderIcon, detail, registerItemRef,
+  onCommitEdit, onCancelEdit, providerIcon: ProviderIcon, detail, registerItemRef, tabbable, level,
 }) => {
   const highlighted = selectMode ? checked : selected;
   const rowRef = useRef<HTMLDivElement | null>(null);
@@ -129,7 +133,11 @@ export const FileItem: React.FC<FileItemProps> = React.memo(({
         rowRef.current = node as HTMLDivElement | null;
         registerItemRef(file.path, node as HTMLDivElement | null);
       }}
-      tabIndex={0}
+      // A tree item (WCAG 4.1.2): aria-selected is only valid on such a role, and a tree item may
+      // hold the "⋯" and the select-mode checkbox (a button may not: axe nested-interactive).
+      role="treeitem"
+      aria-level={level}
+      tabIndex={tabbable ? 0 : -1}
       onClick={(e) => {
         if (isEditing) return;
         onRowClick(file, { ctrlKey: e.ctrlKey, metaKey: e.metaKey, shiftKey: e.shiftKey });
@@ -155,6 +163,7 @@ export const FileItem: React.FC<FileItemProps> = React.memo(({
           menuOpen={menuOpen}
           onOpen={(at) => onOpenMenuAt(file, at)}
           className={styles.rowMore}
+          pointerOnly
         />
       )}
       {selectMode ? (

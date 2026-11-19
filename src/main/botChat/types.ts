@@ -143,6 +143,8 @@ export interface BotChatRouterDeps<E extends BotChatEvent> {
    * is an ordinary message; the flow runner checks again.
    */
   canUseDownloader?: (chatId: string, userId: string) => Promise<boolean>;
+  /** Whether the analysis buttons (a post's, a video's, a page's) work for this account in this chat. */
+  canAnalyze?: (chatId: string, userId: string) => Promise<boolean>;
   /**
    * Which sites' typed links run their built-in (Settings › Recognize links), read per message.
    * Absent = every site. A button already sent still works (`fromMenu`).

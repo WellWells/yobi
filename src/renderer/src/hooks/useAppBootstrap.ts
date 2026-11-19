@@ -5,16 +5,18 @@ import { useI18nStore } from '../store/i18nStore';
 import { useUpdateStore } from '../store/useUpdateStore';
 import { useSecretHealthStore } from '../store/secretHealthStore';
 import { useMcpStore } from '../store/useMcpStore';
+import { useKnowledgeStore } from '../store/useKnowledgeStore';
 import { initThemeFromConfig } from '../store/themeStore';
 import { initReadingFromConfig } from '../store/readingStore';
 import { initSidebarViewFromConfig } from '../store/sidebarViewStore';
 import { initLinkRecognitionFromConfig, useLinkRecognitionStore } from '../store/linkRecognitionStore';
 import type { LayoutMode } from '../store/appStore';
-import { accountApi, byokApi, chatgptModelApi, claudeModelApi, geminiModelApi, ipcEvents, mcpApi, settingsApi, tempChatApi } from '../api/electronApi';
+import { accountApi, byokApi, chatgptModelApi, claudeModelApi, geminiModelApi, ipcEvents, perplexityModelApi, knowledgeApi, mcpApi, settingsApi, tempChatApi } from '../api/electronApi';
 import { onIdle } from '../utils/idle';
 import { makeByokGroupModels, makeByokModelOption } from '../config/models';
 import { useShortcutAction } from '../shortcuts/useShortcutAction';
 import { useShortcutStore } from '../store/shortcutStore';
+import { useExportSettingsStore } from '../store/exportSettingsStore';
 
 /**
  * The chat's display settings, read from the config: at startup, and again after a backup
@@ -39,6 +41,36 @@ export function initChatDisplayFromConfig(): void {
   });
 }
 
+async function loadKnowledgeBases(): Promise<void> {
+  const { bases, statuses } = await knowledgeApi.list();
+  useKnowledgeStore.getState().setBases(bases);
+  useKnowledgeStore.getState().setStatuses(statuses);
+}
+
+/**
+ * Everything outside the Settings page that holds a setting, read again after the Yobi connector
+ * changed settings in main. The Settings page itself is remounted (`App.tsx`), so its hooks re-read.
+ */
+export async function reloadSettingsFromConfig(): Promise<void> {
+  const app = useAppStore.getState();
+  initThemeFromConfig();
+  initReadingFromConfig();
+  initSidebarViewFromConfig();
+  initChatDisplayFromConfig();
+  initLinkRecognitionFromConfig();
+  void useExportSettingsStore.getState().reload();
+  void settingsApi.getHotkey().then(app.setHotkey);
+  void settingsApi.getRegionHotkey().then(app.setRegionHotkey);
+  void settingsApi.getShortcuts().then(useShortcutStore.getState().setOverrides);
+  void settingsApi.getPromptPreferences().then((prefs) => app.setUserNickname(prefs.nickname ?? ''));
+  void settingsApi.getHiddenSources().then(app.setHiddenSources);
+  void mcpApi.list().then(useMcpStore.getState().setServers);
+  void loadKnowledgeBases();
+  const { locale } = await window.electronAPI.getCurrentLocale();
+  const i18n = useI18nStore.getState();
+  if (locale && locale !== i18n.locale) await i18n.setLocale(locale, { persist: false });
+}
+
 export function useAppBootstrap() {
   const appendLog = useAppStore((s) => s.appendLog);
   const setStatus = useAppStore((s) => s.setStatus);
@@ -55,6 +87,7 @@ export function useAppBootstrap() {
   const setGeminiModels = useAppStore((s) => s.setGeminiModels);
   const setClaudeModels = useAppStore((s) => s.setClaudeModels);
   const setChatgptModels = useAppStore((s) => s.setChatgptModels);
+  const setPerplexityModels = useAppStore((s) => s.setPerplexityModels);
   const setTempChatMode = useAppStore((s) => s.setTempChatMode);
   const setTempChatResult = useAppStore((s) => s.setTempChatResult);
   const loadLocales = useI18nStore((s) => s.loadLocales);
@@ -85,6 +118,8 @@ export function useAppBootstrap() {
     // Hydrated here, not in the Settings hook: the composer derives a slash command per
     // connected server, so the list has to exist before Settings is ever opened.
     void mcpApi.list().then(useMcpStore.getState().setServers);
+    // Same for the knowledge bases: the composer offers them next to the connectors.
+    void loadKnowledgeBases();
     void geminiModelApi.get().then((state) => {
       setGeminiModels(state);
       if (state.catalog) return;
@@ -101,6 +136,14 @@ export function useAppBootstrap() {
         void claudeModelApi.refresh().then(setClaudeModels);
       });
     });
+    void perplexityModelApi.get().then((state) => {
+      setPerplexityModels(state);
+      if (state.catalog) return;
+      // Same first-run rule; main reads nothing for a visitor or a hidden Perplexity.
+      onIdle(() => {
+        void perplexityModelApi.refresh().then(setPerplexityModels);
+      });
+    });
     void chatgptModelApi.get().then((state) => {
       setChatgptModels(state);
       if (state.catalog) return;
@@ -109,7 +152,10 @@ export function useAppBootstrap() {
         void chatgptModelApi.refresh().then(setChatgptModels);
       });
     });
-  }, [initializeListeners, loadLocales, setHotkey, setUserNickname, hydrateAiUrl, setByokModels, setByokGroupModels, setHiddenSources, setTempChatMode, setAccountStatuses, setGeminiModels, setClaudeModels, setChatgptModels]);
+  }, [initializeListeners, loadLocales, setHotkey, setUserNickname, hydrateAiUrl, setByokModels, setByokGroupModels, setHiddenSources, setTempChatMode, setAccountStatuses, setGeminiModels, setClaudeModels, setChatgptModels, setPerplexityModels]);
+
+  // The chat's model set from elsewhere (the Yobi connector, a bot) shows in the composer at once.
+  useEffect(() => settingsApi.onAiUrlChanged((url) => useAppStore.getState().setAiUrl(url)), []);
 
   useEffect(() => {
     const unsubs = [
@@ -127,14 +173,17 @@ export function useAppBootstrap() {
       }),
       ipcEvents.onTempChatResult(({ content }) => setTempChatResult(content)),
       mcpApi.onServerStatus(useMcpStore.getState().setServers),
+      knowledgeApi.onChanged(useKnowledgeStore.getState().setBases),
+      knowledgeApi.onStatus(useKnowledgeStore.getState().applyStatus),
       geminiModelApi.onChanged(setGeminiModels),
       claudeModelApi.onChanged(setClaudeModels),
       chatgptModelApi.onChanged(setChatgptModels),
+      perplexityModelApi.onChanged(setPerplexityModels),
       settingsApi.onLinkRecognitionChanged(useLinkRecognitionStore.getState().apply),
       settingsApi.onReadingZoomCommand(useAppStore.getState().applyReadingZoomCommand),
     ];
     return () => unsubs.forEach((fn) => fn());
-  }, [appendLog, setStatus, setQueue, setAccountStatus, setView, setTempChatMode, setTempChatResult, setGeminiModels, setClaudeModels, setChatgptModels]);
+  }, [appendLog, setStatus, setQueue, setAccountStatus, setView, setTempChatMode, setTempChatResult, setGeminiModels, setClaudeModels, setChatgptModels, setPerplexityModels]);
 
   useShortcutAction('nav.switchView', (_event, combo) => {
     const digit = Number(combo.slice(combo.lastIndexOf('+') + 1));

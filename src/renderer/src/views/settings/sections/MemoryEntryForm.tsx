@@ -59,7 +59,7 @@ export const MemoryEntryForm: React.FC<Props> = ({
         <StatusLine tone="warning">{t(`settings.memory.error.${error}`)}</StatusLine>
       )}
       <Group justify="space-between" gap={8}>
-        <Text fz="var(--font-size-sm)" c={tooLong ? 'var(--mantine-color-error)' : 'dimmed'}>
+        <Text fz="var(--font-size-sm)" c={tooLong ? 'var(--error-text)' : 'dimmed'}>
           {`${length} / ${maxChars}`}
         </Text>
         <Group gap={8}>

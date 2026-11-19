@@ -10,6 +10,7 @@ import {
   setGeminiModelChoice,
   syncGeminiModelIfParked,
 } from '../providers/geminiModelSync';
+import { trustedGeminiCatalog } from '../providers/geminiModelScript';
 import { refreshModelList } from './modelListRefresh';
 
 /** Reads Gemini's model list into the cache when it is missing or stale (or `force`). */
@@ -17,7 +18,7 @@ export function refreshGeminiModelList(force = false): Promise<void> {
   return refreshModelList(
     {
       provider: 'gemini',
-      catalog: () => config.geminiModelCatalog,
+      catalog: () => trustedGeminiCatalog(config.geminiModelCatalog),
       refresh: (worker) => refreshGeminiModels(worker, force),
       requireSignIn: false,
     },

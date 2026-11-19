@@ -34,6 +34,8 @@ interface FolderRowProps<F extends { name: string }> {
   onOpenMenuAt: (folder: F, at: MenuAnchor) => void;
   /** The chat list's keyboard walk; the flow list has none. */
   registerItemRef?: (key: string, node: HTMLDivElement | null) => void;
+  /** The list's one Tab stop (roving focus: the arrows walk the rest). */
+  tabbable: boolean;
 }
 
 /**
@@ -44,12 +46,14 @@ interface FolderRowProps<F extends { name: string }> {
  */
 function FolderRowView<F extends { name: string } = ConversationFolder>({
   folder, label, count, expanded, isRenaming, renameText, setRenameText, onCommitRename, onCancelRename, aiSource,
-  menuOpen, moreLabel, dropTarget, status, onToggle, onOpenMenu, onOpenMenuAt, registerItemRef,
+  menuOpen, moreLabel, dropTarget, status, onToggle, onOpenMenu, onOpenMenuAt, registerItemRef, tabbable,
 }: FolderRowProps<F>): React.ReactElement {
   return (
     <Box
       ref={(node: HTMLDivElement | null) => registerItemRef?.(folderRowKey(folder.name), node)}
-      tabIndex={0}
+      role="treeitem"
+      aria-level={2}
+      tabIndex={tabbable ? 0 : -1}
       aria-expanded={expanded}
       className={styles.folderItem}
       data-menu-open={menuOpen || undefined}
@@ -78,7 +82,7 @@ function FolderRowView<F extends { name: string } = ConversationFolder>({
             style={{ flex: 1, minWidth: 0 }}
           />
         ) : (
-          <Text fz="var(--font-size-base)" lh="18px" flex={1} truncate title={label}>{label}</Text>
+          <Text fz="var(--font-size-base)" lh={1.4} flex={1} truncate title={label}>{label}</Text>
         )}
         {!isRenaming && status}
         {!isRenaming && (
@@ -91,6 +95,7 @@ function FolderRowView<F extends { name: string } = ConversationFolder>({
           menuOpen={menuOpen}
           onOpen={(at) => onOpenMenuAt(folder, at)}
           className={styles.folderMore}
+          pointerOnly
         />
       )}
     </Box>

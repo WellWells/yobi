@@ -17,6 +17,8 @@ import type { BotCommandAccess, BotCommandAccessMode } from '../../shared/botCom
 import { builtinCommandGrant } from '../../shared/botPermissions';
 import { botAccessDeniedText } from '../botPermissions/denial';
 import { createBotChatAccess, type BotChatAccess } from '../botChat/access';
+import { builtinFlowRight } from '../../shared/builtinFlowRight';
+import type { BuiltinFlowRight } from '../../shared/builtinFlowRight';
 import { PAGE_ANALYZE_FLOW_ID, pageAnalyzeLink } from '../../shared/pageAnalyzeLine';
 import { botFlowEndText } from '../botChat/texts';
 import { linkRequestText } from '../botChat/wakeWord';
@@ -66,6 +68,8 @@ export interface TelegramBuiltinRequest {
   chatRecap?: true;
   /** A model command (`/gemini …`), not a plain message. */
   modelNamed?: true;
+  /** Pictures or files sent with the request (`runAgentOnMedia`), uploaded with the run. */
+  attachments?: string[];
 }
 
 export interface TelegramAgentAnswerRequest {
@@ -101,6 +105,11 @@ export interface TelegramCommandOptions {
    * chat. Without it the link is an ordinary message; the flow runner checks again.
    */
   canUseDownloader?: (userId: number, chatId: number) => Promise<boolean>;
+  /**
+   * Whether the analysis buttons (a post's, a video's, a page's) work for this account in this
+   * chat. Without it pairing alone decides; the flow runner checks again.
+   */
+  canAnalyze?: (userId: number, chatId: number) => Promise<boolean>;
   /**
    * Which sites' typed or overheard links run their built-in (Settings › Recognize links), read
    * per message. Absent = every site. A menu button already sent still works.
@@ -254,7 +263,7 @@ export async function handleBuiltinCommand(
  * ids user first. Built per call: tests swap an option's function between calls.
  */
 function accessOf(options: TelegramCommandOptions): BotChatAccess {
-  const { canChat, canUseBuiltin, canUseDownloader, isFlowAdmin } = options;
+  const { canChat, canUseBuiltin, canUseDownloader, canAnalyze, isFlowAdmin } = options;
   const paired = (userId: string): boolean => options.isPairedUser(Number(userId));
   return createBotChatAccess({
     logTag: '[telegram]',
@@ -263,6 +272,7 @@ function accessOf(options: TelegramCommandOptions): BotChatAccess {
     ...(canChat ? { canChat: (chatId: string, userId: string) => canChat(Number(userId), Number(chatId)) } : {}),
     ...(canUseBuiltin ? { canUseBuiltin: (key: BotBuiltinCommandKey, chatId: string, userId: string) => canUseBuiltin(key, Number(userId), Number(chatId)) } : {}),
     ...(canUseDownloader ? { canUseDownloader: (chatId: string, userId: string) => canUseDownloader(Number(userId), Number(chatId)) } : {}),
+    ...(canAnalyze ? { canAnalyze: (chatId: string, userId: string) => canAnalyze(Number(userId), Number(chatId)) } : {}),
     ...(isFlowAdmin ? { isFlowAdmin: (chatId: string, userId: string) => isFlowAdmin(Number(userId), Number(chatId)) } : {}),
   }, paired);
 }
@@ -274,6 +284,11 @@ function mayUseBuiltin(options: TelegramCommandOptions, key: BotBuiltinCommandKe
 /** The download grant. Absent, pairing alone decides. */
 function mayUseDownloader(options: TelegramCommandOptions, userId: number, chatId: number): Promise<boolean> {
   return accessOf(options).mayDownload(String(chatId), String(userId));
+}
+
+/** The right one built-in line asks for: the analysis grant to sum up, the download grant for the rest. */
+function mayRunBuiltin(options: TelegramCommandOptions, right: BuiltinFlowRight, userId: number, chatId: number): Promise<boolean> {
+  return accessOf(options).mayRunBuiltin(right, String(chatId), String(userId));
 }
 
 function mayRunFlowCommand(options: TelegramCommandOptions, command: BotCommandAccess, userId: number, chatId: number): Promise<boolean> {
@@ -415,6 +430,20 @@ async function runBuiltin(ctx: TelegramContext, options: TelegramCommandOptions,
   });
 }
 
+/**
+ * Pictures or files the agent is to work on (turn into a PDF, edit, read an Office file): an agent
+ * run with them attached, answered like a message. The caller paced the request.
+ */
+export async function runAgentOnMedia(
+  ctx: TelegramContext,
+  options: TelegramCommandOptions,
+  run: { input: string; targetUrl: string; attachments: string[] },
+): Promise<void> {
+  await runQueued(ctx, options, 'direct', 'media agent run', async (replyTarget) => {
+    await options.onBuiltinCommand?.({ key: 'agent', input: run.input, targetUrl: run.targetUrl, replyTarget, attachments: run.attachments });
+  });
+}
+
 /** An answer to the pending question — typed, or the text of the button pressed. */
 export async function handleAgentAnswer(ctx: TelegramContext, options: TelegramCommandOptions, answer: string): Promise<void> {
   if (!options.onAgentAnswer) return;
@@ -496,7 +525,7 @@ export async function handleDirectMessage(ctx: TelegramContext, options: Telegra
   }
   const ticket = await admitPaced(ctx, options);
   if (!ticket) return;
-  if (await runLinkFlow(ctx, options, prompt, ticket)) return;
+  if (await runLinkFlow(ctx, options, prompt, ticket, !repliedLink)) return;
   const run = { key: 'agent' as const, input: prompt, targetUrl: direct.targetUrl, command: 'direct', ...(repliedLink ? { linkFromReply: true } : {}) };
   await dispatchBuiltin(ctx, options, run, ticket);
 }
@@ -506,21 +535,32 @@ export async function handleDirectMessage(ctx: TelegramContext, options: Telegra
  * mention — runs Yobi's own flow for it (`linkCommandFor`) in that chat, with the link as its
  * input; false leaves it to the agent — as for an account without the download grant, whose
  * link is an ordinary message. "Yobi <link>" is the link alone. The request's pace ticket goes
- * with the flow when it is one.
+ * with the flow when it is one. `saidInMessage`: `said` is the message itself less the bot's
+ * mention — so "@bot <link>" and "Yobi <link>" say nothing but the link, and the answer may take
+ * their place; a link taken from the message replied to is not.
  */
-async function runLinkFlow(ctx: TelegramContext, options: TelegramCommandOptions, said: string, ticket: BotPaceTicket): Promise<boolean> {
+async function runLinkFlow(
+  ctx: TelegramContext,
+  options: TelegramCommandOptions,
+  said: string,
+  ticket: BotPaceTicket,
+  saidInMessage = true,
+): Promise<boolean> {
   if (!ctx.from || !ctx.chat || !options.onFlowCommand) return false;
   const text = linkRequestText(said);
   const match = linkCommandFor(text, options.linkSites?.());
   if (!match) return false;
-  if (!(await mayUseDownloader(options, ctx.from.id, ctx.chat.id))) {
-    options.onLog(`[telegram] link from ${ctx.from.id} left to the agent — no download grant`);
+  const right = builtinFlowRight(match.flowId, text) ?? 'download';
+  if (!(await mayRunBuiltin(options, right, ctx.from.id, ctx.chat.id))) {
+    options.onLog(`[telegram] link from ${ctx.from.id} left to the agent — no ${right} grant`);
     return false;
   }
   options.onLog(`[telegram] link from ${ctx.from.id} → ${match.flowId}`);
   let run: QueuedFlowRun | undefined;
   try {
-    run = await queueFlowCommand(ctx, options, { match, input: text, userId: ctx.from.id, chatId: ctx.chat.id, commandName: match.command });
+    run = await queueFlowCommand(ctx, options, {
+      match, input: text, userId: ctx.from.id, chatId: ctx.chat.id, commandName: match.command, messageIsInput: saidInMessage,
+    });
   } finally {
     releaseAfter(ticket, run);
   }
@@ -686,7 +726,16 @@ export async function handleFlowButton(
   }
   let run: QueuedFlowRun | undefined;
   try {
-    run = await pressFlowButton(ctx, options, claim.record, { userId: ctx.from.id, chatId: ctx.chat.id });
+    // An analysis button is anyone's in the chat who holds the analysis grant — the one who pasted
+    // the link like everyone else. Whoever may not is told in their own alert, so a group is not
+    // answered once per person who tries.
+    const press = { userId: ctx.from.id, chatId: ctx.chat.id };
+    if (claim.record.shared && !(await mayRunBuiltin(options, 'analyze', press.userId, press.chatId))) {
+      options.onLog(`[telegram] analysis button refused for user ${press.userId} — no analyze grant`);
+      await ctx.answerCallbackQuery({ text: botAccessDeniedText(s, 'analyze'), show_alert: true });
+      return;
+    }
+    run = await pressFlowButton(ctx, options, claim.record, press);
   } finally {
     if (run) void run.settled.finally(() => releaseFlowButton(token));
     else releaseFlowButton(token);
@@ -746,10 +795,11 @@ async function pressFlowButton(
     await ctx.reply(t(s, 'telegram.cmd.accessDenied'));
     return undefined;
   }
-  // A downloader taken away after the menu went out holds for its buttons too.
-  if (builtin && !(await mayUseDownloader(options, press.userId, press.chatId))) {
-    options.onLog(`[telegram] downloader button refused for user ${press.userId} — no download grant`);
-    await ctx.reply(botAccessDeniedText(s, 'download'));
+  // A grant taken away after the menu went out holds for its buttons too.
+  const right = builtinFlowRight(record.flowId, record.input);
+  if (right && !(await mayRunBuiltin(options, right, press.userId, press.chatId))) {
+    options.onLog(`[telegram] ${right} button refused for user ${press.userId} — no ${right} grant`);
+    await ctx.reply(botAccessDeniedText(s, right));
     return undefined;
   }
   const match = builtin
@@ -788,6 +838,8 @@ async function queueFlowCommand(
     userId: number;
     chatId: number;
     commandName: string;
+    /** The caller knows the message says nothing but the input ("@bot <link>": the mention aside). */
+    messageIsInput?: boolean;
   },
 ): Promise<QueuedFlowRun | undefined> {
   const { match, input, chatId, commandName } = run;
@@ -796,7 +848,7 @@ async function queueFlowCommand(
   const messageId = ctx.message?.message_id ?? ctx.callbackQuery?.message?.message_id;
   const quote = messageId ? { reply_parameters: { message_id: messageId, allow_sending_without_reply: true } } : {};
   // Typed, and nothing in it but the input: not a button's message, not a link among other words.
-  const messageIsInput = !ctx.callbackQuery && (ctx.message?.text ?? '').trim() === input.trim();
+  const messageIsInput = !ctx.callbackQuery && (run.messageIsInput ?? (ctx.message?.text ?? '').trim() === input.trim());
 
   let statusMsgId: number | undefined;
   const status = createProgressMessage(async (text) => {

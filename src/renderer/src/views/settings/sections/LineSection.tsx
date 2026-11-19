@@ -1,14 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { Box, Group, Stack, Text, Button as MButton } from '@mantine/core';
+import { SearchSection } from '../FreezeWhileHidden';
 import { KeyRound, MessageSquare, Plug, RefreshCw, Server, Users, UsersRound } from 'lucide-react';
 import { AppPasswordInput } from '../../../components/AppPasswordInput';
 import { AppButton } from '../../../components/AppButton';
 import { AppNumberInput } from '../../../components/AppNumberInput';
 import { SectionCard, SettingRow, SettingField, SettingDivider, ToggleSwitch, SectionTitle } from '../components';
 import { BotDefaultModelSetting } from './BotDefaultModelSetting';
-import { BotReplyPreview } from './BotReplyPreview';
-import { BotAskTtlSetting } from './BotAskTtlSetting';
-import type { BotCommandsControls } from './BotAskTtlSetting';
 import { fillTemplate } from '../../../../../shared/fillTemplate';
 import { TAG_SETS } from '../hooks/useSettingsNav';
 import { SecretHealthAlert } from '../../../components/SecretHealthAlert';
@@ -16,7 +14,7 @@ import { LineAccountAlerts } from './LineAccountAlerts';
 import { LinePairingPanel } from './LinePairingPanel';
 import { LinePairedUsers } from './LinePairedUsers';
 import { BotDefaultGrants } from './BotUserPermissions';
-import { BotAudienceSection } from './BotAudienceSection';
+import { BotGroupList, BotUserList, useBotAudience } from './BotAudienceSection';
 import { LineWebhookGuide } from './LineWebhookGuide';
 import type { useLineSettings } from '../hooks/useLineSettings';
 import type { BotAccessControls } from '../hooks/useBotAccessControls';
@@ -25,9 +23,9 @@ type LineSettings = ReturnType<typeof useLineSettings>;
 
 function getLineRuntimeColor(status?: string): string {
   switch (status) {
-    case 'running': return 'var(--mantine-color-success)';
-    case 'error': return 'var(--mantine-color-error)';
-    case 'starting': return 'var(--mantine-color-warning)';
+    case 'running': return 'var(--success-text)';
+    case 'error': return 'var(--error-text)';
+    case 'starting': return 'var(--warning-text)';
     default: return 'var(--mantine-color-dimmed)';
   }
 }
@@ -45,16 +43,15 @@ interface Props {
   line: LineSettings;
   /** Each paired account's grants and owner mark, edited under its row. */
   access: BotAccessControls;
-  /** The shared commands config; its answer window is shown in this card's reply section. */
-  botCommands?: BotCommandsControls;
   t: (key: string) => string;
   showSection: (tags: readonly string[], category: 'bots') => boolean;
   isSearching: boolean;
   sectionGap: number;
 }
 
-export const LineSection: React.FC<Props> = ({ line, access, botCommands, t, showSection, isSearching, sectionGap }) => {
+export const LineSection: React.FC<Props> = ({ line, access, t, showSection, isSearching, sectionGap }) => {
   const settings = line.lineSettings;
+  const audience = useBotAudience('line', settings, t);
   const runtimeStatus = settings?.runtime.status;
   const account = settings?.runtime.account;
   const [portDraft, setPortDraft] = useState<number | string>(settings?.port ?? 3007);
@@ -65,7 +62,7 @@ export const LineSection: React.FC<Props> = ({ line, access, botCommands, t, sho
   }, [settings?.port]);
 
   return (
-    <Box display={showSection(TAG_SETS.line, 'bots') ? 'block' : 'none'}>
+    <SearchSection shown={showSection(TAG_SETS.line, 'bots')}>
       <SectionCard style={{ marginBottom: sectionGap }}>
         <Group justify="space-between" align="center">
           <Group gap={8} align="center">
@@ -99,6 +96,7 @@ export const LineSection: React.FC<Props> = ({ line, access, botCommands, t, sho
           hint={expanded ? undefined : t('settings.line.enabled.offHint')}
           control={
             <ToggleSwitch
+              aria-label={t('settings.line.enabled')}
               checked={settings?.enabled ?? false}
               onChange={() => { void line.handleToggleLineEnabled(); }}
             />
@@ -155,7 +153,7 @@ export const LineSection: React.FC<Props> = ({ line, access, botCommands, t, sho
                   bg="var(--mantine-color-bg-tertiary)"
                   style={{ border: '1px solid var(--mantine-color-default-border)', borderRadius: 'var(--radius-sm)' }}
                 >
-                  <Text fz="var(--font-size-sm)" c="var(--mantine-color-error)">
+                  <Text fz="var(--font-size-sm)" c="var(--error-text)">
                     {settings.runtime.errorMessage}
                   </Text>
                 </Box>
@@ -225,8 +223,6 @@ export const LineSection: React.FC<Props> = ({ line, access, botCommands, t, sho
                 t={t}
               />
 
-              <BotDefaultGrants access={access} t={t} />
-
               <SettingDivider my={4} />
 
               <Text fz="var(--font-size-sm)" fw={600} c="var(--mantine-color-default-color)">
@@ -241,21 +237,23 @@ export const LineSection: React.FC<Props> = ({ line, access, botCommands, t, sho
                 onUnpair={(userId) => { void line.handleUnpairLineUser(userId); }}
                 t={t}
               />
+
+              <BotUserList audience={audience} t={t} />
+
+              <SettingDivider my={4} />
+
+              <BotDefaultGrants access={access} t={t} />
             </Stack>
 
             <SettingDivider my={16} />
 
             <SectionTitle icon={<UsersRound size={15} />} label={t('settings.bot.group.title')} />
-            <BotAudienceSection platform="line" connectors={access.connectors} refreshKey={settings} t={t} />
+            <BotGroupList audience={audience} connectors={access.connectors} t={t} />
 
             <SettingDivider my={16} />
 
-            <SectionTitle icon={<MessageSquare size={15} />} label={t('settings.line.section.reply')} />
+            <SectionTitle icon={<MessageSquare size={15} />} label={t('settings.bot.section.answer')} />
             <Stack gap={12}>
-              <BotReplyPreview note={t('settings.line.reply.note')} t={t} />
-
-              <SettingDivider my={4} />
-
               {settings && (
                 <BotDefaultModelSetting
                   value={settings.llmDirect}
@@ -265,12 +263,10 @@ export const LineSection: React.FC<Props> = ({ line, access, botCommands, t, sho
                   t={t}
                 />
               )}
-
-              {botCommands && <BotAskTtlSetting botCommands={botCommands} t={t} />}
             </Stack>
           </>
         )}
       </SectionCard>
-    </Box>
+    </SearchSection>
   );
 };

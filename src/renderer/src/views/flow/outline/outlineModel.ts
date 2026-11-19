@@ -79,6 +79,46 @@ export function hiddenByFold(rows: readonly OutlineRow[], folded: ReadonlySet<st
   return hidden;
 }
 
+/** A condition whose only step is a skip or an exit: "if X, skip this item". */
+export interface GuardBlock {
+  /** The `continue` or `break` inside it. */
+  action: SkillInstance;
+  /** Its `end_if`. */
+  endId: string;
+}
+
+/**
+ * The conditions that only skip or leave a loop, by the condition's id. Their three steps read as
+ * one ("抓不到內文則略過 → 略過這一輪") until the user opens one; the steps are not merged in the flow.
+ */
+export function guardBlocks(rows: readonly OutlineRow[]): Map<string, GuardBlock> {
+  const guards = new Map<string, GuardBlock>();
+  rows.forEach((row, i) => {
+    if (row.step.type !== 'if' || row.childCount !== 1) return;
+    const action = rows[i + 1];
+    const end = rows[i + 2];
+    if (!action || !end) return;
+    if (action.step.type !== 'continue' && action.step.type !== 'break') return;
+    if (end.step.type !== 'end_if' || end.owner !== row.step.id) return;
+    guards.set(row.step.id, { action: action.step, endId: end.step.id });
+  });
+  return guards;
+}
+
+/** The steps a closed guard draws on its condition's row: its skip and its end. */
+export function hiddenByGuards(
+  guards: ReadonlyMap<string, GuardBlock>,
+  open: ReadonlySet<string>,
+): Set<string> {
+  const hidden = new Set<string>();
+  guards.forEach((guard, id) => {
+    if (open.has(id)) return;
+    hidden.add(guard.action.id);
+    hidden.add(guard.endId);
+  });
+  return hidden;
+}
+
 export interface RowMatch {
   field: StepSearchField;
   /** The text around the hit, the hit itself separately so it can be drawn bold; all empty for code. */

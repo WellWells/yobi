@@ -6,7 +6,7 @@ import { TrendBarChart } from '../../../../components/TrendBarChart';
 import { Figure, HelpDot, InlineStat, LegendItem } from './parts';
 import { DOMAINS, OUTCOME_KEYS, formatShare } from './aggregate';
 import type { StatsAggregate, StatsScope } from './aggregate';
-import { OUTCOME_COLORS } from './colors';
+import { OUTCOME_COLORS, OUTCOME_TEXT } from './colors';
 
 interface Props {
   stats: StatsAggregate;
@@ -47,7 +47,7 @@ export const ActivityCard: React.FC<Props> = ({ stats, scope, t, onInspectFailur
             <Text
               fz="var(--font-size-3xl)"
               fw={700}
-              c={failed === 0 ? OUTCOME_COLORS.success : 'var(--mantine-color-text)'}
+              c={failed === 0 ? OUTCOME_TEXT.success : 'var(--mantine-color-text)'}
               style={{ fontVariantNumeric: 'tabular-nums' }}
             >
               {formatShare(stats.runs.success, stats.runTotal)}
@@ -57,6 +57,7 @@ export const ActivityCard: React.FC<Props> = ({ stats, scope, t, onInspectFailur
         </Group>
 
         <TrendBarChart
+          title={t('settings.stats.runs.title')}
           labels={stats.labels}
           height={148}
           totalLabel={t('settings.stats.runs.caption')}

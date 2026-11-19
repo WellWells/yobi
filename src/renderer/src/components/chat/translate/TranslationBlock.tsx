@@ -1,17 +1,16 @@
 import React, { useState } from 'react';
 import { ActionIcon, Badge, Box, Group, Loader, Text, Tooltip } from '@mantine/core';
-import { Check, Copy, Languages, RefreshCw, Trash, TriangleExclamationPoint, X } from 'lucide-react';
+import { Check, Copy, Languages, RefreshCw, Replace, Trash, TriangleExclamationPoint, X } from 'lucide-react';
 import type { TurnTranslation } from '../../../../../shared/conversationDoc';
 import { isTranslateLanguage, languageDisplayName } from '../../../../../shared/translateLanguages';
 import { clipboardApi } from '../../../api/electronApi';
 import { useI18nStore } from '../../../store/i18nStore';
-import { turnKey, useTranslateStore, type TranslationView, type TurnTranslateJob } from '../../../store/translateStore';
+import type { TurnTranslateJob } from '../../../store/translateStore';
 import { READING_TEXT_STYLE } from '../../../styles/readingText';
 import { AppButton } from '../../AppButton';
-import { AppSegmentedControl } from '../../AppSegmentedControl';
 import { MessageMarkdown } from '../MessageMarkdown';
 import {
-  cancelTurnTranslation, convertTurnToTraditional, removeTurnTranslation, translateTurn,
+  cancelTurnTranslation, convertTurnToTraditional, removeTurnTranslation, replaceAnswerWithTranslation, translateTurn,
 } from './translateActions';
 import { useProviderLabel } from './useTurnTranslation';
 import { fillTemplate } from '../../../../../shared/fillTemplate';
@@ -23,11 +22,13 @@ interface TranslationBlockProps {
   translation: TurnTranslation | null;
   outdated: boolean;
   job: TurnTranslateJob | undefined;
-  view: TranslationView;
+  /**
+   * "Replace original" puts the translation in place of the answer. Null when the answer cannot be
+   * edited at all (the temporary chat); `blocked` says why it cannot be right now.
+   */
+  replace: { turnCount: number; editedAt: string | null; blocked: string | null } | null;
   t: (key: string) => string;
 }
-
-const VIEWS: TranslationView[] = ['original', 'translation', 'both'];
 
 const FRAME_STYLE = {
   border: '1px solid var(--border)',
@@ -39,17 +40,16 @@ const FRAME_STYLE = {
 /**
  * An answer's translation, under the answer and outside it: not part of the answer's text (the
  * selection tools leave it alone) and labelled with who made it, so it never reads as the original
- * reply. Ctrl+F searches the translated text itself — with "translation only" it is all there is to
- * read — but not the header's labels and buttons.
+ * reply. It is always shown in full under the answer; to read only the translation, replace the
+ * answer with it. Ctrl+F searches the translated text itself, but not the header's labels and buttons.
  */
 export const TranslationBlock: React.FC<TranslationBlockProps> = ({
-  path, turnIndex, response, translation, outdated, job, view, t,
+  path, turnIndex, response, translation, outdated, job, replace, t,
 }) => {
   const locale = useI18nStore((s) => s.locale);
-  const setView = useTranslateStore((s) => s.setView);
   const providerLabel = useProviderLabel();
   const [copied, setCopied] = useState(false);
-  const key = turnKey(path, turnIndex);
+  const [replacing, setReplacing] = useState(false);
 
   if (job && job.status !== 'error') {
     return (
@@ -68,8 +68,8 @@ export const TranslationBlock: React.FC<TranslationBlockProps> = ({
   if (job?.status === 'error') {
     return (
       <Group data-selection-ignore data-find-omit mt={10} px={12} py={8} gap={8} wrap="nowrap" align="flex-start" style={FRAME_STYLE}>
-        <Box c="var(--mantine-color-error)" style={{ lineHeight: 0, paddingTop: 2 }}><TriangleExclamationPoint size={14} /></Box>
-        <Text component="div" fz="var(--font-size-sm)" c="var(--mantine-color-error)" style={{ flex: 1 }}>{job.error}</Text>
+        <Box c="var(--error-text)" style={{ lineHeight: 0, paddingTop: 2 }}><TriangleExclamationPoint size={14} /></Box>
+        <Text component="div" fz="var(--font-size-sm)" c="var(--error-text)" style={{ flex: 1 }}>{job.error}</Text>
         <AppButton
           size="compact-sm"
           variant="default"
@@ -106,9 +106,20 @@ export const TranslationBlock: React.FC<TranslationBlockProps> = ({
     else if (isTranslateLanguage(translation.to)) void translateTurn({ path, turnIndex, response, to: translation.to, providerLabel });
   };
 
+  // A translation of an earlier answer would put back text the answer no longer says.
+  const canReplace = replace !== null && !outdated;
+  const replaceBlocked = replace?.blocked ?? null;
+  const replaceAnswer = (): void => {
+    if (!replace || replacing || replaceBlocked) return;
+    setReplacing(true);
+    void replaceAnswerWithTranslation({
+      path, turnIndex, turnCount: replace.turnCount, editedAt: replace.editedAt, response, text: translation.text,
+    }).finally(() => setReplacing(false));
+  };
+
   return (
     <Box data-selection-ignore mt={10} style={FRAME_STYLE}>
-      <Group data-find-omit justify="space-between" wrap="wrap" gap={8} px={12} pt={8} pb={view === 'original' ? 8 : 0}>
+      <Group data-find-omit justify="space-between" wrap="wrap" gap={8} px={12} pt={8} pb={0}>
         <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
           <Languages size={14} color="var(--accent)" style={{ flexShrink: 0 }} />
           <Text component="div" fz="var(--font-size-sm)" fw={600} c="var(--text-secondary)" truncate>
@@ -125,14 +136,21 @@ export const TranslationBlock: React.FC<TranslationBlockProps> = ({
           {outdated && <Badge variant="light" size="sm">{t('chat.translate.outdated')}</Badge>}
         </Group>
         <Group gap={4} wrap="nowrap">
-          <Box w={210}>
-            <AppSegmentedControl
-              size="xs"
-              value={view}
-              onChange={(value) => { if ((VIEWS as string[]).includes(value)) setView(key, value as TranslationView); }}
-              options={VIEWS.map((value) => ({ value, label: t(`chat.translate.view.${value}`) }))}
-            />
-          </Box>
+          {canReplace && (
+            <Tooltip label={replaceBlocked ?? t('chat.translate.replace.hint')} position="bottom" multiline maw={260}>
+              <AppButton
+                size="compact-sm"
+                variant="light"
+                leftSection={<Replace size={14} />}
+                loading={replacing}
+                // data-disabled keeps pointer events, so the tooltip saying why can still show.
+                data-disabled={replaceBlocked !== null || undefined}
+                onClick={replaceAnswer}
+              >
+                {t('chat.translate.replace')}
+              </AppButton>
+            </Tooltip>
+          )}
           <Tooltip label={copied ? t('chat.copied') : t('chat.translate.copy')} position="bottom">
             <ActionIcon variant="subtle" size="sm" c="dimmed" aria-label={t('chat.translate.copy')} onClick={copy}>
               {copied ? <Check size={14} /> : <Copy size={14} />}
@@ -157,25 +175,23 @@ export const TranslationBlock: React.FC<TranslationBlockProps> = ({
         </Group>
       </Group>
 
-      {translation.unmatched && view !== 'original' && (
+      {translation.unmatched && (
         <Group data-find-omit gap={6} px={12} pt={6} wrap="nowrap" align="flex-start">
-          <Box c="var(--mantine-color-warning)" style={{ lineHeight: 0, paddingTop: 2 }}><TriangleExclamationPoint size={13} /></Box>
+          <Box c="var(--warning-text)" style={{ lineHeight: 0, paddingTop: 2 }}><TriangleExclamationPoint size={13} /></Box>
           <Text component="div" fz="var(--font-size-sm)" c="var(--text-secondary)">{t('chat.translate.unmatched')}</Text>
         </Group>
       )}
 
-      {view !== 'original' && (
-        <Box
-          className="md-content"
-          data-find-scope
-          px={12}
-          pt={6}
-          pb={10}
-          style={{ ...READING_TEXT_STYLE, lineHeight: 1.75, color: 'var(--text-primary)' }}
-        >
-          <MessageMarkdown>{translation.text}</MessageMarkdown>
-        </Box>
-      )}
+      <Box
+        className="md-content"
+        data-find-scope
+        px={12}
+        pt={6}
+        pb={10}
+        style={{ ...READING_TEXT_STYLE, lineHeight: 1.75, color: 'var(--text-primary)' }}
+      >
+        <MessageMarkdown>{translation.text}</MessageMarkdown>
+      </Box>
     </Box>
   );
 };

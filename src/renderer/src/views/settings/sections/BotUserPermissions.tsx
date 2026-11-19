@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Badge, Button, Chip, Group, Menu, Pill, Stack, Text, Tooltip } from '@mantine/core';
 import type { MenuProps } from '@mantine/core';
 import { Plus, Unlink } from 'lucide-react';
@@ -10,6 +10,12 @@ import type { GrantItem, GrantLimit, GrantMenuGroup } from './botPermissionsView
 import type { BotAccessControls } from '../hooks/useBotAccessControls';
 import type { BotGrant } from '../../../../../shared/botPermissions';
 import { fillTemplate } from '../../../../../shared/fillTemplate';
+import { BOT_DOWNLOAD_CAP_CHOICES, botDownloadCapKey, isBotDownloadCap } from '../../../../../shared/downloads';
+import type { BotDownloadCap } from '../../../../../shared/downloads';
+import { SelectDropdown } from '../../../components/SelectDropdown';
+import { ytdlToolsApi } from '../../../api/electronApi';
+import { useShallow } from 'zustand/react/shallow';
+import { useKnowledgeStore } from '../../../store/useKnowledgeStore';
 
 interface Props {
   access: BotAccessControls;
@@ -153,6 +159,38 @@ export function ownerToggleLook(isOwner: boolean): { variant: 'light' | 'outline
     : { variant: 'outline', labelKey: 'settings.bot.perm.owner.set' };
 }
 
+const FOLLOW_GENERAL_CAP = 'default';
+
+/**
+ * This account's own download cap in place of the one for everyone (Settings › Downloader): shown
+ * for an account that holds the downloader. "Default" stores nothing, so it follows that setting.
+ */
+const BotUserDownloadCap: React.FC<{ platform: string; userId: string; t: (key: string) => string }> = ({ platform, userId, t }) => {
+  const [caps, setCaps] = useState<Record<string, BotDownloadCap> | null>(null);
+  useEffect(() => { void ytdlToolsApi.getBotUserDownloadCaps().then(setCaps); }, []);
+  if (!caps) return null;
+  const label = t('settings.bot.perm.downloadCap');
+  return (
+    <Group gap={8} wrap="wrap" align="center">
+      <Text fz="var(--font-size-sm)" c="var(--text-muted)">{label}</Text>
+      <SelectDropdown
+        aria-label={label}
+        size="xs"
+        w={150}
+        value={caps[botDownloadCapKey(platform, userId)] ?? FOLLOW_GENERAL_CAP}
+        options={[
+          { value: FOLLOW_GENERAL_CAP, label: t('settings.bot.perm.downloadCap.default') },
+          ...BOT_DOWNLOAD_CAP_CHOICES.map((choice) => ({ value: choice, label: t(`settings.ytdl.botCap.${choice}`) })),
+        ]}
+        onChange={(value) => {
+          const cap = isBotDownloadCap(value) ? value : value === FOLLOW_GENERAL_CAP ? null : undefined;
+          if (cap !== undefined) void ytdlToolsApi.setBotUserDownloadCap({ platform, userId, cap }).then(setCaps);
+        }}
+      />
+    </Group>
+  );
+};
+
 /**
  * One paired account's extra rights, under its row in the Telegram or LINE paired list: the
  * owner ("me") toggle and the grant editor. The only editor of an account's grants; every other
@@ -162,9 +200,11 @@ export const BotUserPermissions: React.FC<Props> = ({ access, userId, t }) => {
   const [confirmOwner, setConfirmOwner] = useState(false);
   const grants = access.grantsFor(userId);
   const isOwner = access.isOwner(userId);
+  const bases = useKnowledgeStore(useShallow((s) => s.bases));
+  const knowledge = useMemo(() => bases.map((kb) => ({ id: kb.id, name: kb.name })), [bases]);
   const view = useMemo(
-    () => ({ platform: access.platform, isOwner, connectors: access.connectors, t }),
-    [access.platform, isOwner, access.connectors, t],
+    () => ({ platform: access.platform, isOwner, connectors: access.connectors, knowledge, t }),
+    [access.platform, isOwner, access.connectors, knowledge, t],
   );
   const chips = useMemo(() => grantChips(grants, view), [grants, view]);
   const groups = useMemo(() => grantMenuGroups(grants, view), [grants, view]);
@@ -193,6 +233,9 @@ export const BotUserPermissions: React.FC<Props> = ({ access, userId, t }) => {
           </Chip>
         )}
       />
+
+      {/* The owner is never capped; anyone who may download is, by their own cap or the one for everyone. */}
+      {!isOwner && grants.includes('download') && <BotUserDownloadCap platform={access.platform} userId={userId} t={t} />}
 
       {isOwner && (
         <Text fz="var(--font-size-sm)" c="dimmed">{t('settings.bot.perm.owner.summary')}</Text>

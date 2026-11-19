@@ -9,6 +9,7 @@
  * from its setup), and asks here whether its managers should hear about a request.
  */
 import { clearBotPairingRequest, findBotContact, markBotPairingCardSent, recordBotPairingRequest } from '../botDirectory';
+import { config } from '../config';
 import { sendWebNotification } from '../helpers';
 import { getLangCache, t } from '../i18n';
 import type { BotApprovePairingResult, BotSetBlockedResult } from '../../shared/botPermissions';
@@ -71,6 +72,8 @@ function displayName(profile: BotPairingProfile): string {
 }
 
 function notifyDesktop(platform: BotPlatform, profile: BotPairingProfile, group?: { title: string }): void {
+  // Only the desktop notice: the cards managers get in chat do not depend on this switch.
+  if (!config.notifyEvents.botRequests) return;
   const strings = getLangCache();
   const vars = { platform: BOT_PLATFORM_NAMES[platform], name: displayName(profile) };
   sendWebNotification(
@@ -153,14 +156,19 @@ function readRequest(request: unknown): { platform: BotPlatform; userId: string 
  * Pairs, without a code, someone whose request is waiting — the settings page's "Allow" and a
  * manager's button. Strict like the other bot requests. Already paired = done (two managers
  * pressed at once); blocked, or no request on file = refused.
+ *
+ * `anyoneOnFile` is the settings page's alone: there the owner may also let in someone who only
+ * ever used the bot in a group and so never asked — still someone the directory knows, never an
+ * id out of nowhere. A manager's button in a chat stays an answer to a request.
  */
-export async function approveBotPairingRequest(request: unknown): Promise<BotApprovePairingResult> {
+export async function approveBotPairingRequest(request: unknown, options: { anyoneOnFile?: boolean } = {}): Promise<BotApprovePairingResult> {
   const target = readRequest(request);
   if (!target) return { ok: false, reason: 'invalidRequest' };
   const { platform, userId } = target;
   if (isBotUserPaired(platform, userId)) return { ok: true, newlyPaired: false };
   if (isBotUserBlocked(platform, userId)) return { ok: false, reason: 'blocked' };
-  const contact = await waitingBotPairingRequest(platform, userId);
+  const contact = await waitingBotPairingRequest(platform, userId)
+    ?? (options.anyoneOnFile ? await findBotContact(platform, 'user', userId) ?? null : null);
   if (!contact) return { ok: false, reason: 'noRequest' };
   const pairer = pairers.get(platform);
   if (!pairer) return { ok: false, reason: 'unavailable' };

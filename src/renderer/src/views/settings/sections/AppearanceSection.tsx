@@ -1,5 +1,5 @@
 import React from 'react';
-import { ActionIcon, Box, Group, Text, Tooltip } from '@mantine/core';
+import { ActionIcon, Group, Text, Tooltip } from '@mantine/core';
 import { useShallow } from 'zustand/react/shallow';
 import { BookOpen, Minus, Palette, Plus, RotateCcw } from 'lucide-react';
 import { SectionCard, SettingRow, SectionTitle, SettingDivider, SegmentedControl, ToggleSwitch } from '../components';
@@ -10,6 +10,7 @@ import { useReadingStore } from '../../../store/readingStore';
 import { READING_FONTS, isReadingFont } from '../../../../../shared/readingPrefs';
 import type { LayoutMode } from '../../../store/appStore';
 import { ThemePicker } from './ThemePicker';
+import { SearchSection, usePageOnScreen } from '../FreezeWhileHidden';
 
 interface Props {
   t: (key: string) => string;
@@ -18,17 +19,21 @@ interface Props {
 }
 
 export const AppearanceSection: React.FC<Props> = ({ t, showSection, sectionGap }) => {
-  const { preference, setTheme, previewTheme } = useThemeStore(useShallow((s) => ({
+  const { preference, setTheme, previewTheme, motion, setMotion } = useThemeStore(useShallow((s) => ({
     preference: s.preference,
     setTheme: s.setTheme,
     previewTheme: s.previewTheme,
+    motion: s.motion,
+    setMotion: s.setMotion,
   })));
   const reading = useReadingStore((s) => s.prefs);
   const setReadingPrefs = useReadingStore((s) => s.setReadingPrefs);
-  const settingsVisible = useAppStore((s) => s.currentView === 'settings');
+  // A preview ends when its page leaves the screen. Its page's, not Settings': opening Settings on
+  // another page then leaves this one alone.
+  const onScreen = usePageOnScreen();
   React.useEffect(() => {
-    if (!settingsVisible) previewTheme(null);
-  }, [settingsVisible, previewTheme]);
+    if (!onScreen) previewTheme(null);
+  }, [onScreen, previewTheme]);
   const {
     layoutMode, markdownZoom, showTokenUsage, showRecap,
     setLayoutMode, zoomInMarkdown, zoomOutMarkdown, resetMarkdownZoom, setShowTokenUsage, setShowRecap,
@@ -48,10 +53,17 @@ export const AppearanceSection: React.FC<Props> = ({ t, showSection, sectionGap 
   );
 
   return (
-    <Box display={showSection(TAG_SETS.theme, 'appearance') || showSection(TAG_SETS.reading, 'appearance') ? 'block' : 'none'}>
+    <SearchSection shown={showSection(TAG_SETS.theme, 'appearance') || showSection(TAG_SETS.reading, 'appearance')}>
       <SectionCard style={{ marginBottom: sectionGap, display: showSection(TAG_SETS.theme, 'appearance') ? 'block' : 'none' }}>
         <SectionTitle icon={<Palette size={15} />} label={t('settings.theme')} />
         <ThemePicker preference={preference} onPick={setTheme} onPreview={previewTheme} t={t} />
+        <SettingDivider my={14} />
+        {/* The way to stop a moving background (WCAG 2.2.2). */}
+        <SettingRow
+          label={t('settings.theme.motion')}
+          hint={t('settings.theme.motion.hint')}
+          control={<ToggleSwitch aria-label={t('settings.theme.motion')} checked={motion} onChange={() => setMotion(!motion)} />}
+        />
       </SectionCard>
 
       <SectionCard style={{ marginBottom: sectionGap, display: showSection(TAG_SETS.reading, 'appearance') ? 'block' : 'none' }}>
@@ -88,7 +100,7 @@ export const AppearanceSection: React.FC<Props> = ({ t, showSection, sectionGap 
         <SettingRow
           label={t('reading.fullWidth')}
           hint={t('settings.appearance.fullWidth.hint')}
-          control={<ToggleSwitch checked={reading.fullWidth} onChange={() => setReadingPrefs({ fullWidth: !reading.fullWidth })} />}
+          control={<ToggleSwitch aria-label={t('reading.fullWidth')} checked={reading.fullWidth} onChange={() => setReadingPrefs({ fullWidth: !reading.fullWidth })} />}
         />
         <SettingDivider my={14} />
         <SettingRow
@@ -121,15 +133,15 @@ export const AppearanceSection: React.FC<Props> = ({ t, showSection, sectionGap 
         <SettingRow
           label={t('settings.appearance.tokenUsage')}
           hint={t('settings.appearance.tokenUsage.hint')}
-          control={<ToggleSwitch checked={showTokenUsage} onChange={() => setShowTokenUsage(!showTokenUsage)} />}
+          control={<ToggleSwitch aria-label={t('settings.appearance.tokenUsage')} checked={showTokenUsage} onChange={() => setShowTokenUsage(!showTokenUsage)} />}
         />
         <SettingDivider my={14} />
         <SettingRow
           label={t('settings.appearance.recap')}
           hint={t('settings.appearance.recap.hint')}
-          control={<ToggleSwitch checked={showRecap} onChange={() => setShowRecap(!showRecap)} />}
+          control={<ToggleSwitch aria-label={t('settings.appearance.recap')} checked={showRecap} onChange={() => setShowRecap(!showRecap)} />}
         />
       </SectionCard>
-    </Box>
+    </SearchSection>
   );
 };

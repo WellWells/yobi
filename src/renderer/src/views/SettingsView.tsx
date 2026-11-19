@@ -11,7 +11,7 @@ import { useUpdateStore } from '../store/useUpdateStore';
 import { EmptyState } from '../components/EmptyState';
 import { useShallow } from 'zustand/react/shallow';
 import { useI18nStore } from '../store/i18nStore';
-import { isMainView, useAppStore } from '../store/appStore';
+import { useAppStore } from '../store/appStore';
 import { applyShortcutSnapshot } from '../shortcuts/applyShortcutSnapshot';
 import { useSecretHealthStore } from '../store/secretHealthStore';
 import { useFlowStore } from '../store/useFlowStore';
@@ -25,12 +25,12 @@ import { SECRET_SCOPE_META } from '../../../shared/types';
 import type { BackupImportResult, SettingsSnapshot } from '../../../shared/types';
 
 import { GroupHeader, NavItem } from './settings/components';
+import { handleRovingKey } from '../utils/rovingFocus';
 import { FreezeWhileHidden } from './settings/FreezeWhileHidden';
 import { useHotkeyRecorder, useRegionHotkeyRecorder } from './settings/hooks/useHotkeyRecorder';
 import { useQuickExportRecorder } from './settings/hooks/useQuickExportRecorder';
 import { useExportPreferences } from './settings/hooks/useExportPreferences';
 import { useShareSettings } from './settings/hooks/useShareSettings';
-import { useMetrics } from './settings/hooks/useMetrics';
 import { usePromptPrefs } from './settings/hooks/usePromptPrefs';
 import { useLinkAnalysisPreferences } from './settings/hooks/useLinkAnalysisPreferences';
 import { useSystemSettings } from './settings/hooks/useSystemSettings';
@@ -57,6 +57,7 @@ import { AnalysisModelSettings } from './settings/sections/AnalysisModelSettings
 import { MapsPromptSetting } from './settings/sections/MapsPromptSetting';
 import { ByokSection } from './settings/sections/ByokSection';
 import { McpSection } from './settings/sections/McpSection';
+import { KnowledgeSection } from './settings/sections/knowledge/KnowledgeSection';
 import { SkillsSection } from './settings/sections/skills/SkillsSection';
 import { BotCommandsSection } from './settings/sections/BotCommandsSection';
 import { TelegramSection } from './settings/sections/TelegramSection';
@@ -64,11 +65,14 @@ import { LineSection } from './settings/sections/LineSection';
 import { SocketBotSection } from './settings/sections/SocketBotSection';
 import { useSocketBotSettings } from './settings/hooks/useSocketBotSettings';
 import { anyBotEnabled as anyRosterBotEnabled } from './settings/sections/botPermissionsView';
-import { StatsSection } from './settings/sections/StatsSection';
+import { LiveStatsSection } from './settings/sections/StatsSection';
 import { SystemSection } from './settings/sections/SystemSection';
 import { LinkRecognitionSetting } from './settings/sections/LinkRecognitionSetting';
 import { YtdlToolsSetting } from './settings/sections/YtdlToolsSetting';
 import type { DangerAction } from './settings/sections/SystemSection';
+
+/** The settings nav's entries, for its arrow-key walk. */
+const NAV_ITEM_SELECTOR = '[data-nav-item]';
 
 const SECTION_GAP = 12;
 
@@ -77,6 +81,18 @@ const SECTION_GAP = 12;
  * settings on a narrow window: beside a 240px nav the column would be under ~480px.
  */
 export const SETTINGS_NAV_COMPACT_BELOW = 760;
+
+/**
+ * Reads the language folder again each time the Settings page shows, so a pack dropped in since
+ * is offered. Its own component: it is what follows the dialog opening, so SettingsView does not.
+ */
+function LocaleRefreshOnShow({ refresh }: { refresh: () => Promise<void> }): null {
+  const onSettingsPage = useAppStore((s) => s.currentView === 'settings');
+  useEffect(() => {
+    if (onSettingsPage) void refresh();
+  }, [onSettingsPage, refresh]);
+  return null;
+}
 
 export const SettingsView: React.FC = () => {
   const { t, locale, setLocale, availableLocales, localeTranslations, refreshLocales } = useI18nStore(
@@ -107,7 +123,6 @@ export const SettingsView: React.FC = () => {
   const prefs = usePromptPrefs();
   const analysis = useLinkAnalysisPreferences();
   const system = useSystemSettings();
-  const metrics = useMetrics();
   const telegram = useTelegramSettings();
   const line = useLineSettings();
   const botCommands = useBotCommands();
@@ -125,10 +140,9 @@ export const SettingsView: React.FC = () => {
   // Logs and About are pages of Settings (Alt+3, Alt+5, an error notice's 查看日誌 and the update
   // notice open them): the nav stays beside them.
   const page = useAppStore((s) => (s.currentView === 'logs' || s.currentView === 'about' ? s.currentView : 'settings'));
-  // Whether the dialog is open, not which view is behind it: switching chat and flow must not
-  // redraw Settings.
-  const open = useAppStore((s) => !isMainView(s.currentView));
-  const onSettingsPage = open && page === 'settings';
+  // Not whether the dialog is open, nor which view is behind it: opening, closing and switching
+  // chat and flow must not redraw Settings. The freeze and the locale refresh read that themselves.
+  const onSettingsPage = page === 'settings';
 
   // Back to the top when the category changes: the view never unmounts, so any entry point would
   // land at the previous offset. Keyed on `isSearching`, not the query, or it scrolls per keystroke.
@@ -160,7 +174,7 @@ export const SettingsView: React.FC = () => {
       snapshot.launchAtStartup,
       snapshot.notifyEvents,
     );
-    metrics.applyMetricsReset(snapshot.metricsEnabled);
+    // The stats page reads its counters and its switch afresh each time it shows.
     applyOneShotTemporaryChatReset(snapshot.oneShotTemporaryChat);
     applyProviderFallbackReset(snapshot.providerFallback);
     setTheme(resolveThemePreference(snapshot.theme));
@@ -178,7 +192,7 @@ export const SettingsView: React.FC = () => {
     await line.loadLineSettings();
     await botCommands.loadBotCommands();
     await byok.reload();
-  }, [prefs, analysis, system, metrics, applyOneShotTemporaryChatReset, applyProviderFallbackReset, telegram, line, botCommands, byok, setTheme, setLocale]);
+  }, [prefs, analysis, system, applyOneShotTemporaryChatReset, applyProviderFallbackReset, telegram, line, botCommands, byok, setTheme, setLocale]);
 
   const getLocaleLabel = useCallback((localeCode: string): string => {
     const selfName = localeTranslations[localeCode]?.['language.name.self'];
@@ -192,9 +206,6 @@ export const SettingsView: React.FC = () => {
     selectFlow(flowId);
     setView('flow');
   }, [selectFlow, setView]);
-  useEffect(() => {
-    if (onSettingsPage) void refreshLocales();
-  }, [onSettingsPage, refreshLocales]);
 
   const handleOpenLanguagesFolder = useCallback(async (): Promise<void> => {
     await settingsApi.openLanguagesFolder();
@@ -261,11 +272,16 @@ export const SettingsView: React.FC = () => {
     />
   );
 
-  /* The same entries either way: a column of rows beside the page, or a row of tabs above it. */
+  /* The same entries either way: a column of rows beside the page, or a row of tabs above it. One
+     Tab stop — the active page, or the first category while searching — and the arrows walk them. */
+  const activeNavKey = page === 'settings' ? (nav.isSearching ? '' : nav.activeCategory) : page;
+  const firstNavKey = nav.navCategoryDefs[0]?.id ?? '';
+  const tabbableNavKey = activeNavKey || firstNavKey;
   const navEntries = (
     <>
       {nav.navCategoryDefs.map((cat) => (
         <NavItem
+          tabbable={tabbableNavKey === cat.id}
           key={cat.id}
           icon={cat.icon}
           label={cat.label}
@@ -281,6 +297,7 @@ export const SettingsView: React.FC = () => {
       <NavItem
         icon={<ScrollText size={14} />}
         label={t('nav.logs')}
+        tabbable={tabbableNavKey === 'logs'}
         active={page === 'logs'}
         hasMatch={false}
         tab={compactNav}
@@ -289,6 +306,7 @@ export const SettingsView: React.FC = () => {
       <NavItem
         icon={<Info size={14} />}
         label={t('nav.about')}
+        tabbable={tabbableNavKey === 'about'}
         active={page === 'about'}
         hasMatch={false}
         notice={hasUpdate}
@@ -300,11 +318,13 @@ export const SettingsView: React.FC = () => {
 
   return (
     <Flex ref={rootRef} flex={1} bg="var(--mantine-color-body)" style={{ overflow: 'hidden' }}>
+      <LocaleRefreshOnShow refresh={refreshLocales} />
 
       {!compactNav && (
         <Stack
           gap={0}
           component="nav"
+          aria-label={t('a11y.c.settingsNav')}
           w={240}
           miw={160}
           bg="var(--mantine-color-default)"
@@ -314,7 +334,7 @@ export const SettingsView: React.FC = () => {
               the divider. No way back: the dialog's ✕ and Escape close Settings. */}
           <PanelToolbar withBottomBorder={false}>{searchInput}</PanelToolbar>
           <Box px="8px" py="8px" flex={1} style={{ overflowY: 'auto', minHeight: 0 }}>
-            <Stack gap={4}>{navEntries}</Stack>
+            <Stack gap={4} onKeyDown={(e) => handleRovingKey(e, NAV_ITEM_SELECTOR, 'vertical')}>{navEntries}</Stack>
           </Box>
         </Stack>
       )}
@@ -323,7 +343,7 @@ export const SettingsView: React.FC = () => {
       {compactNav && (
         <>
           <PanelToolbar withBottomBorder={false}>{searchInput}</PanelToolbar>
-          <SettingsTabStrip activeKey={page === 'settings' ? (nav.isSearching ? '' : nav.activeCategory) : page}>
+          <SettingsTabStrip activeKey={activeNavKey} label={t('a11y.c.settingsNav')}>
             {navEntries}
           </SettingsTabStrip>
         </>
@@ -337,14 +357,14 @@ export const SettingsView: React.FC = () => {
         <AboutView />
       </Flex>
       {/* The scrollbar's lane is kept even on pages too short to scroll, so the centred column does
-          not shift sideways when switching between a short page and a long one. The 8px top puts
-          the page title level with the first nav row. */}
+          not shift sideways when switching between a short page and a long one. The top padding
+          separates the page title from the dialog header. */}
       <Box
         display={page === 'settings' ? 'block' : 'none'}
         flex={1}
         mih={0}
         ref={contentRef}
-        p="8px 20px 40px"
+        p="24px 20px 40px"
         style={{ overflowY: 'auto', scrollbarGutter: 'stable' }}
       >
         {/* Blocks follow CATEGORY_IDS (the nav order): multi-category search results stack this way. */}
@@ -411,6 +431,12 @@ export const SettingsView: React.FC = () => {
           ))}
 
           {categoryBlock('connectors', (
+            <>
+            <KnowledgeSection
+              t={t}
+              visible={nav.showSection(TAG_SETS.knowledge, 'connectors')}
+              sectionGap={SECTION_GAP}
+            />
             <McpSection
               mcp={mcp}
               roster={botAccess.roster}
@@ -418,6 +444,7 @@ export const SettingsView: React.FC = () => {
               showSection={(tags) => nav.showSection(tags, 'connectors')}
               sectionGap={SECTION_GAP}
             />
+            </>
           ))}
 
           {categoryBlock('skills', (
@@ -433,7 +460,6 @@ export const SettingsView: React.FC = () => {
               <TelegramSection
                 telegram={telegram}
                 access={botAccess.telegram}
-                botCommands={botCommands}
                 t={t}
                 showSection={(tags) => nav.showSection(tags, 'bots')}
                 isSearching={nav.isSearching}
@@ -442,7 +468,6 @@ export const SettingsView: React.FC = () => {
               <LineSection
                 line={line}
                 access={botAccess.line}
-                botCommands={botCommands}
                 t={t}
                 showSection={(tags) => nav.showSection(tags, 'bots')}
                 isSearching={nav.isSearching}
@@ -453,7 +478,6 @@ export const SettingsView: React.FC = () => {
                   key={bot.platform}
                   bot={bot}
                   access={botAccess[bot.platform]}
-                  botCommands={botCommands}
                   t={t}
                   showSection={(tags) => nav.showSection(tags, 'bots')}
                   isSearching={nav.isSearching}
@@ -534,8 +558,7 @@ export const SettingsView: React.FC = () => {
           ))}
 
           {categoryBlock('stats', (
-            <StatsSection
-              metrics={metrics}
+            <LiveStatsSection
               t={t}
               showSection={(tags) => nav.showSection(tags, 'stats')}
               sectionGap={SECTION_GAP}

@@ -1,0 +1,20 @@
+.row {
+  container-type: inline-size;
+}
+
+.label {
+  flex: 1 1 12rem;
+  overflow-wrap: anywhere;
+}
+
+.control {
+  max-width: 100%;
+}
+
+/* A switch stays beside its label (its label wraps instead); wider controls drop below. */
+@container (max-width: 28rem) {
+  .row:not(:has([role='switch'])) > .label,
+  .row:not(:has([role='switch'])) > .control {
+    flex-basis: 100%;
+  }
+}

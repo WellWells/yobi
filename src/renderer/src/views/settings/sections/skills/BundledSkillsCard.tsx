@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
-import { ActionIcon, Badge, Group, Menu, Stack, Text, Tooltip } from '@mantine/core';
+import { ActionIcon, Badge, Group, Menu, Stack, Text } from '@mantine/core';
 import { EllipsisVertical, ListChecks, Pencil, Puzzle, RefreshCw, RotateCcwClock } from 'lucide-react';
 import type { AgentSkillView, BundledSkillChange } from '../../../../../../shared/agentSkills';
 import { fillTemplate } from '../../../../../../shared/fillTemplate';
 import { skillsApi } from '../../../../api/electronApi';
 import { AppButton } from '../../../../components/AppButton';
+import { TooltipTarget } from '../../../../components/TooltipTarget';
 import { WebDialog } from '../../../../components/WebDialog';
 import { Z_POPOVER } from '../../../../config/zLayers';
 import { SectionCard, SectionTitle, SettingRow, StatusLine, ToggleSwitch } from '../../components';
@@ -72,11 +73,11 @@ export const BundledSkillsCard: React.FC<Props> = ({ skills, t, sectionGap, onTo
                     <ToggleSwitch checked={skill.enabled && bundle.installed} disabled={!bundle.installed || busy !== null} onChange={() => onToggle(skill)} aria-label={title} />
                     <Menu position="bottom-end" withinPortal zIndex={Z_POPOVER}>
                       <Menu.Target>
-                        <Tooltip label={t('common.moreActions')}>
+                        <TooltipTarget label={t('common.moreActions')}>
                           <ActionIcon variant="subtle" size={30} aria-label={`${title} · ${t('common.moreActions')}`} disabled={busy !== null}>
                             <EllipsisVertical size={15} />
                           </ActionIcon>
-                        </Tooltip>
+                        </TooltipTarget>
                       </Menu.Target>
                       <Menu.Dropdown>
                         <Menu.Item leftSection={<Pencil size={14} />} disabled={!bundle.installed} onClick={() => onEdit(skill)}>{t('settings.skills.edit')}</Menu.Item>

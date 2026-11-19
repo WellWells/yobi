@@ -161,22 +161,44 @@ export function readPlayerConfig(config: unknown): VimeoConfig | null {
 
 /** Why the player page showed no configuration. */
 export type VimeoPageFailure =
-  /** Plays only on the site that embeds it (403, "cannot be played here"). */
+  /** Plays only on the site that embeds it: a privacy page whose oEmbed carries `domain_status_code` 403. */
   | 'embedOnly'
-  /** Private, the owner's account suspended, or otherwise not shown (another 403 privacy page). */
+  /** Private, the owner's account suspended, or otherwise not shown (a 403 privacy page). */
   | 'unavailable'
   | 'notFound'
   /** A challenge Yobi's own request could not pass (Cloudflare's 401, a 429): a browser window may. */
   | 'challenge'
   | 'other';
 
+/**
+ * The failure the page itself names, by its status and the error class in its script. Its sentence
+ * is never read: Vimeo writes it in the visitor's language (Japanese and German pages
+ * differ). An embed-only video and a hidden one are the same `PrivacyError` page, so this
+ * answers 'unavailable' for both; `isEmbedOnlyOembed` tells them apart.
+ */
 export function pageFailure(status: number, html: string): VimeoPageFailure {
   if (status === 404 || /name:\s*'NotFoundError'/.test(html)) return 'notFound';
-  if (status === 403 && /cannot be played here/i.test(html)) return 'embedOnly';
   if (status === 403 && /name:\s*'PrivacyError'/.test(html)) return 'unavailable';
   // Every page loads Cloudflare's precursor script; only the challenge itself shows Turnstile.
   if (status === 401 || status === 429 || (status === 403 && /turnstile/i.test(html))) return 'challenge';
   return 'other';
+}
+
+/** The oEmbed endpoint for a video, asked only to name the kind of a privacy failure. */
+export function vimeoOembedUrl(id: string): string {
+  return `https://vimeo.com/api/oembed.json?url=${encodeURIComponent(`https://vimeo.com/${id}`)}`;
+}
+
+/**
+ * Whether an oEmbed answer says the video plays only on the sites its owner allows: it carries
+ * `domain_status_code: 403` then, and no such field for a public, unlisted or hidden video.
+ */
+export function isEmbedOnlyOembed(text: string): boolean {
+  try {
+    return (JSON.parse(text) as { domain_status_code?: unknown }).domain_status_code === 403;
+  } catch {
+    return false;
+  }
 }
 
 /**

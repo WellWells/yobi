@@ -22,7 +22,7 @@ import { FlowUserError } from '../userError';
 import { NAVIGATION_HEADERS, stayOnHosts } from './siteFetch';
 import { cuesFromVtt } from './srt';
 import type { SelfDownloadRequest, SelfDownloadVideoSite, TimedSubtitles, VideoInfo } from './videoSiteTypes';
-import { pageFailure, pickTextTrack, playerConfigJson, readPlayerConfig } from './vimeoParse';
+import { isEmbedOnlyOembed, pageFailure, pickTextTrack, playerConfigJson, readPlayerConfig, vimeoOembedUrl } from './vimeoParse';
 import type { VimeoConfig, VimeoPageFailure, VimeoTextTrack } from './vimeoParse';
 import { SignedLinks, isVimeoMediaHost, readVimeoRenditions, soundPlan, videoPlans } from './vimeoStreams';
 import type { VimeoRendition } from './vimeoStreams';
@@ -80,6 +80,28 @@ function pageError(failure: VimeoPageFailure, status: number, id: string): FlowU
   return new FlowUserError('flow.error.ytdlInfoUnreadable', { site: site() }, `The Vimeo player answered ${status} with no configuration`);
 }
 
+/**
+ * The kind of a privacy failure: the player's page is the same for an embed-only video and a
+ * hidden one (its sentence differs, in the visitor's language), so oEmbed is asked which it is.
+ * Anything short of a clear "embed-only" answer leaves it as the page said.
+ */
+async function settlePrivacy(failure: VimeoPageFailure, id: string, signal: AbortSignal | undefined): Promise<VimeoPageFailure> {
+  if (failure !== 'unavailable') return failure;
+  const url = vimeoOembedUrl(id);
+  try {
+    const answer = await fetchRawResponse(url, {
+      headers: { 'User-Agent': userAgentForUrl(url), Accept: 'application/json' },
+      validateRedirectHost: stayOnVimeo,
+      cookiesFrom: readerSession(),
+      signal,
+    });
+    return answer.status === 200 && isEmbedOnlyOembed(answer.text) ? 'embedOnly' : failure;
+  } catch {
+    signal?.throwIfAborted();
+    return failure;
+  }
+}
+
 /** Whether the verification window's page is past the challenge: the player's configuration is there. */
 async function playerShown(contents: Electron.WebContents): Promise<boolean> {
   return (await contents.executeJavaScript('Boolean(window.playerConfig)')) === true;
@@ -111,7 +133,7 @@ async function readInWindow(link: VimeoLink, signal: AbortSignal | undefined): P
   const config = readPlayerConfig(parsed.config);
   if (config) return config;
   const status = parsed.status ?? 0;
-  throw pageError(pageFailure(status, parsed.html ?? ''), status, link.id);
+  throw pageError(await settlePrivacy(pageFailure(status, parsed.html ?? ''), link.id, signal), status, link.id);
 }
 
 /** The player's configuration: Yobi's own request first, the hidden window when a challenge stops it. */
@@ -132,7 +154,7 @@ async function readConfig(link: VimeoLink, signal: AbortSignal | undefined): Pro
   const config = page.status === 200 ? readPlayerConfig(playerConfigJson(page.text)) : null;
   if (config) return config;
   const failure = pageFailure(page.status, page.text);
-  if (failure !== 'challenge') throw pageError(failure, page.status, link.id);
+  if (failure !== 'challenge') throw pageError(await settlePrivacy(failure, link.id, signal), page.status, link.id);
   sendLog(`[Ytdl] Vimeo answered ${page.status} to Yobi's request; reading the player in a hidden window`);
   return readInWindow(link, signal);
 }

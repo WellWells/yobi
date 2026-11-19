@@ -1,7 +1,10 @@
 import type { McpTool } from '../../mcp/mcpTypes';
 import {
-  BUILTIN_CALENDAR_SERVER_ID, BUILTIN_MAIL_SERVER_ID, BUILTIN_PTT_SERVER_ID, BUILTIN_RAIL_SERVER_ID, BUILTIN_THUNDERBIRD_SERVER_ID, BUILTIN_X_SERVER_ID,
+  BUILTIN_CALENDAR_SERVER_ID, BUILTIN_MAIL_SERVER_ID, BUILTIN_OFFICE_SERVER_ID, BUILTIN_PTT_SERVER_ID, BUILTIN_RAIL_SERVER_ID, BUILTIN_THUNDERBIRD_SERVER_ID, BUILTIN_X_SERVER_ID,
+  BUILTIN_TWLAW_SERVER_ID, BUILTIN_YOBI_SERVER_ID,
 } from '../../../shared/builtinConnectors';
+import { TW_LAW_NOTES } from './connectors/twLawContract';
+import { YOBI_CONTRACTS } from './connectors/yobiContract';
 import { BUILTIN_LINE_SERVER_ID } from '../../../shared/types';
 import { MAIL_CONTRACTS, MAIL_NOTES } from './connectors/mailContract';
 import { CALENDAR_CONTRACTS, CALENDAR_NOTES } from './connectors/calendarContract';
@@ -13,6 +16,7 @@ import { RAIL_NOTES } from './connectors/railContract';
 import { PTT_NOTES } from './connectors/pttContract';
 import { NOTION_CONTRACTS, NOTION_NOTES } from './connectors/notionContract';
 import { LINE_CONTRACTS, LINE_NOTES } from './connectors/lineContract';
+import { OFFICE_CONTRACTS, OFFICE_NOTES } from './connectors/officeContract';
 import { renderIdentityContext } from './connectors/thunderbirdFacts';
 import { bySiteConnectorId } from '../../siteConnector';
 
@@ -32,9 +36,13 @@ const CONNECTORS: Readonly<Record<string, ConnectorContracts>> = {
   [BUILTIN_X_SERVER_ID]: { tools: {}, notes: X_NOTES },
   [BUILTIN_RAIL_SERVER_ID]: { tools: {}, notes: RAIL_NOTES },
   [BUILTIN_PTT_SERVER_ID]: { tools: {}, notes: PTT_NOTES },
+  [BUILTIN_TWLAW_SERVER_ID]: { tools: {}, notes: TW_LAW_NOTES },
   [BUILTIN_MAIL_SERVER_ID]: { tools: MAIL_CONTRACTS, notes: MAIL_NOTES },
   [BUILTIN_CALENDAR_SERVER_ID]: { tools: CALENDAR_CONTRACTS, notes: CALENDAR_NOTES },
   [BUILTIN_LINE_SERVER_ID]: { tools: LINE_CONTRACTS, notes: LINE_NOTES },
+  [BUILTIN_OFFICE_SERVER_ID]: { tools: OFFICE_CONTRACTS, notes: OFFICE_NOTES },
+  // On by default, so no notes: they would sit in every run (see yobiMcpServer.ts).
+  [BUILTIN_YOBI_SERVER_ID]: { tools: YOBI_CONTRACTS, notes: '' },
   // The sign-in site connectors' tools are read-only and say so in their annotations: notes only.
   ...bySiteConnectorId(({ notes }): ConnectorContracts => ({ tools: {}, notes })),
 };

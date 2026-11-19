@@ -1,7 +1,7 @@
 import type { AgentPendingFlow, FlowDefinition } from '../../../shared/types';
 import type { FlowRef } from '../flowEdit';
 import { sendLog } from '../../helpers';
-import { buildHoldReason, describeSavedEdit, describeSavedFlow, ownerOnlyReason } from './agentFlowShared';
+import { buildHoldReason, describeSavedEdit, describeSavedFlow, oneTimeMomentPassed, ownerOnlyReason } from './agentFlowShared';
 import type { FlowHold, SavedFlowState } from './agentFlowShared';
 
 /**
@@ -41,8 +41,10 @@ async function commitBuild(pending: AgentPendingFlow, ctx: HeldFlowContext): Pro
   if (!ctx.saveFlow) return { observation: 'ERROR: This run cannot save flows. Tell the user to save it from the desktop.', status: 'error' };
   const off = pending.off ?? (ctx.holdFlows ? buildHoldReason(pending.flow, pending.issues, ctx.holdFlows) : undefined);
   let saved = await ctx.saveFlow(asSavedBy(pending.flow, ctx));
-  let state: SavedFlowState = off ? { how: 'off', why: off } : { how: 'off', why: 'settings' };
-  if (!off && ctx.enableFlow) {
+  // The answer can come long after the question: a one-time moment that went by meanwhile stays off.
+  const passed = !off && oneTimeMomentPassed(saved);
+  let state: SavedFlowState = off ? { how: 'off', why: off } : { how: 'off', why: passed ? 'passed' : 'settings' };
+  if (!off && !passed && ctx.enableFlow) {
     // Read back rather than assumed: a flow missing a required setting stays off.
     const enabled = await ctx.enableFlow(saved.id);
     if (enabled?.enabled) {

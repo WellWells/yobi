@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Box, Group, Modal, Text } from '@mantine/core';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { Search } from 'lucide-react';
@@ -14,6 +14,11 @@ const ROW_ESTIMATE = 52;
 const LIST_PAD = 6;
 const LIST_MAX_VH = 52;
 
+/** The id of the option at `index`: the input's `aria-activedescendant` points at it. */
+export function paletteOptionId(listId: string, index: number): string {
+  return `${listId}-option-${index}`;
+}
+
 /** The list's height cap, used until the list is measured (the palette opens straight onto it). */
 function initialListHeight(): number {
   return Math.round(((typeof window === 'undefined' ? 0 : window.innerHeight) * LIST_MAX_VH) / 100);
@@ -22,6 +27,9 @@ function initialListHeight(): number {
 interface PaletteRowProps<T> {
   item: T;
   index: number;
+  id: string;
+  /** The whole list's length: only a window of rows is in the DOM, so each says where it sits. */
+  setSize: number;
   start: number;
   active: boolean;
   measureRef: (node: Element | null) => void;
@@ -32,11 +40,16 @@ interface PaletteRowProps<T> {
 
 // Memoised on `active` (not the active index), so a move re-renders only the two rows it touches.
 function PaletteRowImpl<T>({
-  item, index, start, active, measureRef, onHover, onPick, renderRow,
+  item, index, id, setSize, start, active, measureRef, onHover, onPick, renderRow,
 }: PaletteRowProps<T>): React.ReactElement {
   return (
     <Box
       ref={measureRef}
+      id={id}
+      role="option"
+      aria-selected={active}
+      aria-setsize={setSize}
+      aria-posinset={index + 1}
       data-index={index}
       className={styles.row}
       data-active={String(active)}
@@ -61,17 +74,23 @@ interface SearchPaletteProps<T> {
   renderRow: (item: T, active: boolean) => React.ReactNode;
   onSelect: (item: T) => void;
   placeholder: string;
+  /** The dialog's and the result list's accessible name ("Search conversations"). */
+  label: string;
   emptyLabel: string;
   /** After the close animation, once focus has gone back to where it was before the palette. */
   onClosed?: () => void;
 }
 
 export function SearchPalette<T>({
-  opened, onClose, query, onQueryChange, items, getKey, renderRow, onSelect, placeholder, emptyLabel, onClosed,
+  opened, onClose, query, onQueryChange, items, getKey, renderRow, onSelect, placeholder, label, emptyLabel, onClosed,
 }: SearchPaletteProps<T>): React.ReactElement {
   const t = useI18nStore((s) => s.t);
   const [activeIndex, setActiveIndex] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
+  // Combobox pattern (WCAG 4.1.2): focus stays in the input, and `aria-activedescendant` names the
+  // highlighted option, so a screen reader announces each ↑ / ↓ move.
+  const listId = `${useId()}-results`;
+  const activeId = items.length > 0 ? paletteOptionId(listId, activeIndex) : undefined;
 
   useEffect(() => {
     if (!opened) return;
@@ -130,6 +149,8 @@ export function SearchPalette<T>({
       onClose={onClose}
       onExitTransitionEnd={onClosed}
       withCloseButton={false}
+      // The dialog's accessible name: Mantine labels the dialog by its title, kept out of sight here.
+      title={label}
       padding={0}
       size={560}
       radius="md"
@@ -137,6 +158,7 @@ export function SearchPalette<T>({
       xOffset={0}
       styles={{
         content: { background: 'var(--bg-secondary)', border: '1px solid var(--border)', overflow: 'hidden' },
+        header: { display: 'none' },
         body: { padding: 0 },
       }}
     >
@@ -149,6 +171,12 @@ export function SearchPalette<T>({
           onChange={(e) => onQueryChange(e.currentTarget.value)}
           onKeyDown={handleKeyDown}
           placeholder={placeholder}
+          role="combobox"
+          aria-label={label}
+          aria-autocomplete="list"
+          aria-expanded={items.length > 0}
+          aria-controls={listId}
+          aria-activedescendant={activeId}
           leftSection={<Search size={17} />}
           classNames={{ input: styles.input }}
           styles={{
@@ -163,7 +191,7 @@ export function SearchPalette<T>({
         {items.length === 0 ? (
           <Text ta="center" c="dimmed" fz="var(--font-size-base)" py={28 + LIST_PAD}>{emptyLabel}</Text>
         ) : (
-          <Box style={{ height: rowVirtualizer.getTotalSize(), position: 'relative' }}>
+          <Box id={listId} role="listbox" aria-label={label} style={{ height: rowVirtualizer.getTotalSize(), position: 'relative' }}>
             {rowVirtualizer.getVirtualItems().map((virtualRow) => {
               const item = items[virtualRow.index];
               if (item === undefined) return null;
@@ -172,6 +200,8 @@ export function SearchPalette<T>({
                   key={virtualRow.key}
                   item={item}
                   index={virtualRow.index}
+                  id={paletteOptionId(listId, virtualRow.index)}
+                  setSize={items.length}
                   start={virtualRow.start}
                   active={virtualRow.index === activeIndex}
                   measureRef={rowVirtualizer.measureElement}

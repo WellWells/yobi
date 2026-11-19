@@ -1,8 +1,9 @@
 import React, { useLayoutEffect } from 'react';
 import { Box, Group } from '@mantine/core';
-import { useDragScroll, wheelScrollsSideways } from '../../hooks/useDragScroll';
+import { useDragScroll, useWheelScrollsSideways } from '../../hooks/useDragScroll';
 import { useScrollEnds } from '../../hooks/useScrollEnds';
 import { SCROLL_CHEVRON_SLOT, ScrollChevron } from '../../components/ScrollChevron';
+import { handleRovingKey } from '../../utils/rovingFocus';
 import classes from './SettingsTabStrip.module.css';
 
 /**
@@ -15,6 +16,8 @@ const REVEAL_MARGIN = 8 + SCROLL_CHEVRON_SLOT;
 interface SettingsTabStripProps {
   /** Which tab is active: when it changes, the row brings it into view. */
   activeKey: string;
+  /** The nav's accessible name. */
+  label: string;
   children: React.ReactNode;
 }
 
@@ -23,9 +26,10 @@ interface SettingsTabStripProps {
  * column (Claude's settings on a narrow window). It scrolls sideways by wheel and drag, and a
  * chevron shows at an end while there are tabs past it.
  */
-export const SettingsTabStrip: React.FC<SettingsTabStripProps> = ({ activeKey, children }) => {
+export const SettingsTabStrip: React.FC<SettingsTabStripProps> = ({ activeKey, label, children }) => {
   const { ref: stripRef, ends, measure, page } = useScrollEnds<HTMLDivElement>();
   const dragScroll = useDragScroll();
+  useWheelScrollsSideways(stripRef);
 
   // Within the row only: `scrollIntoView` would also scroll the dialog's clipped ancestors.
   useLayoutEffect(() => {
@@ -44,11 +48,13 @@ export const SettingsTabStrip: React.FC<SettingsTabStripProps> = ({ activeKey, c
       <Box
         ref={stripRef}
         component="nav"
+        aria-label={label}
         className={classes.strip}
         flex={1}
         miw={0}
         onScroll={measure}
-        onWheel={wheelScrollsSideways}
+        // One Tab stop; ← → Home End walk the tabs (WCAG 2.1.1).
+        onKeyDown={(e: React.KeyboardEvent<HTMLElement>) => handleRovingKey(e, '[data-nav-item]', 'horizontal')}
         {...dragScroll}
       >
         {children}

@@ -80,6 +80,7 @@ async function confirmFlowWrite(
     sensitiveTypes: req.sensitiveTypes,
     ...(req.edit ? { edit: req.edit } : {}),
     ...(req.recipients?.length ? { recipients: req.recipients } : {}),
+    ...(req.runAt ? { runAt: req.runAt } : {}),
   });
   return choice !== 'deny';
 }

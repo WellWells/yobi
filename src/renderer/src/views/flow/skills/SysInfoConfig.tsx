@@ -92,7 +92,7 @@ export const SysInfoConfig: React.FC<SkillConfigProps> = ({ step, onChange, t })
             ))}
           </Pill.Group>
         ) : (
-          <Text fz="xs" c="var(--mantine-color-warning)">{t('flow.skill.sysinfo.fields.empty')}</Text>
+          <Text fz="xs" c="var(--warning-text)">{t('flow.skill.sysinfo.fields.empty')}</Text>
         )}
       </Stack>
 

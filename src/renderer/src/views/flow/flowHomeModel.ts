@@ -43,6 +43,11 @@ export function triggerKindsOf(flow: FlowDefinition): TriggerType[] {
   return [...new Set([flow.trigger.type, ...(flow.extraTriggers ?? []).map((trigger) => trigger.type)])];
 }
 
+/** Whether 「執行」 can start it here: a flow only a bot command starts runs only from the bot. */
+export function runsFromButton(flow: FlowDefinition): boolean {
+  return triggerKindsOf(flow).some((kind) => kind !== 'bot');
+}
+
 function searchable(text: string): string {
   return text.normalize('NFKC').toLowerCase();
 }

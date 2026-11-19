@@ -50,8 +50,8 @@ const UsageHint: React.FC<{ usages: number; t: (k: string) => string }> = ({ usa
   }
   return (
     <Group gap={4} wrap="nowrap" align="center">
-      <TriangleExclamationPoint size={12} color="var(--mantine-color-warning)" />
-      <Text fz="xs" c="var(--mantine-color-warning)">{t('flow.variables.unused')}</Text>
+      <TriangleExclamationPoint size={12} color="var(--warning-text)" />
+      <Text fz="xs" c="var(--warning-text)">{t('flow.variables.unused')}</Text>
     </Group>
   );
 };
@@ -100,7 +100,7 @@ const DefinitionRow: React.FC<DefinitionRowProps> = ({
           style={{ flex: 1 }}
         />
         <Tooltip label={t('flow.variables.remove')}>
-          <ActionIcon variant="subtle" color="red" size="md" mt={22} onClick={onRemove}>
+          <ActionIcon variant="subtle" color="red" size="md" mt={22} aria-label={t('flow.variables.remove')} onClick={onRemove}>
             <Trash size={14} />
           </ActionIcon>
         </Tooltip>

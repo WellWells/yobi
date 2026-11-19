@@ -42,6 +42,28 @@ export interface SkillRunState {
    * by name, with their full line. A skill whose instructions name one gets that line with them.
    */
   namedTools?: Readonly<Record<string, string>>;
+  /**
+   * Programs a connector of this run runs, by name, with the line that says how. A skill written for
+   * a terminal ("officecli create …") gets it on every page that names the program.
+   */
+  programRoutes?: Readonly<Record<string, string>>;
+  /**
+   * The answer goes to a chat app on a phone (a bot's chat): a narrow screen where a table becomes
+   * a block of lines per row. Said with a skill's instructions, so one that has a compact form uses it.
+   */
+  phoneChat?: boolean;
+}
+
+/** What a skill is told about the screen its answer lands on. */
+export const PHONE_CHAT_SURFACE = 'ANSWER SURFACE: a chat app on a phone (narrow screen, tables do not render). Where these instructions give a form for a chat app, use that form; otherwise prefer short lines over tables.';
+
+/** The route lines for the programs a page of instructions names. */
+export function programRouteLines(text: string, routes: Readonly<Record<string, string>> | undefined): string[] {
+  if (!routes) return [];
+  const lines = Object.entries(routes)
+    .filter(([program]) => new RegExp(`(?<![\\w-])${program}(?![\\w-])`, 'i').test(text))
+    .map(([, line]) => line);
+  return lines.length ? ['', ...lines] : [];
 }
 
 /**
@@ -253,7 +275,10 @@ export async function runUseSkill(config: Record<string, string>, run: SkillRunS
 
   const parsed = parseSkillMarkdown(await fs.readFile(path.join(dir, SKILL_FILE), 'utf8'), entry.name);
   const { slice, page, pages } = pageOf(skillBodyForAgent(parsed.body), missedFile ? undefined : config.page);
-  if (page > 1) return { observation: `SKILL "${entry.name}" (continued):\n${slice}${pageNote(page, pages)}`, status: 'ok' };
+  if (page > 1) {
+    const continued = [`SKILL "${entry.name}" (continued):\n${slice}${pageNote(page, pages)}`, ...programRouteLines(slice, run.programRoutes)];
+    return { observation: continued.join('\n'), status: 'ok' };
+  }
   const others = files.filter((file) => file.rel !== SKILL_FILE);
   const listed = others.slice(0, LISTED_FILES_MAX).map((file) => `- ${file.rel} (${sizeLabel(file.size)})`);
   if (others.length > LISTED_FILES_MAX) listed.push(`- …and ${others.length - LISTED_FILES_MAX} more`);
@@ -263,7 +288,9 @@ export async function runUseSkill(config: Record<string, string>, run: SkillRunS
       ...(missedFile ? [`NOTE: "${wantedFile}" is not a file of this skill, so here are its instructions; pick files from FILES IN THIS SKILL below.`] : []),
       `SKILL "${entry.name}" — follow these instructions for this task:`,
       `${slice}${pageNote(page, pages)}`,
+      ...(run.phoneChat ? [PHONE_CHAT_SURFACE] : []),
       ...namedToolLines(parsed.body, run.namedTools),
+      ...programRouteLines(slice, run.programRoutes),
       ...(listed.length > 0 ? ['', `FILES IN THIS SKILL (read one with ${USE_SKILL_TOOL} and "file"; "SKILL_DIR" in the text above means this skill's folder):`, ...listed] : []),
       ...(howTo.length > 0 ? ['', ...howTo] : []),
     ].join('\n'),

@@ -69,8 +69,8 @@ export function PostCardView({ card, t }: { card: PostCard; t: (key: string) => 
         ))}
       </Group>
       <Group gap={14} mt={8}>
-        <Tally tag={t('ptt.push')} count={card.push} color="var(--mantine-color-success)" />
-        <Tally tag={t('ptt.boo')} count={card.boo} color="var(--mantine-color-error)" />
+        <Tally tag={t('ptt.push')} count={card.push} color="var(--success-text)" />
+        <Tally tag={t('ptt.boo')} count={card.boo} color="var(--error-text)" />
         <Tally tag={t('ptt.arrow')} count={card.arrow} color="var(--text-muted)" />
       </Group>
     </Box>

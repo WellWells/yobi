@@ -45,7 +45,7 @@ export const SlashCommandMenu: React.FC<SlashCommandMenuProps> = ({
             onMouseDown={(event) => { event.preventDefault(); onSelect(cmd); }}
             leftSection={leftSection}
             rightSection={activeFlowIds.has(cmd.flowId)
-              ? <Check size={13} color="var(--mantine-color-accent)" />
+              ? <Check size={13} color="var(--mantine-color-accent-text)" />
               : undefined}
             label={<Text fz="var(--font-size-base)" fw={600} ff="monospace">{`/${cmd.command}`}</Text>}
             description={cmd.description || undefined}

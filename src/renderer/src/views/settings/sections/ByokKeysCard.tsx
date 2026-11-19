@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
-import { ActionIcon, Badge, Box, Group, Stack, Text } from '@mantine/core';
-import { KeyRound, Pencil, Plus, Trash } from 'lucide-react';
-import { SectionCard, SectionTitle, VisibilityToggle } from '../components';
+import { ActionIcon, Badge, Box, Group, Loader, Stack, Text } from '@mantine/core';
+import { KeyRound, Pencil, Plus, PlugZap, Trash } from 'lucide-react';
+import { SectionCard, SectionTitle, StatusLine, VisibilityToggle } from '../components';
 import { useHiddenSources } from '../hooks/useHiddenSources';
 import { AppButton } from '../../../components/AppButton';
 import { WebDialog } from '../../../components/WebDialog';
 import { SecretHealthAlert } from '../../../components/SecretHealthAlert';
 import { getByokTypeIcon } from '../../../config/models';
 import { ByokKeyForm } from './ByokKeyForm';
+import { HiddenSourceBadge, sourceNameColor } from './HiddenSourceBadge';
 import type { useByokSettings } from '../hooks/useByokSettings';
 import { BYOK_PROVIDER_TYPE_LABELS } from '../../../../../shared/types';
 import { byokModelLabel } from '../../../../../shared/byokModelLabel';
@@ -50,6 +51,7 @@ export const ByokKeysCard: React.FC<Props> = ({ byok, t, sectionGap }) => {
           {instances.map((instance, index) => {
             const InstanceIcon = getByokTypeIcon(instance.providerType);
             const editingThis = form?.id === instance.id;
+            const keyTest = byok.keyTests[instance.id];
             return (
             <Box
               key={instance.id}
@@ -63,19 +65,19 @@ export const ByokKeysCard: React.FC<Props> = ({ byok, t, sectionGap }) => {
                   wrap="nowrap"
                   flex={1}
                   miw={0}
-                  opacity={hiddenNow(instance.id) ? 0.55 : 1}
                 >
-                  <Box c="var(--mantine-color-default-color)" mt={2} style={{ flexShrink: 0 }}>
+                  <Box c={sourceNameColor(hiddenNow(instance.id))} mt={2} style={{ flexShrink: 0 }}>
                     <InstanceIcon size={16} />
                   </Box>
                   <Stack gap={4} miw={0}>
                     <Group gap={8} wrap="nowrap">
-                      <Text fz="var(--font-size-base)" fw={600} c="var(--mantine-color-default-color)" truncate>
+                      <Text fz="var(--font-size-base)" fw={600} c={sourceNameColor(hiddenNow(instance.id))} truncate>
                         {instance.name}
                       </Text>
                       <Badge variant="light" color="gray" size="sm">
                         {BYOK_PROVIDER_TYPE_LABELS[instance.providerType]}
                       </Badge>
+                      {hiddenNow(instance.id) && <HiddenSourceBadge t={t} />}
                     </Group>
                     <Text fz="var(--font-size-sm)" c="dimmed" lh={1.5} truncate>
                       {byokModelLabel(instance.model)}
@@ -97,7 +99,7 @@ export const ByokKeysCard: React.FC<Props> = ({ byok, t, sectionGap }) => {
                   <ActionIcon
                     variant="default"
                     size={30}
-                    c="red"
+                    c="var(--danger-text)"
                     aria-label={t('settings.byok.delete')}
                     onClick={() => setConfirmDelete(instance)}
                   >
@@ -117,6 +119,19 @@ export const ByokKeysCard: React.FC<Props> = ({ byok, t, sectionGap }) => {
                 </Group>
               </Group>
 
+              {keyTest && !editingThis && (
+                <Box mt={8} pl={26}>
+                  {keyTest.status === 'testing' && (
+                    <Group gap={6} wrap="nowrap">
+                      <Loader size={12} />
+                      <Text fz="var(--font-size-sm)" c="var(--text-muted)">{t('settings.byok.testAll.testing')}</Text>
+                    </Group>
+                  )}
+                  {keyTest.status === 'ok' && <StatusLine tone="success">{t('settings.byok.testAll.ok')}</StatusLine>}
+                  {keyTest.status === 'error' && <StatusLine tone="error">{keyTest.message}</StatusLine>}
+                </Box>
+              )}
+
               {editingThis && <ByokKeyForm byok={byok} t={t} mt={12} />}
             </Box>
             );
@@ -126,7 +141,7 @@ export const ByokKeysCard: React.FC<Props> = ({ byok, t, sectionGap }) => {
         {addingNew ? (
           <ByokKeyForm byok={byok} t={t} mt={instances.length > 0 ? 12 : 0} />
         ) : (
-          <Group mt={instances.length > 0 ? 12 : 0}>
+          <Group mt={instances.length > 0 ? 12 : 0} gap={8}>
             <AppButton
               variant="default"
               size="xs"
@@ -135,6 +150,17 @@ export const ByokKeysCard: React.FC<Props> = ({ byok, t, sectionGap }) => {
             >
               {t('settings.byok.add')}
             </AppButton>
+            {instances.length > 0 && (
+              <AppButton
+                variant="default"
+                size="xs"
+                leftSection={<PlugZap size={13} />}
+                loading={byok.testingAll}
+                onClick={() => { void byok.testAllKeys(); }}
+              >
+                {t('settings.byok.testAll')}
+              </AppButton>
+            )}
           </Group>
         )}
       </SectionCard>

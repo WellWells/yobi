@@ -5,15 +5,18 @@ import { getLangCache, localizeUserFacingError, t } from './i18n';
 import { effectiveTheme, themeBackground } from '../shared/themes';
 import {
   CAPTURE_WIDTHS, SHARE_CONSENT_KEYS, clampShareExpire,
-  captureWidthLabelKey, clampCaptureMargin, normalizeExportChoice, snapCaptureWidth,
+  captureWidthLabelKey, clampCaptureMargin, clampCardOpacity, normalizeExportChoice, snapCaptureWidth,
 } from '../shared/types';
 import { CAPTURE_BACKGROUND_STYLES } from '../shared/capturePalettes';
 import type { CaptureBackgroundStyle } from '../shared/capturePalettes';
+import { buildMarkdownLabels } from '../shared/markdownLabels';
+import { exportReadingFont } from '../shared/readingPrefs';
 import { effectiveExpires } from './share/instanceExpires';
 import { pinPageZoom } from './pageZoom';
+import { readSystemTextScale, watchSystemTextScale } from './systemTextScale';
 import type {
-  ExportNameRequest, ExportNameResult, ExportNaming, ExportPromptChoice, ExportPromptPayload, PanelHeight,
-  QuickExportFormat, ShareResultAction, ShareResultState,
+  CaptureTooTallTemplates, ExportNameRequest, ExportNameResult, ExportNaming, ExportPromptChoice, ExportPromptPayload,
+  MarkdownCapturePayload, PanelHeight, QuickExportFormat, ShareResultAction, ShareResultState,
 } from '../shared/types';
 
 const PROMPT_TIMEOUT_MS = 300_000;
@@ -35,13 +38,15 @@ async function loadPromptPage(win: BrowserWindow): Promise<void> {
   await win.loadFile(path.join(__dirname, '../renderer/prompt.html'));
 }
 
-function promptBounds(height: number): { x: number; y: number; width: number; height: number } {
+function promptBounds(height: number, width = PROMPT_WIDTH): { x: number; y: number; width: number; height: number } {
   const cursor = screen.getCursorScreenPoint();
   const { workArea } = screen.getDisplayNearestPoint(cursor);
+  width = Math.min(width, workArea.width);
+  height = Math.min(height, workArea.height);
   return {
-    x: Math.round(workArea.x + (workArea.width - PROMPT_WIDTH) / 2),
+    x: Math.round(workArea.x + (workArea.width - width) / 2),
     y: Math.round(workArea.y + (workArea.height - height) / 2),
-    width: PROMPT_WIDTH,
+    width,
     height,
   };
 }
@@ -65,7 +70,7 @@ function resizeKeepingTop(win: BrowserWindow, height: number): void {
   win.setBounds({
     x: current.x,
     y: Math.max(workArea.y, Math.min(current.y, workArea.y + workArea.height - fitted)),
-    width: PROMPT_WIDTH,
+    width: current.width,
     height: fitted,
   });
 }
@@ -83,7 +88,7 @@ function trackPanelHeight(win: BrowserWindow, firstPanelHeight: number): void {
         if (win.isDestroyed()) return;
         if (panelPlacement(height, lastPanel) === 'centre') {
           lastPanel = height.panel;
-          win.setBounds(promptBounds(height.total));
+          win.setBounds(promptBounds(height.total, win.getBounds().width));
         } else {
           resizeKeepingTop(win, height.total);
         }
@@ -172,6 +177,15 @@ function serveNameRequests(win: BrowserWindow, namer: ExportNamer, signal: Abort
   })();
 }
 
+/** The "too tall for PNG/WebP" sentences with their placeholders still in, for whoever measured. */
+export function tooTallTemplates(strings: Record<string, string>): CaptureTooTallTemplates {
+  return {
+    over: t(strings, 'quickExport.tooTall.over'),
+    switch: t(strings, 'quickExport.tooTall.switch'),
+    widen: t(strings, 'quickExport.tooTall.widen'),
+  };
+}
+
 function buildPayload(defaults: ExportPromptDefaults, naming: ExportNaming | null): ExportPromptPayload {
   const strings = getLangCache();
   const share = config.share;
@@ -184,10 +198,20 @@ function buildPayload(defaults: ExportPromptDefaults, naming: ExportNaming | nul
     zip: defaults.zip,
     width: snapCaptureWidth(defaults.width),
     margin: clampCaptureMargin(defaults.margin),
+    cardOpacity: clampCardOpacity(defaults.cardOpacity),
     palette: defaults.palette ?? capture.palette,
     backgroundStyle: defaults.backgroundStyle ?? (capture.backgroundStyle as CaptureBackgroundStyle),
     direction: capture.direction,
+    pixelRatio: capture.pixelRatio,
     theme: effectiveTheme(config.theme, nativeTheme.shouldUseDarkColors),
+    // The same labels and face the capture window is given, so the preview prints what it prints.
+    preview: defaults.preview
+      ? {
+        payload: defaults.preview,
+        markdownLabels: buildMarkdownLabels((key) => t(strings, key)),
+        readingFont: exportReadingFont(config.readingFont),
+      }
+      : null,
     strings: {
       title: t(strings, 'quickExport.panel.title'),
       fileName: t(strings, 'quickExport.panel.fileName'),
@@ -198,8 +222,10 @@ function buildPayload(defaults: ExportPromptDefaults, naming: ExportNaming | nul
       cancel: t(strings, 'quickExport.panel.cancel'),
       theme: t(strings, 'capture.palette'),
       margin: t(strings, 'capture.margin'),
+      cardOpacity: t(strings, 'capture.cardOpacity'),
       aiName: t(strings, 'quickExport.panel.aiName'),
       aiNameMenu: t(strings, 'quickExport.panel.aiNameMenu'),
+      tooTall: tooTallTemplates(strings),
       share: {
         format: t(strings, 'quickExport.panel.format.text'),
         instance: t(strings, 'share.settings.instance'),
@@ -242,8 +268,11 @@ interface ExportPromptDefaults {
   zip: boolean;
   width: number;
   margin: number;
+  cardOpacity: number;
   palette?: string;
   backgroundStyle?: CaptureBackgroundStyle;
+  /** The card the panel previews; absent draws the schematic only. */
+  preview?: MarkdownCapturePayload;
 }
 
 /** `'reopen'` keeps the panel up for another attempt; the object form also shows a reason above the controls. */
@@ -257,8 +286,10 @@ export function retryDefaults(choice: ExportPromptChoice, previous: ExportPrompt
     zip: choice.zip,
     width: choice.width,
     margin: choice.margin,
+    cardOpacity: choice.cardOpacity,
     palette: choice.palette,
     backgroundStyle: choice.backgroundStyle,
+    preview: previous.preview,
   };
 }
 
@@ -309,6 +340,15 @@ export async function runWithExportPrompt(
   const naming = new AbortController();
   try {
     await loadPromptPage(win);
+    const applyTextScale = async (percent: number): Promise<void> => {
+      if (win.isDestroyed()) return;
+      const bounds = win.getBounds();
+      const fitted = promptBounds(bounds.height, Math.round(PROMPT_WIDTH * percent / 100));
+      if (fitted.width !== bounds.width) win.setBounds(fitted);
+      await win.webContents.executeJavaScript(`document.documentElement.style.fontSize = '${percent}%'`);
+    };
+    await applyTextScale(await readSystemTextScale());
+    watchSystemTextScale(win, applyTextScale);
     if (namer) serveNameRequests(win, namer, naming.signal);
 
     while (!win.isDestroyed()) {
@@ -329,7 +369,7 @@ export async function runWithExportPrompt(
           ]);
         } catch {  }
         if (win.isDestroyed()) return null;
-        win.setBounds(promptBounds(height.total));
+        win.setBounds(promptBounds(height.total, win.getBounds().width));
         win.show();
         win.focus();
         trackPanelHeight(win, height.panel);
@@ -342,6 +382,7 @@ export async function runWithExportPrompt(
         zip: attempt.zip,
         width: attempt.width,
         margin: attempt.margin,
+        cardOpacity: attempt.cardOpacity,
         palette: attempt.palette ?? config.captureSettings.palette,
         backgroundStyle: attempt.backgroundStyle ?? (config.captureSettings.backgroundStyle as CaptureBackgroundStyle),
         expire: clampShareExpire(config.share.expire, effectiveExpires(config.share)),

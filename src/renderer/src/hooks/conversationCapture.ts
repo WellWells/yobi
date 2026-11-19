@@ -11,7 +11,7 @@ import type {
   CaptureTurn,
   MarkdownCaptureRequest,
 } from '../../../shared/types';
-import { DEFAULT_CAPTURE_WIDTH, clampCaptureMargin } from '../../../shared/types';
+import { DEFAULT_CAPTURE_WIDTH, clampCaptureMargin, clampCardOpacity } from '../../../shared/types';
 import type { MarkdownBlocks } from '../utils/parseMarkdownBlocks';
 import { totalTokenLabel, turnTokenLabel } from '../utils/captureTokens';
 import { captureBackgroundCss, paletteCardTheme } from './captureTheme';
@@ -39,6 +39,7 @@ export function captureLookFrom(capture: CaptureSettings): CaptureLook {
     cardLayout: capture.cardLayout,
     width: capture.width || DEFAULT_CAPTURE_WIDTH,
     margin: clampCaptureMargin(capture.margin),
+    cardOpacity: clampCardOpacity(capture.cardOpacity),
     pixelRatio: capture.pixelRatio === 2 ? 2 : 1,
     zip: capture.zip,
     showProvider: capture.showProvider,

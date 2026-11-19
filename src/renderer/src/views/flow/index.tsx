@@ -10,7 +10,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { useI18nStore } from '../../store/i18nStore';
 import { useFlowStore } from '../../store/useFlowStore';
 import { useFlowOutlineStore } from '../../store/useFlowOutlineStore';
-import { flowApi, ipcEvents } from '../../api/electronApi';
+import { flowApi, flowFolderApi, ipcEvents } from '../../api/electronApi';
 import { CaptionStrip, ToolbarIconButton, ToolbarSearchButton } from '../../components/PanelToolbar';
 import { SidebarActionRow } from '../../components/SidebarActionRow';
 import { SidebarTop } from '../../components/SidebarTop';
@@ -25,6 +25,7 @@ import { useNarrowWindow } from '../../hooks/useNarrowWindow';
 import { AppButton } from '../../components/AppButton';
 import { WebDialog } from '../../components/WebDialog';
 import { ContextMenuPortal } from '../../components/ContextMenuPortal';
+import { DangerMenuItem } from '../../components/DangerMenuItem';
 import { ShortcutHint } from '../../components/ShortcutHint';
 import { SelectionActionBar } from '../../components/SelectionActionBar';
 import { useMultiSelect } from '../../hooks/useMultiSelect';
@@ -51,6 +52,9 @@ import type { ConversationFolder } from '../../../../shared/conversationFolders'
 import { MoveToFolderButton, MoveToFolderSub } from '../../components/sidebar/FolderMenus';
 import { useFlowFolderStore } from '../../store/flowFolderStore';
 import { FlowFolderMenu } from './FlowFolderMenu';
+import { FlowFolderRunDialog } from './FlowFolderRunDialog';
+import { folderKey } from '../../../../shared/conversationFolders';
+import type { FlowFolder } from '../../../../shared/flowFolders';
 import { FlowFolderSortModal } from './FlowFolderSortModal';
 import type { FlowFolderRowUi } from './FlowSidebarList';
 import { useFlowFolders } from './useFlowFolders';
@@ -67,7 +71,7 @@ export const FlowView: React.FC = () => {
   const {
     flows, selectedFlowId, runningFlowIds,
     selectFlow, createFlow, deleteFlow, deleteFlows, setFlowsEnabled, duplicateFlow,
-    saveFlow, updateFlow, reorderFlows, executeFlow, importFlows, buildFlow,
+    saveFlow, updateFlow, reorderFlows, executeFlow, abortFlow, importFlows, buildFlow,
     adoptFlow, replaceSavedFlow, dropRemovedFlow, appendExecutionLog, markFlowRunning, markFlowDone,
   } = useFlowStore(
     useShallow((s) => ({
@@ -84,6 +88,7 @@ export const FlowView: React.FC = () => {
       updateFlow: s.updateFlow,
       reorderFlows: s.reorderFlows,
       executeFlow: s.executeFlow,
+      abortFlow: s.abortFlow,
       importFlows: s.importFlows,
       buildFlow: s.buildFlow,
       adoptFlow: s.adoptFlow,
@@ -107,6 +112,9 @@ export const FlowView: React.FC = () => {
   const selection = useMultiSelect();
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [pendingImport, setPendingImport] = useState<FlowDefinition[] | null>(null);
+  // The category whose 「全部執行」 is being confirmed.
+  const [runFolder, setRunFolder] = useState<FlowFolder | null>(null);
+  const folderRuns = useFlowFolderStore((s) => s.runs);
 
   const requestImport = useCallback((incoming: FlowDefinition[]) => {
     if (incoming.length === 0) return;
@@ -260,6 +268,10 @@ export const FlowView: React.FC = () => {
     setContextMenu(null);
   }, [flows, saveFlow, executeFlow]);
 
+  const handleAskRunFolder = useCallback((name: string) => {
+    setRunFolder(folders.find((folder) => folder.name === name) ?? null);
+  }, [folders]);
+
   const handleExportFlow = useCallback(async (flowId: string) => {
     const flow = flows.find((item) => item.id === flowId);
     if (!flow) return;
@@ -355,11 +367,15 @@ export const FlowView: React.FC = () => {
           // Folded, the list stays mounted, hidden (its scroll, open folders and drag state kept),
           // and the rail after it takes its place.
           display={railed ? 'none' : undefined}
+          component="nav"
+          aria-label={t('a11y.c.flowSidebar')}
+          data-region="sidebar"
+          data-region-focus={'[role="tree"] [tabindex="0"], [role="tree"][tabindex="0"]'}
           gap={0}
           w={240}
           miw={200}
           h="100%"
-          bg="var(--mantine-color-default)"
+          bg="var(--panel-bg)"
           style={{ borderRight: '1px solid var(--mantine-color-default-border)', overflow: 'hidden' }}
         >
           <SidebarTop
@@ -458,7 +474,7 @@ export const FlowView: React.FC = () => {
         </Stack>
         </SidebarDrawer>
         {railed && (
-          <SidebarRail expandLabel={withCombo(t('sidebar.expand'))} onExpand={toggleSidebar} otherView="chat">
+          <SidebarRail expandLabel={withCombo(t('sidebar.expand'))} navLabel={t('a11y.c.flowSidebar')} onExpand={toggleSidebar} otherView="chat">
             <ToolbarIconButton icon={Plus} label={t('flow.newFlow')} onClick={() => setTemplatesOpen(true)} />
             <ToolbarSearchButton label={t('flow.search.tooltip')} onClick={openSearch} />
           </SidebarRail>
@@ -486,19 +502,24 @@ export const FlowView: React.FC = () => {
           <Menu.Item leftSection={<ArrowDown size={13} />} disabled={!contextFlow || !neighbourOf(contextFlow.id, 'down')} onClick={() => { void handleMoveFlow(contextMenu!.flowId, 'down'); }}>{t('flow.flow.moveDown')}</Menu.Item>
           <Menu.Divider />
           <Menu.Item leftSection={<ListChecks size={13} />} disabled={flows.length < 2} onClick={() => handleStartSelection(contextMenu!.flowId)}>{t('selection.selectMultiple')}</Menu.Item>
-          <Menu.Item leftSection={<Trash size={13} />} color="red" rightSection={<ShortcutHint combo={deleteCombo} />} onClick={() => { setPendingDeleteId(contextMenu!.flowId); setContextMenu(null); }}>{t('flow.deleteFlow')}</Menu.Item>
+          <DangerMenuItem leftSection={<Trash size={13} />} rightSection={<ShortcutHint combo={deleteCombo} />} onClick={() => { setPendingDeleteId(contextMenu!.flowId); setContextMenu(null); }}>{t('flow.deleteFlow')}</DangerMenuItem>
         </ContextMenuPortal>
 
         <FlowFolderMenu
           menu={folderState.folderMenu}
           anyOff={folderMenuFlows.some((flow) => !flow.enabled)}
           anyOn={folderMenuFlows.some((flow) => flow.enabled)}
+          run={folderState.folderMenu ? folderRuns[folderKey(folderState.folderMenu.name)] ?? null : null}
           onClose={folderState.closeFolderMenu}
+          onRunFolder={handleAskRunFolder}
+          onStopFolderRun={(name) => { void flowFolderApi.stopRun(name); }}
           onRename={folderState.startRename}
           onSetEnabled={(flowIds, enabled) => { void setFlowsEnabled(flowIds, enabled); }}
           onDelete={folderState.deleteFolder}
           t={t}
         />
+
+        <FlowFolderRunDialog folder={runFolder} t={t} onClose={() => setRunFolder(null)} />
 
         <FlowFolderSortModal
           open={sortOpen}
@@ -598,7 +619,7 @@ export const FlowView: React.FC = () => {
 
         <FlowSearchOverlay opened={searchOpen} onClose={() => setSearchOpen(false)} />
 
-        <Flex flex={1} direction="column" h="100%" style={{ overflow: 'hidden' }}>
+        <Flex component="main" data-region="main" flex={1} direction="column" h="100%" style={{ overflow: 'hidden' }}>
           {selectedFlow ? (
             <FlowEditor
               flow={selectedFlow}
@@ -623,6 +644,10 @@ export const FlowView: React.FC = () => {
                 locale={locale}
                 {...(unfiledCount > 0 ? { onSmartSort: () => setSortOpen(true) } : {})}
                 onOpenFlow={selectFlow}
+                onRunFlow={(flowId) => { void handleRunFlow(flowId); }}
+                onStopFlow={(flowId) => { void abortFlow(flowId); }}
+                onRunFolder={handleAskRunFolder}
+                onStopFolder={(name) => { void flowFolderApi.stopRun(name); }}
                 onBlank={() => { void createFlow(); }}
                 onGenerate={(seed) => { setGenerateSeed(seed); setGenerateOpen(true); }}
                 onImport={() => setImportOpen(true)}

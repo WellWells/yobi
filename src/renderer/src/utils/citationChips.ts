@@ -1,6 +1,7 @@
 import type { Element, ElementContent, Root, RootContent } from 'hast';
 import { isCitationLabel } from '../../../shared/citations';
 import { isHttpUrl } from '../../../shared/webUrl';
+import { isKbCitationUrl } from '../../../shared/knowledgeBase';
 
 /** The element a run of citations becomes; Markdown cannot write one itself, raw HTML never reaches the page. */
 export const CITATION_RUN_TAG = 'cite';
@@ -18,7 +19,7 @@ function textOf(node: ElementContent): string {
 function citationLink(node: RootContent | undefined): Element | null {
   if (node?.type !== 'element' || node.tagName !== 'a') return null;
   const href = node.properties.href;
-  return typeof href === 'string' && isHttpUrl(href) && isCitationLabel(textOf(node)) ? node : null;
+  return typeof href === 'string' && (isHttpUrl(href) || isKbCitationUrl(href)) && isCitationLabel(textOf(node)) ? node : null;
 }
 
 function isBlank(node: RootContent): boolean {

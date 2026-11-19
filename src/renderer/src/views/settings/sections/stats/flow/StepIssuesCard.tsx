@@ -1,10 +1,10 @@
 import React from 'react';
-import { Box, Group, Stack, Text, UnstyledButton } from '@mantine/core';
+import { Box, Group, Stack, Text, Tooltip, UnstyledButton } from '@mantine/core';
 import { CircleCheck, TriangleExclamationPoint } from 'lucide-react';
 import { SectionCard, SectionTitle } from '../../../components';
 import { EmptyState } from '../../../../../components/EmptyState';
 import { HelpDot } from '../parts';
-import { OUTCOME_COLORS } from '../colors';
+import { OUTCOME_TEXT } from '../colors';
 import { formatDuration } from './aggregate';
 import { useStepLabelParts } from './stepLabel';
 import type { FlowStatsAggregate, StepRow } from './aggregate';
@@ -16,20 +16,21 @@ const TOP_ISSUES = 6;
 interface Props {
   stats: FlowStatsAggregate;
   t: (key: string) => string;
-  onInspect: () => void;
+  /** Opens the log on the step's flow. */
+  onInspect: (row: StepRow) => void;
 }
 
 /**
  * One line per failing step: which flow it belongs to, how often it failed out of how often it
  * ran, the one-word diagnosis, and the last thing it actually said.
  */
-const IssueRow: React.FC<{ row: StepRow; t: (key: string) => string; onInspect: () => void }> = ({
+const IssueRow: React.FC<{ row: StepRow; t: (key: string) => string; onInspect: (row: StepRow) => void }> = ({
   row, t, onInspect,
 }) => {
   const { title, skill } = useStepLabelParts(row.label, row.type, t);
   return (
   <UnstyledButton
-    onClick={onInspect}
+    onClick={() => onInspect(row)}
     w="100%"
     px={6}
     py={10}
@@ -55,7 +56,7 @@ const IssueRow: React.FC<{ row: StepRow; t: (key: string) => string; onInspect: 
           <Text
             fz="var(--font-size-md)"
             fw={600}
-            c={row.hard > 0 ? OUTCOME_COLORS.failure : OUTCOME_COLORS.timeout}
+            c={row.hard > 0 ? OUTCOME_TEXT.failure : OUTCOME_TEXT.timeout}
             style={{ fontVariantNumeric: 'tabular-nums' }}
           >
             {`${row.failures.toLocaleString()} / ${row.runs.toLocaleString()}`}
@@ -71,9 +72,12 @@ const IssueRow: React.FC<{ row: StepRow; t: (key: string) => string; onInspect: 
           </Text>
         )}
         {row.latest?.message && (
-          <Text fz="var(--font-size-sm)" c="dimmed" truncate style={{ opacity: 0.75 }}>
-            {row.latest.message}
-          </Text>
+          // The whole sample on hover: the row cuts it, and the log may no longer hold that run.
+          <Tooltip label={row.latest.message} multiline maw={420} openDelay={400}>
+            <Text fz="var(--font-size-sm)" c="dimmed" truncate style={{ opacity: 0.75 }}>
+              {row.latest.message}
+            </Text>
+          </Tooltip>
         )}
       </Group>
     </Stack>
@@ -99,7 +103,7 @@ export const StepIssuesCard: React.FC<Props> = ({ stats, t, onInspect }) => {
           <Text
             fz="var(--font-size-xl)"
             fw={700}
-            c={stats.totalFailures > 0 ? OUTCOME_COLORS.timeout : 'var(--mantine-color-text)'}
+            c={stats.totalFailures > 0 ? OUTCOME_TEXT.timeout : 'var(--mantine-color-text)'}
             style={{ fontVariantNumeric: 'tabular-nums' }}
           >
             {stats.totalFailures.toLocaleString()}

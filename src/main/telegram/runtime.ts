@@ -76,6 +76,8 @@ export interface TelegramRuntimeDeps {
   canUseBuiltin?: (key: BotBuiltinCommandKey, userId: number, chatId: number) => Promise<boolean>;
   /** Whether an account's pasted link may run the downloader in a chat (its download grant). */
   canUseDownloader?: (userId: number, chatId: number) => Promise<boolean>;
+  /** Whether the analysis buttons work for an account in a chat (its analyze grant, or the group's). */
+  canAnalyze?: (userId: number, chatId: number) => Promise<boolean>;
   /** Which sites' pasted links run their built-in (Settings › Recognize links). */
   linkSites?: () => LinkSiteFilter;
   /** Whether someone may talk to the bot in a chat (paired, or a group's grant). */
@@ -113,7 +115,7 @@ export interface TelegramRuntimeDeps {
     chatId: number,
     userId: number,
     onProgressText: (text: string) => void,
-    chat?: Pick<TelegramBuiltinRequest, 'replyTo' | 'recentChat' | 'chatRecap' | 'modelNamed'>,
+    chat?: Pick<TelegramBuiltinRequest, 'replyTo' | 'recentChat' | 'chatRecap' | 'modelNamed' | 'attachments'>,
   ) => Promise<BotBuiltinRunResult>;
   onAgentAnswer: (
     answer: string,
@@ -306,6 +308,7 @@ export class TelegramRuntime {
       const allowGroupCommands = this.deps.getAllowGroupCommands();
       const s = this.deps.getStrings();
       if (!enabled || !token) {
+        if (enabled) this.deps.onLog('[telegram] not started: switched on but no bot token is saved (or it could not be read)');
         await this.stopInternal();
         this.errorMessage = enabled && !token
           ? t(s, 'telegram.runtime.tokenRequired')
@@ -423,6 +426,8 @@ export class TelegramRuntime {
         error: getErrorMessage(err),
       });
       this.updateStatus('error');
+      // The boot call does not wait for this: without the line the log never says the bot is down.
+      this.deps.onLog(`[telegram] could not start: ${getErrorMessage(err)}`);
       throw err;
     }
 
@@ -610,6 +615,7 @@ export class TelegramRuntime {
       isAdminUser: (userId) => this.deps.isAdminUser(userId),
       ...(this.deps.canUseBuiltin ? { canUseBuiltin: this.deps.canUseBuiltin } : {}),
       ...(this.deps.canUseDownloader ? { canUseDownloader: this.deps.canUseDownloader } : {}),
+      ...(this.deps.canAnalyze ? { canAnalyze: this.deps.canAnalyze } : {}),
       ...(this.deps.linkSites ? { linkSites: this.deps.linkSites } : {}),
       ...(this.deps.canChat ? { canChat: this.deps.canChat } : {}),
       ...(this.deps.isFlowAdmin ? { isFlowAdmin: this.deps.isFlowAdmin } : {}),
@@ -648,6 +654,7 @@ export class TelegramRuntime {
               ...(request.recentChat?.length ? { recentChat: request.recentChat } : {}),
               ...(request.chatRecap ? { chatRecap: request.chatRecap } : {}),
               ...(request.modelNamed ? { modelNamed: request.modelNamed } : {}),
+              ...(request.attachments?.length ? { attachments: request.attachments } : {}),
             },
           );
         } finally {

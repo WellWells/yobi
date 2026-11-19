@@ -155,6 +155,7 @@ export const ShareLinkDialog: React.FC<ShareLinkDialogProps> = ({ open, onClose,
               hint={t('share.settings.expireHint')}
               control={
                 <SelectDropdown
+                  aria-label={t('share.settings.expire')}
                   value={settings.expire}
                   options={expireOptions}
                   onChange={(value) => { void patchSettings({ expire: value as ShareExpire }); }}

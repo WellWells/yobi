@@ -1,8 +1,11 @@
 import { ipcMain } from 'electron';
-import { IPC } from '../../shared/types';
+import { IPC, isBotPlatform } from '../../shared/types';
 import type { YtdlToolsState } from '../../shared/ytdl';
-import { isDownloadsKeep, normalizeDownloadsKeep } from '../../shared/downloads';
-import type { DownloadsKeep } from '../../shared/downloads';
+import {
+  botDownloadCapKey, isBotDownloadCap, isDownloadsKeep, normalizeBotDownloadCap, normalizeBotDownloadCaps, normalizeDownloadsKeep,
+} from '../../shared/downloads';
+import { isBotUserPaired } from '../botPermissions/rights';
+import type { BotDownloadCap, DownloadsKeep } from '../../shared/downloads';
 import { errorText } from '../../shared/errorText';
 import { config, saveConfig } from '../config';
 import { sendLog, sendToRenderer } from '../helpers';
@@ -34,6 +37,30 @@ export function parseCustomPaths(raw: unknown): { ytdlp: string; ffmpegDir: stri
 export function setDownloadsKeep(raw: unknown): DownloadsKeep {
   if (isDownloadsKeep(raw)) saveConfig({ downloadsKeep: raw });
   return normalizeDownloadsKeep(config.downloadsKeep);
+}
+
+/** Stores a valid choice for the bot user's download cap; returns the one in force. */
+export function setBotDownloadCap(raw: unknown): BotDownloadCap {
+  if (isBotDownloadCap(raw)) saveConfig({ botDownloadCap: raw });
+  return normalizeBotDownloadCap(config.botDownloadCap);
+}
+
+/**
+ * One paired account's own cap, or (`cap: null`) back to the one for everyone. Anything else — an
+ * unknown platform, an account that is not paired, a value that is no choice — changes nothing.
+ * Returns the caps in force.
+ */
+export function setBotUserDownloadCap(raw: unknown): Record<string, BotDownloadCap> {
+  const request = (raw && typeof raw === 'object' ? raw : {}) as { platform?: unknown; userId?: unknown; cap?: unknown };
+  const platform = typeof request.platform === 'string' && isBotPlatform(request.platform) ? request.platform : null;
+  const userId = typeof request.userId === 'string' ? request.userId.trim() : '';
+  const current = normalizeBotDownloadCaps(config.botDownloadCaps);
+  if (!platform || !isBotUserPaired(platform, userId) || !(request.cap === null || isBotDownloadCap(request.cap))) return current;
+  const next = { ...current };
+  if (request.cap === null) delete next[botDownloadCapKey(platform, userId)];
+  else next[botDownloadCapKey(platform, userId)] = request.cap;
+  saveConfig({ botDownloadCaps: next });
+  return normalizeBotDownloadCaps(config.botDownloadCaps);
 }
 
 /**
@@ -95,4 +122,8 @@ export function registerYtdlHandlers(): void {
 
   ipcMain.handle(IPC.DOWNLOADS_KEEP_GET, () => normalizeDownloadsKeep(config.downloadsKeep));
   ipcMain.handle(IPC.DOWNLOADS_KEEP_SET, (_event, raw: unknown) => setDownloadsKeep(raw));
+  ipcMain.handle(IPC.BOT_DOWNLOAD_CAP_GET, () => normalizeBotDownloadCap(config.botDownloadCap));
+  ipcMain.handle(IPC.BOT_DOWNLOAD_CAP_SET, (_event, raw: unknown) => setBotDownloadCap(raw));
+  ipcMain.handle(IPC.BOT_USER_DOWNLOAD_CAPS_GET, () => normalizeBotDownloadCaps(config.botDownloadCaps));
+  ipcMain.handle(IPC.BOT_USER_DOWNLOAD_CAP_SET, (_event, raw: unknown) => setBotUserDownloadCap(raw));
 }

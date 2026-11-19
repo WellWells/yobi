@@ -14,6 +14,8 @@ import { readRedditThread } from './redditReader';
 import { readThreadsPostThread } from './threadsReader';
 import { readTikTokThread } from './tiktokReader';
 import { readWeiboThread } from './weiboReader';
+import { readAppStoreThread } from './appStoreReader';
+import { readPlayThread } from './playReader';
 import { isSignedInOnly, threadForOthers } from './readAccess';
 import type { ReadAccess, SignInUse } from './readAccess';
 import { readPostThread, type XRead } from './xReader';
@@ -113,6 +115,16 @@ export const SITE_READERS: Record<PostSiteId, SiteReader> = {
   weibo: {
     read: (link, { comments, signal }) => readWeiboThread(link.url, { comments, signal }),
     fileStem: (post) => `weibo-${post.id}`,
+  },
+  // One plain request: the card and the description are on the app's page; it has no replies.
+  appstore: {
+    read: (link, { signal }) => readAppStoreThread(link, signal),
+    fileStem: (post) => `appstore-${post.id}`,
+  },
+  // The same for a Google Play page, read in the user's language and the link's region.
+  googleplay: {
+    read: (link, { signal }) => readPlayThread(link, signal),
+    fileStem: (post) => `googleplay-${post.id}`,
   },
 };
 

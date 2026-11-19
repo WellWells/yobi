@@ -2,6 +2,7 @@ import { load } from 'cheerio';
 import { PROVIDER_URLS } from '../shared/types';
 import type { FeedCandidate } from '../shared/types';
 import { isHttpUrl } from '../shared/webUrl';
+import { pictureLinkOf } from '../shared/pictureLink';
 import { loadPageHtml, loadPageResult, fetchRawText, fetchRawResponse, ensureHttpScheme } from './pageLoader';
 import type { PageLoadResult } from './pageLoader';
 import { runParserBlocks, runCssSelector, parseRssFeed, extractFeedLinks } from './parserBlocks';
@@ -69,7 +70,7 @@ export async function discoverFeeds(siteUrl: string): Promise<FeedCandidate[]> {
     return probeCommonFeedPaths(trimmed);
   }
 
-  if (parseRssFeed(raw).length > 0) {
+  if (parseRssFeed(raw, trimmed).length > 0) {
     return [{ url: trimmed, title: feedTitle(raw) }];
   }
 
@@ -91,7 +92,7 @@ async function probeCommonFeedPaths(siteUrl: string): Promise<FeedCandidate[]> {
     COMMON_FEED_PATHS.map(async (p): Promise<FeedCandidate> => {
       const url = new URL(p, origin).href;
       const candidate = await fetchRawText(url);
-      if (parseRssFeed(candidate).length === 0) throw new Error('not a feed');
+      if (parseRssFeed(candidate, url).length === 0) throw new Error('not a feed');
       return { url, title: feedTitle(candidate) };
     }),
   );
@@ -292,6 +293,11 @@ interface UrlPromptContext {
   hotelReviews?: boolean;
   /** A run's Stop, for the page read: it can take half a minute. */
   signal?: AbortSignal;
+  /**
+   * The caller sends a picture with the prompt (its model takes one more): a link that is a
+   * picture comes back as `picture`, the caller's file to send and then delete.
+   */
+  pictures?: boolean;
 }
 
 export interface ResolvedPrompt {
@@ -301,6 +307,8 @@ export interface ResolvedPrompt {
   displayPrompt?: string;
   /** The Maps place the prompt carries reviews of. */
   map?: MapPlaceRef;
+  /** The picture a picture link was, saved in the bots' scratch folder for the prompt to carry. */
+  picture?: string;
 }
 
 /**
@@ -336,6 +344,12 @@ export async function resolveUrlPrompt(text: string, ctx: UrlPromptContext): Pro
     if (hotel) return hotel;
   }
 
+  const pictureLink = ctx.pictures ? pictureLinkOf(text) : null;
+  if (pictureLink) {
+    const picture = await resolvePictureLink(pictureLink, ctx);
+    if (picture) return picture;
+  }
+
   const logFetching = ctx.langData['urlParser.log.fetching'] ?? '🔗 URL detected — fetching page content...';
   ctx.onLog(logFetching);
 
@@ -358,6 +372,13 @@ export async function resolveUrlPrompt(text: string, ctx: UrlPromptContext): Pro
     ctx.onLog(logError);
     return { prompt: text };
   }
+}
+
+/** The picture a link names, for the model to see; null to read the link as a page. Loaded on the first picture link. */
+async function resolvePictureLink(link: string, ctx: UrlPromptContext): Promise<ResolvedPrompt | null> {
+  const { buildPictureLinkPrompt, fetchLinkedPicture } = await import('./pageRead/linkedPicture');
+  const picture = await fetchLinkedPicture(link, ctx.signal, ctx.onLog);
+  return picture ? { prompt: buildPictureLinkPrompt(link, config.locale), displayPrompt: link, picture } : null;
 }
 
 /** The text alone, or null to read the page the usual way. Loaded on the first pasted link. */

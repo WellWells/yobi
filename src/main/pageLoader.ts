@@ -14,6 +14,13 @@ import type { RawHop } from './net/publicWebScope';
 
 const LOAD_TIMEOUT_MS = 25_000;
 
+/**
+ * How long after `dom-ready` a page gets to fire `load` before it is read without it. Pages that
+ * load at all do so within a second or two of `dom-ready`; one whose ad frames hold `load` back
+ * has had its text since `dom-ready`.
+ */
+const LOAD_STALL_MS = 8_000;
+
 const RAW_FETCH_TIMEOUT_MS = 15_000;
 
 /**
@@ -45,6 +52,9 @@ const MIN_TEXT_CHARS = 400;
 const TEXT_LENGTH_SCRIPT = 'document.body ? document.body.innerText.length : 0';
 
 const JS_EXEC_TIMEOUT_MS = 10_000;
+
+/** Chromium's `ERR_ABORTED`: a load cut short by another, which is no failure of the page. */
+const ABORTED_LOAD = -3;
 export const URL_PARSER_PARTITION = 'persist:url-parser';
 
 export function ensureHttpScheme(url: string): string {
@@ -77,6 +87,8 @@ export interface RawFetchOptions {
    * answer stored without `Vary: Accept` comes back to the next plain read of the URL).
    */
   cache?: Electron.ClientRequestConstructorOptions['cache'];
+  /** Also hands back the body as it came (`bytes`), for a file that is no text (a shared shortcut). */
+  keepBytes?: boolean;
 }
 
 /** What a stopped read rejects with: the signal's own reason, or a plain error when it has none. */
@@ -94,6 +106,8 @@ export interface RawFetchResponse {
   finalUrl: string;
   /** Lower-case names, the first value of a repeated header. */
   headers?: Readonly<Record<string, string>>;
+  /** The body undecoded; only when `keepBytes` asked for it. */
+  bytes?: Buffer;
 }
 
 export async function fetchRawText(url: string, options?: RawFetchOptions): Promise<string> {
@@ -207,12 +221,14 @@ function requestRaw(
       response.on('end', () => {
         if (overflowed) return;
         settle();
+        const body = Buffer.concat(chunks);
         resolve({
           response: {
             status: response.statusCode,
-            text: decodeBody(Buffer.concat(chunks), headerValue(response.headers['content-type'])),
+            text: decodeBody(body, headerValue(response.headers['content-type'])),
             finalUrl,
             headers: firstHeaderValues(response.headers),
+            ...(options?.keepBytes ? { bytes: body } : {}),
           },
         });
       });
@@ -332,10 +348,15 @@ function openPageWindow(
     let pollTimer: ReturnType<typeof setTimeout> | null = null;
 
     // Every way the load settles goes through here: the settle ceiling and the text poll both stop.
+    let stallTimer: ReturnType<typeof setTimeout> | null = null;
+    let stoppedLoading = false;
+
     const stopSettling = (): void => {
       if (settleTimer) clearTimeout(settleTimer);
       if (pollTimer) clearTimeout(pollTimer);
+      if (stallTimer) clearTimeout(stallTimer);
       pollTimer = null;
+      stallTimer = null;
     };
 
     const win = new BrowserWindow({
@@ -427,6 +448,18 @@ function openPageWindow(
       win.webContents.on('will-navigate', guardNavigation);
     }
 
+    // Electron holds `executeJavaScript` until the main frame stops loading, so a page whose
+    // `load` never comes cannot be read while it loads: the read waits in a queue until its own
+    // time limit. Stopping the load is what lets it through.
+    const stopLoading = (): void => {
+      stoppedLoading = true;
+      try {
+        win.webContents.stop();
+      } catch {
+        // The window is going away; the read that follows reports it.
+      }
+    };
+
     // On timeout, salvage the DOM if it is ready: on ad-heavy pages third-party frames can keep
     // `load` from ever firing.
     const timeout = setTimeout(() => {
@@ -435,6 +468,7 @@ function openPageWindow(
       stopSettling();
       if (domReady) {
         appendLogLine(`[${fileStamp(new Date())}] ⚠️ [Page] load never fired within ${LOAD_TIMEOUT_MS / 1_000}s, serializing the DOM as it stands: ${url}`);
+        stopLoading();
         void finish();
         return;
       }
@@ -442,8 +476,20 @@ function openPageWindow(
       reject(new Error(`Page load timed out after ${LOAD_TIMEOUT_MS / 1_000}s`));
     }, LOAD_TIMEOUT_MS);
 
+    // A document whose `load` has not come LOAD_STALL_MS after `dom-ready` is settled like a
+    // loaded one, with its load stopped. Each new document starts the wait over.
     win.webContents.on('dom-ready', () => {
       domReady = true;
+      if (settled || settleTimer) return;
+      if (stallTimer) clearTimeout(stallTimer);
+      stallTimer = setTimeout(() => {
+        stallTimer = null;
+        if (settled || settleTimer) return;
+        appendLogLine(`[${fileStamp(new Date())}] ⚠️ [Page] load not fired ${LOAD_STALL_MS / 1_000}s after the DOM was ready, reading it as it stands: ${url}`);
+        stopLoading();
+        settleTimer = setTimeout(settleNow, JS_SETTLE_MS);
+        pollText();
+      }, LOAD_STALL_MS);
     });
 
     const settleNow = (): void => {
@@ -481,18 +527,36 @@ function openPageWindow(
       }, SETTLE_POLL_MS);
     };
 
-    // A later load in the same window (the page moved itself) keeps the first ceiling, as the
-    // earliest timer always won.
     win.webContents.on('did-finish-load', () => {
       if (settled || settleTimer) return;
+      if (stallTimer) clearTimeout(stallTimer);
+      stallTimer = null;
       settleTimer = setTimeout(settleNow, JS_SETTLE_MS);
       pollText();
+    });
+
+    // A page that moves itself to another document (a locale redirect, a reload of its own) starts
+    // the settling over: the first document's ceiling read the next one before it had drawn
+    // anything (Disney+'s terms: 0 characters, 65,000 a second later), and the load it cut short
+    // is no failure (Disney+'s help articles: ERR_ABORTED). LOAD_TIMEOUT_MS still bounds a page that
+    // never stops moving.
+    let navigations = 0;
+    let movedItself = false;
+    win.webContents.on('did-start-navigation', (details) => {
+      if (settled || !details.isMainFrame || details.isSameDocument) return;
+      navigations += 1;
+      if (navigations === 1) return;
+      movedItself = true;
+      stopSettling();
+      settleTimer = null;
+      lastLength = -1;
+      sameReads = 0;
     });
 
     win.webContents.on('did-fail-load', (_event, errorCode, errorDescription, _validatedURL, isMainFrame) => {
       if (settled) return;
       if (!isMainFrame) return;
-      if (errorCode === -3) return;
+      if (errorCode === ABORTED_LOAD) return;
       settled = true;
       clearTimeout(timeout);
       stopSettling();
@@ -502,6 +566,7 @@ function openPageWindow(
 
     loadURLFollowingIdentity(win.webContents, url).catch((err) => {
       if (settled) return;
+      if ((movedItself || stoppedLoading) && (err as { errno?: unknown }).errno === ABORTED_LOAD) return;
       settled = true;
       clearTimeout(timeout);
       stopSettling();

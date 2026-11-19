@@ -10,6 +10,7 @@ import { exportConversationMarkdown } from '../../utils/conversationMarkdownExpo
 import { hostPlatform } from '../../utils/hostPlatform';
 import { isMac } from '../../utils/keyLabels';
 import { ContextMenuPortal } from '../ContextMenuPortal';
+import { DangerMenuItem } from '../DangerMenuItem';
 import { ShortcutHint } from '../ShortcutHint';
 import { copyFilesWithNotice, copyFullTextWithNotice, copyPathWithNotice } from './fileMenuActions';
 import { MoveToFolderSub } from './FolderMenus';
@@ -161,14 +162,13 @@ export const FileContextMenu: React.FC<FileContextMenuProps> = ({
       >
         {t('selection.selectMultiple')}
       </MMenu.Item>
-      <MMenu.Item
+      <DangerMenuItem
         leftSection={<Trash size={13} />}
-        color="red"
         rightSection={<ShortcutHint combo={deleteCombo} />}
         onClick={() => onDelete(file)}
       >
         {t('common.delete')}
-      </MMenu.Item>
+      </DangerMenuItem>
     </ContextMenuPortal>
   );
 };

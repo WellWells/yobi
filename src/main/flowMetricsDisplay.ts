@@ -4,13 +4,13 @@ import { localizeUserFacingError } from './i18n';
 type Strings = Record<string, string>;
 
 /*
- * A sample nobody has a translation for is blanked rather than shown raw: the row already names the
- * reason in the user's language ("Network"), and an English `fetch failed: ETIMEDOUT` beside it says
- * nothing more to the person reading it. The raw text stays in the store and in the log.
+ * A sample nobody has a translation for is shown as stored (already masked and cut). Blanked,
+ * it would leave only the one-word reason ("Sign-in"), and an RSS `HTTP 403` could not be told
+ * from a LINE `V3_TOKEN_CLIENT_LOGGED_OUT` without the log, which by then may no longer hold
+ * that run: every failure has to say what it was so it can be found and fixed.
  */
 function shownMessage(raw: string, strings: Strings): string {
-  const localized = localizeUserFacingError(raw, strings);
-  return localized === raw ? '' : localized;
+  return localizeUserFacingError(raw, strings);
 }
 
 function localizeFlows(flows: Record<string, FlowRunMetrics>, strings: Strings): Record<string, FlowRunMetrics> {

@@ -1,12 +1,11 @@
 import React from 'react';
 import { Box, Group, Stack, Text, Button as MButton } from '@mantine/core';
+import { SearchSection } from '../FreezeWhileHidden';
 import { KeyRound, MessageSquare, Plug, RefreshCw, Users, UsersRound } from 'lucide-react';
 import { AppPasswordInput } from '../../../components/AppPasswordInput';
 import { AppButton } from '../../../components/AppButton';
 import { SectionCard, SettingRow, SettingField, SettingDivider, ToggleSwitch, SectionTitle } from '../components';
 import { BotDefaultModelSetting } from './BotDefaultModelSetting';
-import { BotAskTtlSetting } from './BotAskTtlSetting';
-import type { BotCommandsControls } from './BotAskTtlSetting';
 import { fillTemplate } from '../../../../../shared/fillTemplate';
 import { BOT_PLATFORM_NAMES, SOCKET_BOT_SECRET_FIELDS, hasSocketBotSecrets } from '../../../../../shared/types';
 import type { SocketBotPlatform } from '../../../../../shared/types';
@@ -14,7 +13,7 @@ import { TAG_SETS } from '../hooks/useSettingsNav';
 import { SecretHealthAlert } from '../../../components/SecretHealthAlert';
 import { LinePairedUsers } from './LinePairedUsers';
 import { BotDefaultGrants } from './BotUserPermissions';
-import { BotAudienceSection } from './BotAudienceSection';
+import { BotGroupList, BotUserList, useBotAudience } from './BotAudienceSection';
 import { SocketBotPairingPanel } from './SocketBotPairingPanel';
 import { SocketBotSetupGuide, hasSocketBotSetupGuide } from './SocketBotSetupGuide';
 import { ExternalLink } from './lineLinks';
@@ -23,9 +22,9 @@ import type { BotAccessControls } from '../hooks/useBotAccessControls';
 
 function runtimeColor(status?: string): string {
   switch (status) {
-    case 'running': return 'var(--mantine-color-success)';
-    case 'error': return 'var(--mantine-color-error)';
-    case 'starting': return 'var(--mantine-color-warning)';
+    case 'running': return 'var(--success-text)';
+    case 'error': return 'var(--error-text)';
+    case 'starting': return 'var(--warning-text)';
     default: return 'var(--mantine-color-dimmed)';
   }
 }
@@ -68,8 +67,6 @@ interface Props {
   bot: SocketBotSettingsControls;
   /** Each paired account's grants and owner mark, edited under its row. */
   access: BotAccessControls;
-  /** The shared commands config; its answer window is shown in this card's reply section. */
-  botCommands?: BotCommandsControls;
   t: (key: string) => string;
   showSection: (tags: readonly string[], category: 'bots') => boolean;
   isSearching: boolean;
@@ -81,8 +78,9 @@ interface Props {
  * has none — pair with a code (LINE PC: none, see `PLATFORM_COPY`), then the same grants, groups and
  * reply settings as the other bots. Only the token fields, the copy and the setup guide differ.
  */
-export const SocketBotSection: React.FC<Props> = ({ bot, access, botCommands, t, showSection, isSearching, sectionGap }) => {
+export const SocketBotSection: React.FC<Props> = ({ bot, access, t, showSection, isSearching, sectionGap }) => {
   const { platform, settings } = bot;
+  const audience = useBotAudience(platform, settings, t);
   const name = BOT_PLATFORM_NAMES[platform];
   const runtime = settings?.runtime;
   const account = runtime?.account;
@@ -92,7 +90,7 @@ export const SocketBotSection: React.FC<Props> = ({ bot, access, botCommands, t,
   const copy = PLATFORM_COPY[platform];
 
   return (
-    <Box display={showSection(TAG_SETS[platform], 'bots') ? 'block' : 'none'}>
+    <SearchSection shown={showSection(TAG_SETS[platform], 'bots')}>
       <SectionCard style={{ marginBottom: sectionGap }}>
         <Group justify="space-between" align="center">
           <Group gap={8} align="center">
@@ -126,7 +124,7 @@ export const SocketBotSection: React.FC<Props> = ({ bot, access, botCommands, t,
         <SettingRow
           label={fillTemplate(t('settings.socketBot.enabled'), { platform: name })}
           hint={expanded ? undefined : t('settings.socketBot.enabled.offHint')}
-          control={<ToggleSwitch checked={settings?.enabled ?? false} onChange={() => { void bot.toggleEnabled(); }} />}
+          control={<ToggleSwitch aria-label={fillTemplate(t('settings.socketBot.enabled'), { platform: name })} checked={settings?.enabled ?? false} onChange={() => { void bot.toggleEnabled(); }} />}
         />
 
         {expanded && (
@@ -176,7 +174,7 @@ export const SocketBotSection: React.FC<Props> = ({ bot, access, botCommands, t,
                   bg="var(--mantine-color-bg-tertiary)"
                   style={{ border: '1px solid var(--mantine-color-default-border)', borderRadius: 'var(--radius-sm)' }}
                 >
-                  <Text fz="var(--font-size-sm)" c="var(--mantine-color-error)">{runtime.errorMessage}</Text>
+                  <Text fz="var(--font-size-sm)" c="var(--error-text)">{runtime.errorMessage}</Text>
                 </Box>
               )}
             </Stack>
@@ -208,8 +206,6 @@ export const SocketBotSection: React.FC<Props> = ({ bot, access, botCommands, t,
                 />
               )}
 
-              <BotDefaultGrants access={access} t={t} {...(copy.defaultsHint ? { hint: t(copy.defaultsHint) } : {})} />
-
               <SettingDivider my={4} />
 
               <Text fz="var(--font-size-sm)" fw={600} c="var(--mantine-color-default-color)">{t('settings.socketBot.paired.title')}</Text>
@@ -227,16 +223,22 @@ export const SocketBotSection: React.FC<Props> = ({ bot, access, botCommands, t,
                   removeTitle: t('settings.socketBot.paired.removeTitle'),
                 }}
               />
+
+              <BotUserList audience={audience} t={t} />
+
+              <SettingDivider my={4} />
+
+              <BotDefaultGrants access={access} t={t} {...(copy.defaultsHint ? { hint: t(copy.defaultsHint) } : {})} />
             </Stack>
 
             <SettingDivider my={16} />
 
             <SectionTitle icon={<UsersRound size={15} />} label={t('settings.bot.group.title')} />
-            <BotAudienceSection platform={platform} connectors={access.connectors} refreshKey={settings} t={t} />
+            <BotGroupList audience={audience} connectors={access.connectors} t={t} />
 
             <SettingDivider my={16} />
 
-            <SectionTitle icon={<MessageSquare size={15} />} label={t('settings.socketBot.section.reply')} />
+            <SectionTitle icon={<MessageSquare size={15} />} label={t('settings.bot.section.answer')} />
             <Stack gap={12}>
               {settings && (
                 <BotDefaultModelSetting
@@ -247,11 +249,10 @@ export const SocketBotSection: React.FC<Props> = ({ bot, access, botCommands, t,
                   t={t}
                 />
               )}
-              {botCommands && <BotAskTtlSetting botCommands={botCommands} t={t} />}
             </Stack>
           </>
         )}
       </SectionCard>
-    </Box>
+    </SearchSection>
   );
 };

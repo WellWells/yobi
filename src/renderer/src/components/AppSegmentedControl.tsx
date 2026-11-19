@@ -19,6 +19,9 @@ interface AppSegmentedControlProps {
   'aria-labelledby'?: string;
 }
 
+/** The chosen segment filled in brand, as Mantine draws `color="brand"` (no shadow, a filled button's label). */
+const BRAND_SEGMENT_VARS = { '--sc-color': 'var(--mantine-primary-color-filled)', '--sc-shadow': 'none' } as const;
+
 export const AppSegmentedControl: React.FC<AppSegmentedControlProps> = ({
   value,
   options,
@@ -38,20 +41,36 @@ export const AppSegmentedControl: React.FC<AppSegmentedControlProps> = ({
     disabled={disabled}
     role={labelledBy ? 'radiogroup' : undefined}
     aria-labelledby={labelledBy}
-    color={quiet ? undefined : 'brand'}
-    autoContrast={!quiet}
+    // No `color`: Mantine would pick each segment's label (black or white) in JS from the brand
+    // colour, and that pick follows the theme, which never re-renders this (theme/liveTheme.ts).
+    // The brand fill and its label come in as variables instead, the same ones a filled button uses.
+    vars={() => ({
+      root: quiet ? { '--sc-color': 'var(--mantine-color-accent-dim)' } : BRAND_SEGMENT_VARS,
+    })}
     styles={{
       root: {
+        // Beside other items in a row, the words around it wrap first; the control gives way only
+        // once it is wider than the whole row (max-width), never to make room for a neighbour.
+        maxWidth: '100%',
+        ...(fullWidth ? {} : { flexShrink: 0 }),
         background: 'var(--mantine-color-bg-tertiary)',
         border: '1px solid var(--mantine-color-default-border)',
-        ...(quiet ? { '--sc-color': 'var(--mantine-color-accent-dim)' } : {}),
+        ...(quiet ? {} : { '--sc-label-color': 'var(--mantine-primary-color-contrast)' }),
       } as React.CSSProperties,
       indicator: {
         borderRadius: 'var(--mantine-radius-sm)',
         boxShadow: quiet ? 'none' : '0 1px 3px rgba(0, 0, 0, 0.15)',
       },
+      // Each segment starts from its own label's width (Mantine's `flex: 1` is a 0 basis, which
+      // splits the width evenly and squeezed the longer label). It shrinks only when the container
+      // is narrower than every label together, and then the label ends in an ellipsis: a segment
+      // label is one line, never broken across two.
+      control: { flex: fullWidth ? '1 1 auto' : '0 1 auto', minWidth: 0 },
       label: {
         fontSize: 'var(--font-size-sm)',
+        whiteSpace: 'nowrap',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
         transition: 'color 150ms ease',
       },
     }}

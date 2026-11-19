@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ActionIcon, Box, Button, Divider, Group, NavLink, Popover, Stack, Text, Tooltip } from '@mantine/core';
+import { ActionIcon, Box, Button, Divider, Group, NavLink, Popover, Stack, Text } from '@mantine/core';
 import { Plus, Search } from 'lucide-react';
 import { ShortcutHint } from '../../components/ShortcutHint';
+import { TooltipTarget } from '../../components/TooltipTarget';
 import { AppTextInput } from '../../components/AppTextInput';
 import { GroupHeader } from '../../components/GroupHeader';
 import { isComposingKey } from '../../utils/imeKeys';
@@ -73,11 +74,11 @@ export const AddStepMenu: React.FC<AddStepMenuProps> = ({ position = 'bottom', t
     <Popover opened={opened} onChange={setOpened} position={position} width={360} withArrow shadow="md" trapFocus>
       <Popover.Target>
         {iconLabel ? (
-          <Tooltip label={iconLabel} position="top" disabled={opened}>
+          <TooltipTarget label={iconLabel} position="top" disabled={opened}>
             <ActionIcon variant="subtle" size="sm" aria-label={iconLabel} onClick={() => setOpened((o) => !o)}>
               <Plus size={14} />
             </ActionIcon>
-          </Tooltip>
+          </TooltipTarget>
         ) : (
         <Button
           variant={position === 'top' ? 'light' : 'default'}
@@ -96,6 +97,7 @@ export const AddStepMenu: React.FC<AddStepMenuProps> = ({ position = 'bottom', t
           <Box p={6}>
             <AppTextInput
               autoFocus
+              aria-label={t('flow.skillSearch.placeholder')}
               value={query}
               onChange={(e) => {
                 setQuery(e.currentTarget.value);

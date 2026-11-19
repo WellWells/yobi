@@ -11,6 +11,14 @@
   right: 0;
 }
 
+/* Over the Settings dialog's backdrop the row under them is dimmed: the subtle buttons' label and
+   icons and the window buttons' glyphs take the colour the theme made readable there
+   (cssVariablesResolver --caption-on-backdrop). */
+.cluster[data-over-backdrop] {
+  --mantine-color-brand-light-color: var(--caption-on-backdrop);
+  --mantine-color-dimmed: var(--caption-on-backdrop);
+}
+
 /* Where macOS puts them: 16px in, on the rows' centre line. */
 .trafficLights {
   left: 0;
@@ -79,11 +87,37 @@
   color: #fff;
 }
 
+/* The queue pill: the status colour as its dot, tint and edge; its words in that colour lifted to
+   4.5:1 on the tint (cssVariablesResolver --accent-text / --warning-text, tint STATUS_TINT_ALPHA).
+   The raw colours were 1.85:1 (warning) and 2.97:1 (accent) on Rosé Pine. */
 .statusBadge {
+  --status-tone: var(--mantine-color-accent);
   border-radius: 999px;
   font-size: var(--font-size-sm);
   font-weight: 600;
   flex-shrink: 0;
+  cursor: pointer;
+  color: var(--mantine-color-accent-text);
+  background: color-mix(in srgb, var(--status-tone) 15%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-tone) 34%, transparent);
+}
+
+.statusBadge[data-tone='processing'] {
+  --status-tone: var(--mantine-color-warning);
+  color: var(--warning-text);
+}
+
+/* Over the backdrop the words take the caption colour, on the dimmed row itself: white on a
+   warning tint over Rosé Pine's dimmed page stops at 4.48:1. The dot and edge keep the status. */
+.cluster[data-over-backdrop] .statusBadge {
+  color: var(--caption-on-backdrop);
+  background: transparent;
+}
+
+.statusDot {
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--status-tone);
 }
 
 /* Its top edge sits over the views' top rows, which are drag regions. */
@@ -164,13 +198,13 @@
 
 .queueItemStatusBadge.running {
   background: color-mix(in srgb, var(--mantine-color-warning) 15%, transparent);
-  color: var(--mantine-color-warning);
+  color: var(--warning-text);
   border: 1px solid color-mix(in srgb, var(--mantine-color-warning) 25%, transparent);
 }
 
 .queueItemStatusBadge.queued {
   background: color-mix(in srgb, var(--mantine-color-accent) 15%, transparent);
-  color: var(--mantine-color-accent);
+  color: var(--mantine-color-accent-text);
   border: 1px solid color-mix(in srgb, var(--mantine-color-accent) 25%, transparent);
 }
 
@@ -186,7 +220,7 @@
 .queueItemProgress {
   font-size: var(--font-size-xs);
   font-weight: 500;
-  color: var(--mantine-color-warning);
+  color: var(--warning-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

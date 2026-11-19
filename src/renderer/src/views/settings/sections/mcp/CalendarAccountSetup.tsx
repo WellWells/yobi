@@ -194,7 +194,7 @@ export const CalendarAccountSetup: React.FC<Props> = ({ t, mailboxesVersion }) =
                   <ActionIcon
                     variant="default"
                     size={26}
-                    c="red"
+                    c="var(--danger-text)"
                     aria-label={t('settings.calendars.delete')}
                     onClick={() => setConfirmDelete(calendar)}
                   >

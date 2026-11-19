@@ -23,7 +23,7 @@ import type {
   CardLayout,
   MarkdownCaptureRequest,
 } from '../../../shared/types';
-import { DEFAULT_CAPTURE_WIDTH, clampCaptureMargin } from '../../../shared/types';
+import { DEFAULT_CAPTURE_WIDTH, clampCaptureMargin, clampCardOpacity } from '../../../shared/types';
 
 export { CAPTURE_PALETTES, captureBackgroundCss, formatCardTime };
 export type { CaptureBackgroundStyle, CaptureDirection };
@@ -80,6 +80,7 @@ export function useCaptureExport(setExportToast: (toast: ExportToast) => void) {
   const captureRange = capture.range;
   const captureWidth = capture.width || DEFAULT_CAPTURE_WIDTH;
   const captureMargin = clampCaptureMargin(capture.margin);
+  const captureCardOpacity = clampCardOpacity(capture.cardOpacity);
   const captureHiDpi = capture.pixelRatio === 2;
   const captureZip = capture.zip;
   const captureShowProvider = capture.showProvider;
@@ -98,6 +99,7 @@ export function useCaptureExport(setExportToast: (toast: ExportToast) => void) {
   const setCaptureRange = useCallback((v: CaptureRange) => patchCapture({ range: v }), [patchCapture]);
   const setCaptureWidth = useCallback((v: number) => patchCapture({ width: v }), [patchCapture]);
   const setCaptureMargin = useCallback((v: number) => patchCapture({ margin: v }), [patchCapture]);
+  const setCaptureCardOpacity = useCallback((v: number) => patchCapture({ cardOpacity: v }), [patchCapture]);
   const setCaptureHiDpi = useCallback((v: boolean) => patchCapture({ pixelRatio: v ? 2 : 1 }), [patchCapture]);
   const setCaptureZip = useCallback((v: boolean) => patchCapture({ zip: v }), [patchCapture]);
   const setCaptureShowProvider = useCallback((v: boolean) => patchCapture({ showProvider: v }), [patchCapture]);
@@ -205,6 +207,7 @@ export function useCaptureExport(setExportToast: (toast: ExportToast) => void) {
     captureTurnCount: captureTurns.length,
     captureWidth, setCaptureWidth,
     captureMargin, setCaptureMargin,
+    captureCardOpacity, setCaptureCardOpacity,
     captureHiDpi, setCaptureHiDpi,
     captureZip, setCaptureZip,
     captureShowProvider, setCaptureShowProvider,

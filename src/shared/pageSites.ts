@@ -13,8 +13,12 @@ export interface PageSite {
   body?: readonly string[];
   /** What sits inside that container but is not the article. */
   drop?: string;
+  /** The block the outlet shows where the rest of a subscribers' story would be, when it marks none in JSON-LD. */
+  paywall?: string;
   /** Refuses everyone signed out: a refusal here is that, and a hidden window only waits for the same answer. */
   signedInOnly?: boolean;
+  /** Where on the host the outlet's articles are; its other pages (documentation, downloads) are read as if it had no row. */
+  paths?: RegExp;
 }
 
 export const PAGE_SITES: readonly PageSite[] = [
@@ -49,7 +53,7 @@ export const PAGE_SITES: readonly PageSite[] = [
   { hosts: ['inside.com.tw'], name: 'INSIDE' },
   { hosts: ['cw.com.tw'], name: '天下雜誌', body: ['#article-preview'] },
   { hosts: ['commonhealth.com.tw'], name: '康健雜誌', body: ['div.wrap-content'] },
-  { hosts: ['businessweekly.com.tw'], name: '商業周刊', body: ['div.article-body'] },
+  { hosts: ['businessweekly.com.tw'], name: '商業周刊', body: ['div.article-body'], paywall: '.paywall' },
   { hosts: ['businesstoday.com.tw'], name: '今周刊', body: ['div[id^="article__page__"]'] },
   { hosts: ['gvm.com.tw'], name: '遠見雜誌', body: ['div.article-content'], drop: '.article-head_marketing, .newsletter' },
   { hosts: ['managertoday.com.tw'], name: '經理人', body: ['main.htmlview'] },
@@ -73,6 +77,12 @@ export const PAGE_SITES: readonly PageSite[] = [
     drop: '.votecell, .js-post-menu, #post-form, .bottom-notice',
   },
   { hosts: ['zhihu.com'], name: '知乎', signedInOnly: true },
+  { hosts: ['ithome.com'], name: 'IT之家', body: ['#paragraph', 'div.news-content'] },
+  { hosts: ['solidot.org'], name: 'Solidot', body: ['div.p_mainnew'] },
+  { hosts: ['chongdiantou.com'], name: '充电头网', body: ['div.post-content'] },
+  { hosts: ['developer.apple.com'], name: 'Apple Developer', paths: /^\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?news\//, body: ['div.article-text'] },
+  // A project's story; its JSON-LD is one Product per reward, which is no one product.
+  { hosts: ['zeczec.com'], name: '嘖嘖', paths: /^\/projects\/[^/]+\/?$/, body: ['#project_content'] },
 ];
 
 const SITE_BY_HOST: ReadonlyMap<string, PageSite> = new Map(
@@ -94,7 +104,7 @@ export function findPageSite(url: string): PageSite | null {
   if (!host) return null;
   for (let at = 0; at !== -1; at = host.indexOf('.', at) + 1 || -1) {
     const site = SITE_BY_HOST.get(host.slice(at));
-    if (site) return site;
+    if (site) return !site.paths || site.paths.test(new URL(url).pathname) ? site : null;
   }
   return null;
 }

@@ -1,18 +1,49 @@
 /* The landing page's cards (your flows, featured templates): the gallery tile's look, laid out in
    a grid. These rules override UnstyledButton's reset, which only holds because main.tsx imports
-   Mantine's stylesheet before any app CSS. */
+   Mantine's stylesheet before any app CSS. A flow card is the frame around two buttons (open, ▶);
+   a template card is one button with both classes. */
 .card {
   display: flex;
   align-items: flex-start;
-  gap: 12px;
   width: 100%;
+  min-width: 0;
+  border-radius: 12px;
+  background: var(--mantine-color-body);
+  border: 1px solid var(--mantine-color-default-border);
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+/* The part that opens the flow: the whole card but the ▶ beside it. */
+.cardOpen {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  flex: 1;
   min-width: 0;
   padding: 12px 14px;
   border-radius: 12px;
   text-align: left;
-  background: var(--mantine-color-body);
-  border: 1px solid var(--mantine-color-default-border);
-  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+/* ▶ shows where the pointer or the keyboard is (always on a touch screen), and stays while it
+   runs: it is then the stop. */
+.cardRun {
+  flex-shrink: 0;
+  padding: 8px 8px 0 0;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.card:hover .cardRun,
+.card:focus-within .cardRun,
+.cardRun[data-running] {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .cardRun {
+    opacity: 1;
+  }
 }
 
 /* Lift, never darken (the gallery tile's hover). */
@@ -44,4 +75,19 @@
   border-radius: 8px;
   color: var(--text-muted);
   background: var(--mantine-color-bg-tertiary);
+}
+
+/* A category heading on the home page: the name opens and closes it, its ▶ runs it. */
+.groupToggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 2px 4px 2px 0;
+  border-radius: 6px;
+  color: var(--text-muted);
+}
+
+.groupToggle:hover {
+  color: var(--mantine-color-text);
 }

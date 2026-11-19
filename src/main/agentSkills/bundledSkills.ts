@@ -4,7 +4,7 @@ import { sendLog } from '../helpers';
 import { bundledSkillCatalog, offeredIn, skillHash } from './bundledSkillCatalog';
 import type { BundledSkill } from './bundledSkillCatalog';
 import { bundledLane, readBundledState, writeBundledState } from './bundledSkillState';
-import type { BundledState } from './bundledSkillState';
+import type { BundledRecord, BundledState } from './bundledSkillState';
 import { replaceBundledSkill, sweepBundledTemp } from './bundledSkillVersions';
 import { readSkillFolder } from './skillFiles';
 import type { BundledSkillView } from '../../shared/agentSkills';
@@ -33,10 +33,27 @@ export async function hiddenBundledSkills(): Promise<Set<string>> {
   return new Set((await bundledSkillCatalog()).filter((entry) => !offeredIn(entry, locale)).map((entry) => entry.name));
 }
 
+/** Read from shipped metadata, never from an editable installed copy. User choices take priority. */
+export async function defaultDisabledBundledSkills(): Promise<Set<string>> {
+  return new Set((await bundledSkillCatalog()).filter((entry) => !entry.defaultEnabled).map((entry) => entry.name));
+}
+
 /** The skills folder already swept this run: the first list or agent run after startup sweeps it. */
 let swept = '';
 
-/** New bundles install once; missing or edited copies remain visible for an explicit restore. */
+/**
+ * Whether the installed copy is still the shipped one it was installed from while the app now
+ * ships another: it follows the app. An edited, deleted or pre-existing copy, a revision the user
+ * went back to, and a copy newer than this app's are all left as they are.
+ */
+async function followsShipped(root: string, bundle: BundledSkill, record: BundledRecord): Promise<boolean> {
+  if (!record.hash || record.held || record.hash === bundle.hash) return false;
+  if (record.version !== bundle.version && !newerVersion(bundle.version, record.version)) return false;
+  const read = await readSkillFolder(path.join(root, bundle.name), bundle.name).catch(() => null);
+  return read !== null && await skillHash(read.scan) === record.hash;
+}
+
+/** New bundles install once and unedited copies follow the app; missing or edited ones wait for an explicit restore. */
 export function ensureBundledSkills(source?: string): Promise<void> {
   const root = skillsRoot();
   return bundledLane(async () => {
@@ -49,7 +66,18 @@ export function ensureBundledSkills(source?: string): Promise<void> {
     if (catalog.length === 0) return;
     const state = await readBundledState(root);
     for (const bundle of catalog) {
-      if (state[bundle.name]) continue;
+      const record = state[bundle.name];
+      if (record) {
+        try {
+          if (await followsShipped(root, bundle, record)) {
+            await replaceBundledSkill(root, bundle.name, bundle.read.scan, state, bundle.version, bundle.hash);
+            sendLog(`🧩 [Skills] built-in skill "${bundle.name}" updated to the shipped copy (${bundle.version})`);
+          }
+        } catch (error) {
+          sendLog(`⚠️ [Skills] built-in skill "${bundle.name}" not updated: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        continue;
+      }
       const existing = await fs.lstat(path.join(root, bundle.name)).then(() => true, (error: NodeJS.ErrnoException) => {
         if (error.code === 'ENOENT') return false;
         throw error;

@@ -98,6 +98,13 @@ export interface DirectDownloadRequest extends SelfDownloadRequest {
   lowAudio?: boolean;
 }
 
+/**
+ * How a video read may go: `signIn` as `ReadAccess`; `interactive` (the person started it at the
+ * computer) lets a site show its verification window at once instead of offering it in a
+ * notification (YouTube's Google check).
+ */
+export type VideoReadAccess = Pick<ReadAccess, 'signIn'> & Partial<Pick<ReadAccess, 'interactive'>>;
+
 /** The parts of a video site that do not depend on how it downloads. */
 export interface VideoSiteBase {
   /**
@@ -107,7 +114,7 @@ export interface VideoSiteBase {
    * (bilibili) reads without it, and offers nothing only it gives (a video's download never needs
    * it); `full`, `posts`, `others` or absent: used when signed in.
    */
-  info(ref: VideoRef, signal?: AbortSignal, access?: Pick<ReadAccess, 'signIn'>): Promise<VideoInfo>;
+  info(ref: VideoRef, signal?: AbortSignal, access?: VideoReadAccess): Promise<VideoInfo>;
   /**
    * The video's own words, or null when there are none. Present exactly when the site's row has
    * `summary` (the menu's "summary" button and the built-ins' summary branch). `access` as `info`'s.

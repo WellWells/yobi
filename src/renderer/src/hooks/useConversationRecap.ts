@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { currentRecap, type RecapView } from '../../../shared/recap';
 import type { ConversationDoc } from '../../../shared/conversationDoc';
-import { useAppStore } from '../store/appStore';
+import { drawnView, useAppStore } from '../store/appStore';
 import { useRecapStore } from '../store/recapStore';
 import { presentRecap, type RecapContext, type RecapPresentation } from '../utils/recapState';
 import { useWindowAway } from './useWindowAway';
@@ -21,7 +21,9 @@ export function useConversationRecap(args: {
   pendingCount: number;
 }): ConversationRecap {
   const { path, conversation, pendingCount } = args;
-  const currentView = useAppStore((s) => s.currentView);
+  // The view drawn, not `currentView`: Settings is a dialog over the chat, which stays drawn behind
+  // it. Read whole, opening and closing Settings redrew the chat view, sidebar and composer.
+  const currentView = useAppStore(drawnView);
   const enabled = useAppStore((s) => s.showRecap);
   const state = useRecapStore((s) => s.state);
   const dispatch = useRecapStore((s) => s.dispatch);

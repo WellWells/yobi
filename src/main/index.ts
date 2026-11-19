@@ -7,6 +7,8 @@
   };
 }
 
+ignoreBrokenStdio();
+
 process.on('unhandledRejection', (reason: unknown) => {
   if (
     reason instanceof Error &&
@@ -23,6 +25,7 @@ process.on('uncaughtException', (err: Error) => {
 });
 
 import { app, powerSaveBlocker, session } from 'electron';
+import { ignoreBrokenStdio } from './stdioGuard';
 import { unregisterAll } from './hotkey';
 import { config, initSensitiveConfig } from './config';
 import { QueueManager } from './queueManager';
@@ -50,6 +53,7 @@ import { startTrashSweep } from './conversationTrash';
 import { broadcastTrashChanged } from './ipc/conversationTrash';
 import { fileBotConversationsOnce } from './conversationFolderMigration';
 import { cleanupYtdlJobs, migrateLegacyToolFolders, startYtdlUpdateSchedule, stopYtdlUpdateSchedule } from './youtubeDownload';
+import { startManagedToolUpdates, stopManagedToolUpdates } from './managedTools';
 import { startPerplexityVisitorWipe } from './providers/perplexityVisitor';
 import { refreshGeminiSignIn, setGeminiCookieReader } from './providers/geminiSignInState';
 import { getAccountStatus } from './providers/authStatus';
@@ -67,7 +71,8 @@ import { applyPendingFactoryReset } from './factoryReset';
 import { setupPlatformIcons, loadInitialLanguages, setupWindows } from './bootstrap/appSetup';
 import { setupTrayAndCloseBehavior, buildTrayIpcCallbacks } from './bootstrap/traySetup';
 import { setupAppMenu } from './bootstrap/appMenuSetup';
-import { initFlowManager, broadcastMergedQueueState } from './bootstrap/flowSetup';
+import { initFlowManager, broadcastMergedQueueState, yobiControlHostFor } from './bootstrap/flowSetup';
+import { setYobiControlHost } from './yobiControl/yobiControlHost';
 import { createTelegramRuntime } from './bootstrap/telegramSetup';
 import { handleDiscardedTask } from './taskReporting';
 import { createLineRuntime } from './bootstrap/lineSetup';
@@ -213,6 +218,7 @@ app.whenReady().then(async () => {
   reportStoreRecoveries();
 
   flowManager = initFlowManager({ queue, telegramRuntime, lineRuntime, socketBots });
+  setYobiControlHost(yobiControlHostFor(flowManager, queue));
   initMcp();
 
   // focus() orders a hidden macOS window front, which would undo a tray start.
@@ -242,13 +248,16 @@ app.whenReady().then(async () => {
   bindQuickExportHotkey();
   void bindRegionHotkeyAtLaunch(loadFlowsFromDisk);
   void reportSecretHealth();
-  void telegramRuntime.syncWithConfig();
+  // A failed start is logged and shown by the runtime itself.
+  telegramRuntime.syncWithConfig().catch(() => undefined);
   void lineRuntime.syncWithConfig();
   for (const runtime of Object.values(socketBots)) void runtime.syncWithConfig();
   startModelCatalogRefresh();
   // The download tools' dated folders from before become the fixed ones a firewall rule can name.
   void migrateLegacyToolFolders().catch((err) => sendLog(`⚠️ Could not move the download tools into fixed folders: ${err instanceof Error ? err.message : String(err)}`));
   startYtdlUpdateSchedule();
+  // The other programs Yobi downloaded (OfficeCLI) are kept up to date the same way, daily.
+  startManagedToolUpdates();
   // Records of downloads already cleaned up, or scratch left by a run the app closed on.
   void cleanupYtdlJobs().catch(() => {});
   // Downloads/Yobi keeps each download as long as Settings › Downloader says (three days unless changed).
@@ -275,6 +284,7 @@ app.on('before-quit', (event) => {
   destroyTray();
   flowManager?.shutdown();
   stopYtdlUpdateSchedule();
+  stopManagedToolUpdates();
   stopOutputFileWatch?.();
   void telegramRuntime.shutdown();
   void lineRuntime.shutdown();

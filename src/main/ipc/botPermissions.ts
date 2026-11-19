@@ -86,7 +86,8 @@ export function registerBotPermissionsHandlers(ctx: IpcContext): void {
   ));
 
   ipcMain.handle(IPC.BOT_APPROVE_PAIRING_REQUEST, async (_event, request: unknown): Promise<BotApprovePairingResult> => {
-    const result = await approveBotPairingRequest(request);
+    // On this computer the owner may let in anyone the bot has seen, asked or not.
+    const result = await approveBotPairingRequest(request, { anyoneOnFile: true });
     if (!result.ok) {
       sendLog(`[bot] pairing request approval refused: ${result.reason}`);
       return result;

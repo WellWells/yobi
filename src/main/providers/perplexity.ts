@@ -4,13 +4,14 @@ import { ensureOnPage, landingMayStillRender, PAGE_REUSE } from './pageReuse';
 import { anchorCounts, executeAutomationWithTimeout, dispatchFocusEvents } from './automationExecutor';
 import { INJECTED_PPLX_READ_JS, PPLX_INPUT_SELECTORS, PPLX_RESPONSE_SELECTOR } from './perplexityReadScript';
 import { PPLX_SUBMIT_JS } from './perplexitySendScript';
-import { forgetPerplexityVisitor, isPerplexitySignInWall, PERPLEXITY_SIGN_IN_WALL_ERROR } from './perplexityVisitor';
+import { forgetPerplexityVisitor, isPerplexityPage, isPerplexitySignInWall, PERPLEXITY_SIGN_IN_WALL_ERROR } from './perplexityVisitor';
 import { isPerplexitySignedIn } from './perplexitySession';
 import { sendLog } from '../helpers';
 import { showInteractiveWorkerWindow } from '../windows';
 import { isSignInWindowOpen } from '../signInWindow';
 import { raiseVerificationChallenge, VERIFICATION_CHALLENGE_ERROR_NAME } from './verificationChallenge';
 import { PROVIDER_URLS } from '../../shared/types';
+import { syncPerplexityModel } from './perplexityModelSync';
 import { WORKER_USER_AGENTS } from '../userAgent';
 import { applyWorkerUserAgent } from '../clientHints';
 
@@ -39,9 +40,17 @@ export async function runPerplexityAutomation(
   const result = await askPerplexity(workerWin, prompt, timeoutMs, targetUrl, continuingThread);
   if (!isPerplexitySignInWall(result.response)) return result;
 
-  // Never handed over as the answer. A new conversation tries once more as another fresh visitor;
-  // a walled follow-up cannot change visitor without leaving its thread.
+  // Never handed over as the answer. A new conversation repeats the request where it was asked:
+  // a fresh visitor's first question can be refused while the same visitor's next one is answered.
+  // Only then does it try as another fresh visitor. A walled follow-up cannot change visitor
+  // without leaving its thread.
   if (freshVisitor && !(await isPerplexitySignedIn(wc.session))) {
+    const thread = wc.getURL();
+    if (isPerplexityPage(thread)) {
+      sendLog('🔐 Perplexity asked this visitor to sign in — repeating the request in the same thread');
+      const repeat = await askPerplexity(workerWin, prompt, timeoutMs, thread, true);
+      if (!isPerplexitySignInWall(repeat.response)) return repeat;
+    }
     sendLog('🔐 Perplexity asked this visitor to sign in — retrying once as another fresh visitor');
     await forgetPerplexityVisitor(wc.session, wc);
     const retry = await askPerplexity(workerWin, prompt, timeoutMs, targetUrl, false);
@@ -75,6 +84,7 @@ async function askPerplexity(
   }
 
   await dispatchFocusEvents(wc);
+  await syncPerplexityModel(wc);
 
   // Only a freshly loaded conversation can still be rendering earlier answers in; a kept page
   // settled on the previous turn and a new conversation's landing page has none.

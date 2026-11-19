@@ -2,12 +2,12 @@ import { app, BrowserWindow, nativeImage, nativeTheme, shell } from 'electron';
 import type { WebContents } from 'electron';
 import * as path from 'node:path';
 import { existsSync } from 'node:fs';
-import { sendLog, sendToRenderer, sendWebNotification, getAssetPath, setWorkerAttention } from './helpers';
+import { sendLog, sendToRenderer, sendActionNeededNotification, getAssetPath, setWorkerAttention } from './helpers';
 import { toggleTempChatMode } from './tempChat';
 import { getLangCache, t } from './i18n';
 import { WORKER_USER_AGENTS } from './userAgent';
 import { applyWorkerUserAgent } from './clientHints';
-import { SILENT_WEB_PREFERENCES, muteWindow, parkWindowOffscreen, unparkWindow } from './silentWindow';
+import { SILENT_WEB_PREFERENCES, muteWindow, hideBeforeMapping, parkWindowOffscreen, unparkWindow } from './silentWindow';
 import { IPC, PROVIDER_URLS, isByokTargetUrl, providerFromUrl } from '../shared/types';
 import { themeBackground } from '../shared/themes';
 import { config } from './config';
@@ -17,6 +17,7 @@ import { restoredWindowOptions, shouldStartMaximized, trackWindowBounds } from '
 import { llmLane } from './flow/lanes';
 import { forwardTrackpadGestures } from './trackpadGesture';
 import { pinPageZoom } from './pageZoom';
+import { watchSystemTextScale } from './systemTextScale';
 import { deferSignInPrompt } from './deferredSignIn';
 
 const WORKER_PARTITION = 'persist:gemini';
@@ -117,6 +118,7 @@ export function createMainWindow(options?: MainWindowOptions): void {
   // A zoom key the page leaves alone falls through to the menu (Electron's hidden default one on
   // Windows and Linux) and would shrink the whole app for good. The reading size is the only zoom.
   pinPageZoom(mainWin.webContents);
+  watchSystemTextScale(mainWin);
 
   if (isDev) {
     mainWin.loadURL(process.env['ELECTRON_RENDERER_URL'] as string);
@@ -254,9 +256,10 @@ export function createWorkerWindow(initialUrl: string, mode: WorkerWindowMode = 
     }));
   }
 
-  // Transparent BEFORE it is mapped so it never flashes, parked AFTER because the position
-  // only sticks once macOS has a frame to clamp — see parkWindowOffscreen.
-  workerWin.setOpacity(0);
+  // Hidden BEFORE it is mapped so it never flashes, parked AFTER because the position only sticks
+  // once macOS has a frame to clamp. Never through opacity on Windows: it would cost the revealed
+  // window its title bar — see hideBeforeMapping.
+  hideBeforeMapping(workerWin);
   workerWin.showInactive();
   parkWindowOffscreen(workerWin);
 
@@ -401,7 +404,7 @@ export async function showLoginWindowIfNeeded(
   setWorkerAttention('login');
   sendLog(`🔐 ${providerLabel} requires login — complete sign-in in the opened window`);
   const strings = getLangCache();
-  sendWebNotification(
+  sendActionNeededNotification(
     t(strings, 'login.notify.title', { provider: providerLabel }),
     t(strings, 'login.notify.body'),
     'warning',

@@ -1,13 +1,21 @@
 import { ipcMain, shell } from 'electron';
 import * as fs from 'node:fs/promises';
 import { IPC } from '../../shared/types';
-import { config, saveConfig } from '../config';
-import { isValidLocaleTag, loadLanguageData, setLangCache } from '../i18n';
+import { config } from '../config';
+import { isValidLocaleTag, loadLanguageData } from '../i18n';
 import { getLanguageDir, getUserLanguageDir } from '../files';
-import { broadcastLinkRecognition } from '../linkRecognition';
-import { rebroadcastFlowMetrics } from '../flowMetrics';
-import { announceSkills } from './skills';
+import { applyLocale, setSettingsContext } from './settingsApply';
 import type { IpcContext } from './context';
+
+/** Every language pack: the built-in ones and the user's own, sorted. */
+export async function listLanguagePacks(): Promise<string[]> {
+  const [builtIn, user] = await Promise.all([
+    listPacksIn(getLanguageDir()),
+    listPacksIn(getUserLanguageDir()),
+  ]);
+  const merged = [...new Set([...builtIn, ...user])].sort();
+  return merged.length > 0 ? merged : ['en-US', 'zh-TW'];
+}
 
 async function listPacksIn(dir: string): Promise<string[]> {
   try {
@@ -21,35 +29,9 @@ async function listPacksIn(dir: string): Promise<string[]> {
   }
 }
 
-function applyLocaleChange(ctx: IpcContext, lang: string, markUserSet: boolean): boolean {
-  const nextLocale = (lang ?? '').trim();
-  if (!nextLocale) return false;
-  config.locale = nextLocale;
-  if (markUserSet) config.localeSetByUser = true;
-  saveConfig(markUserSet ? { locale: nextLocale, localeSetByUser: true } : { locale: nextLocale });
-  // Yobi's language is half of where the user is: the link switches' defaults and the Taiwan row follow it.
-  broadcastLinkRecognition();
-  // Region-specific built-in skills (Taiwan price comparison) follow the interface language.
-  announceSkills();
-  void loadLanguageData(nextLocale).then((data) => {
-    if (!data) return;
-    setLangCache(data);
-    rebroadcastFlowMetrics();
-    ctx.onTrayMenuRebuild?.();
-    void ctx.telegramRuntime.syncWithConfig();
-  });
-  return true;
-}
-
 export function registerLocaleHandlers(ctx: IpcContext): void {
-  ipcMain.handle(IPC.GET_LANGUAGE_LIST, async () => {
-    const [builtIn, user] = await Promise.all([
-      listPacksIn(getLanguageDir()),
-      listPacksIn(getUserLanguageDir()),
-    ]);
-    const merged = [...new Set([...builtIn, ...user])].sort();
-    return merged.length > 0 ? merged : ['en-US', 'zh-TW'];
-  });
+  setSettingsContext(ctx);
+  ipcMain.handle(IPC.GET_LANGUAGE_LIST, () => listLanguagePacks());
 
   ipcMain.handle(IPC.OPEN_LANGUAGES_FOLDER, async () => {
     const dir = getUserLanguageDir();
@@ -64,7 +46,7 @@ export function registerLocaleHandlers(ctx: IpcContext): void {
   }));
   ipcMain.handle(IPC.GET_LANGUAGE_CONTENT, (_event, lang: string) => loadLanguageData(lang));
 
-  ipcMain.handle(IPC.SET_CURRENT_LOCALE, (_event, lang: string) => applyLocaleChange(ctx, lang, true));
+  ipcMain.handle(IPC.SET_CURRENT_LOCALE, (_event, lang: string) => applyLocale(lang, true));
 
-  ipcMain.handle(IPC.SET_LOCALE_AUTO, (_event, lang: string) => applyLocaleChange(ctx, lang, false));
+  ipcMain.handle(IPC.SET_LOCALE_AUTO, (_event, lang: string) => applyLocale(lang, false));
 }

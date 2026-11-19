@@ -1,7 +1,7 @@
 import type React from 'react';
 import type { ConversationFolder } from '../../../../shared/conversationFolders';
 import { folderKey } from '../../../../shared/conversationFolders';
-import { sectionOfRowKey } from '../../utils/timeGroups';
+import { knowledgeOfRowKey, sectionOfRowKey } from '../../utils/timeGroups';
 import type { SidebarRow, SidebarSectionKey } from '../../utils/timeGroups';
 import type { OutputFile } from '../../../../shared/types';
 import { isTypingTarget } from '../../utils/domUtils';
@@ -38,6 +38,42 @@ interface SidebarKeyNavDeps {
   onCloseContextMenu: () => void;
   folders?: FolderKeyActions;
   sections?: SectionKeyActions;
+  knowledge?: KnowledgeKeyActions;
+  /** Shift+F10 / the menu key on a row: its "⋯" menu, under the row (the button is not a Tab stop). */
+  onRowMenu?: (key: string, row: HTMLElement) => void;
+}
+
+/** Shift+F10 or the context-menu key: a row's menu from the keyboard, as in a file manager. */
+export function isMenuKey(e: Pick<KeyboardEvent, 'key' | 'shiftKey'>): boolean {
+  return e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey);
+}
+
+/** Where ↑ ↓ Home End move within `count` rows from `index`; null = not one of them. */
+export function walkTarget(key: string, index: number, count: number): number | null {
+  if (count === 0 || index < 0) return null;
+  if (key === 'Home') return 0;
+  if (key === 'End') return count - 1;
+  if (key === 'ArrowDown') return Math.min(count - 1, index + 1);
+  if (key === 'ArrowUp') return Math.max(0, index - 1);
+  return null;
+}
+
+/** What the keys do on a knowledge base row: Enter/Space start a chat with it, F2 renames it. */
+export interface KnowledgeKeyActions {
+  open: (id: string) => void;
+  rename: (id: string) => void;
+}
+
+function handleKnowledgeKey(e: React.KeyboardEvent, id: string, actions: KnowledgeKeyActions): void {
+  if (matchesShortcut(e, 'files.editTitle')) {
+    e.preventDefault();
+    actions.rename(id);
+    return;
+  }
+  if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault();
+    actions.open(id);
+  }
 }
 
 /** What the keys do on a section heading (Pinned, Folders, Conversations). */
@@ -116,7 +152,7 @@ function handleFolderKey(e: React.KeyboardEvent, folder: ConversationFolder, act
 }
 
 /**
- * The conversation list's own keys (registry owner `sidebarList`): arrows move focus through the
+ * The conversation list's own keys (registry owner `sidebarList`): arrows (and Home/End) move focus through the
  * section headings, folder and conversation rows, Enter and Space open the focused conversation
  * (`sidebar.activate`) — the open one included, which reloads it — or open/close a folder or a
  * section, ← on a conversation in a folder goes to its folder; F2 edits the title (renames a
@@ -125,20 +161,21 @@ function handleFolderKey(e: React.KeyboardEvent, folder: ConversationFolder, act
  */
 export function createSidebarKeyDownHandler({
   editingPath, dialogOpen, visibleFiles, navKeys, fileItemRefs, scrollToKey,
-  scrollToIndex, getFocusedFile, onSelect, onEditH1, onDelete, onTogglePin, onCloseContextMenu, folders, sections,
+  scrollToIndex, getFocusedFile, onSelect, onEditH1, onDelete, onTogglePin, onCloseContextMenu, folders, sections, knowledge,
+  onRowMenu,
 }: SidebarKeyNavDeps): (e: React.KeyboardEvent) => void {
   const order = navKeys ?? visibleFiles.map((file) => file.path);
   return (e) => {
     if (editingPath || dialogOpen || isTypingTarget(e.target)) return;
 
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    const walking = e.key === 'ArrowDown' || e.key === 'ArrowUp'
+      || ((e.key === 'Home' || e.key === 'End') && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey);
+    if (walking) {
       e.preventDefault();
       const current = focusedKey(fileItemRefs);
       const currentIdx = current === null ? -1 : order.indexOf(current);
-      if (currentIdx < 0) return;
-      const delta = e.key === 'ArrowDown' ? 1 : -1;
-      const nextIdx = Math.max(0, Math.min(order.length - 1, currentIdx + delta));
-      if (nextIdx === currentIdx) return;
+      const nextIdx = walkTarget(e.key, currentIdx, order.length);
+      if (nextIdx === null || nextIdx === currentIdx) return;
       const nextKey = order[nextIdx];
       if (nextKey === undefined) return;
       if (scrollToKey) scrollToKey(nextKey);
@@ -148,9 +185,21 @@ export function createSidebarKeyDownHandler({
     }
 
     const key = focusedKey(fileItemRefs);
+    if (key && onRowMenu && isMenuKey(e)) {
+      const row = fileItemRefs.current.get(key);
+      if (!row) return;
+      e.preventDefault();
+      onRowMenu(key, row);
+      return;
+    }
     const section = key && sections ? sectionOfRowKey(key) : null;
     if (section && sections) {
       handleSectionKey(e, section, sections);
+      return;
+    }
+    const kbId = key && knowledge ? knowledgeOfRowKey(key) : null;
+    if (kbId && knowledge) {
+      handleKnowledgeKey(e, kbId, knowledge);
       return;
     }
     const folder = key && folders ? folders.folderFor(key) : null;

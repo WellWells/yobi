@@ -22,6 +22,7 @@ import {
   normalizeGeminiModelChoice,
   normalizeClaudeModelChoice,
   normalizeChatgptModelChoice,
+  normalizePerplexityModelChoice,
   normalizeByokInstances,
   normalizeLine,
   normalizeDiscord,
@@ -702,10 +703,21 @@ async function importConfigFromJson(raw: unknown): Promise<Config | null> {
   if (!Array.isArray(rawConfig.mcpServers)) {
     normalized.mcpServers = config.mcpServers;
   }
+  // Same for the knowledge bases. Their indexes are not in the backup: each rebuilds from its folder.
+  if (!Array.isArray(rawConfig.knowledgeBases)) {
+    normalized.knowledgeBases = config.knowledgeBases;
+  }
   // Same for how long Downloads/Yobi keeps files: the default would let the next sweep delete
   // downloads the person chose to keep.
   if (!('downloadsKeep' in rawConfig)) {
     normalized.downloadsKeep = config.downloadsKeep;
+  }
+  // Same for the bot user's download cap: the default could be larger than the one chosen.
+  if (!('botDownloadCap' in rawConfig)) {
+    normalized.botDownloadCap = config.botDownloadCap;
+  }
+  if (!('botDownloadCaps' in rawConfig)) {
+    normalized.botDownloadCaps = { ...config.botDownloadCaps };
   }
   if (!('linkAnalysis' in rawConfig)) {
     normalized.linkAnalysis = { ...config.linkAnalysis };
@@ -780,5 +792,6 @@ export {
   normalizeGeminiModelChoice,
   normalizeClaudeModelChoice,
   normalizeChatgptModelChoice,
+  normalizePerplexityModelChoice,
 };
 export type { Config, TelegramConfig, LineConfig };

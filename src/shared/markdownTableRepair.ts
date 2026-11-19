@@ -110,6 +110,14 @@ interface TableHead {
   delimiter: number;
 }
 
+/** Cells between the optional outer pipes, the count GFM compares a header against its delimiter row with. */
+function innerCellCount(row: string): number {
+  const cells = splitCells(row.trim());
+  const from = cells[0].trim() === '' ? 1 : 0;
+  const to = cells.length > 1 && cells[cells.length - 1].trim() === '' ? cells.length - 1 : cells.length;
+  return to - from;
+}
+
 function tableHeadAt(lines: string[], index: number): TableHead | null {
   const line = lines[index];
   if (!isPipeRow(line)) return null;
@@ -121,9 +129,12 @@ function tableHeadAt(lines: string[], index: number): TableHead | null {
     return closedDelimiter(index + 1) ? { text: line, delimiter: index + 1 } : null;
   }
 
-  // A wrapped header only counts once the delimiter row confirms a table follows.
+  // A wrapped header only counts once the delimiter row confirms a table follows, and only with
+  // as many cells as that row: prose holding a pipe (a link title such as "News | Site") would
+  // otherwise swallow the paragraphs after it up to the real header.
   const joined = joinSplitRow(lines, index, false);
   if (!joined || !closedDelimiter(joined.next)) return null;
+  if (innerCellCount(joined.text) !== innerCellCount(lines[joined.next])) return null;
   return { text: joined.text, delimiter: joined.next };
 }
 

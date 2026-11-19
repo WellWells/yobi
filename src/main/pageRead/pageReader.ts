@@ -15,13 +15,15 @@ import { isVerificationWall, verificationWallMessage } from '../net/verification
 import { MIN_ARTICLE_CHARS } from '../search/pageText';
 import { GoogleNewsLinkError } from './googleNewsLink';
 import { readBySite } from './readers';
-import { apiReaderFor, pageOfApiAnswer } from './readers/api';
+import { apiReaderFor, attachmentAddress, isApiFailure, pageOfApiAnswer, pageOfAttachment, type PageApiReader } from './readers/api';
 import { extractPageText, extractPlainText, type PageText } from './pageExtract';
+import { archivedCopyOf, archiveLookupAddress, rawSnapshotAddress, snapshotAddress, snapshotDay, type ArchivedCopy } from './webArchive';
 
 export type PageFailure = 'not-a-page' | 'video' | 'private' | 'missing' | 'walled' | 'sign-in' | 'refused' | 'no-text' | 'unreachable' | 'post' | 'subscribers';
 
 export class PageReadError extends Error {
-  constructor(readonly reason: PageFailure, message: string) {
+  /** `gone`: the site says the page is no longer there, or its name no longer resolves. */
+  constructor(readonly reason: PageFailure, message: string, readonly gone = false) {
     super(message);
     this.name = 'PageReadError';
   }
@@ -40,6 +42,8 @@ export interface PageRead extends PageText {
   mainText?: string;
   /** How many replies the page says it has, which can be more than it shows. */
   replyCount?: number;
+  /** Read from the Internet Archive, the site no longer having it: the day the copy was taken and where to open it. */
+  archived?: { day: string; url: string };
 }
 
 interface RawAnswer {
@@ -55,15 +59,24 @@ export interface PageReaderDeps {
   resolveGoogleNews: (id: string, signal?: AbortSignal) => Promise<string>;
   /** A post site's own reader, signed out; null when the link is no post of one. */
   readPost: (url: string, signal?: AbortSignal) => Promise<PageRead | null>;
+  /** A file as bytes, for an API reader whose answer links one; without it the answer's page stands. */
+  fetchFile?: (url: string, signal?: AbortSignal) => Promise<{ status: number; bytes: Uint8Array }>;
   log: (line: string) => void;
 }
 
 /** A redirect here means the page is for signed-in people. Only a redirect: a page may be about signing in. */
 const SIGN_IN_ADDRESS = /\/\/[^\s'"]*\/(?:sign[-_]?in|log[-_]?in|authwall)\b/i;
+/** The site's name does not resolve, in Node's words or Chromium's: the request never left. */
+const NAME_NOT_FOUND = /\bENOTFOUND\b|ERR_NAME_NOT_RESOLVED|could not resolve host/i;
 const HTML_TYPE = /^(?:text\/html|application\/xhtml\+xml)\b/i;
 const TEXT_TYPE = /^text\/(?:plain|markdown)\b/i;
 /** Shorter than this is a stub or a teaser more often than a story. */
 const MIN_COMPLETE_CHARS = 400;
+/**
+ * A row's own article container holds the story and nothing else, so a short one is a short story:
+ * Solidot, IT之家 and Apple's developer news run 200–400 characters whole, as do brief TV news items.
+ */
+const MIN_SITE_COMPLETE_CHARS = 200;
 
 function reasonText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -119,6 +132,8 @@ interface FirstRead {
   url: string;
   /** What the site answered; 0 when the request itself failed. */
   status: number;
+  /** The request failed because the site's name does not resolve: a window would fail the same way. */
+  nameGone?: boolean;
 }
 
 function readBody(answer: RawAnswer, url: string, deps: PageReaderDeps): PageText | null {
@@ -130,17 +145,41 @@ function readBody(answer: RawAnswer, url: string, deps: PageReaderDeps): PageTex
   return tryExtract(answer.text, url, findPageSite(url), deps);
 }
 
-/** The site's public API for a post, when it has one. Any failure is the plain read's to try. */
+/**
+ * The site's public API for a post, when it has one. A request that fails is the plain read's to
+ * try; an answer that says there is nothing to read (a deleted message) ends the read.
+ */
 async function readThroughApi(url: string, deps: PageReaderDeps, signal?: AbortSignal): Promise<PageRead | null> {
   const api = apiReaderFor(url);
   if (!api) return null;
+  let read: ReturnType<typeof pageOfApiAnswer>;
+  let body = '';
   try {
     const answer = await deps.fetchPage(api.address, signal);
-    return answer.status < 400 ? pageOfApiAnswer(api.reader, answer.text, url) : null;
+    body = answer.text;
+    read = answer.status < 400 ? pageOfApiAnswer(api.reader, body, url) : null;
   } catch (err) {
     rethrowFinal(err, signal);
     deps.log(`📄 [PageRead] API read failed, ${reasonText(err)}`);
     return null;
+  }
+  if (read && isApiFailure(read)) throw new PageReadError(read.failure, read.message);
+  return read && (await withAttachment(api.reader, body, read, url, deps, signal));
+}
+
+/** The page the answer's file makes, else the answer's own: a file that fails to come leaves it. */
+async function withAttachment(reader: PageApiReader, body: string, page: PageRead, url: string, deps: PageReaderDeps, signal?: AbortSignal): Promise<PageRead> {
+  const address = deps.fetchFile ? attachmentAddress(reader, body) : null;
+  if (!address || !deps.fetchFile) return page;
+  try {
+    const file = await deps.fetchFile(address, signal);
+    const read = file.status < 400 ? pageOfAttachment(reader, body, file.bytes, url) : null;
+    if (!read) deps.log(`📄 [PageRead] the file ${nameOf(url)} links answered ${file.status} with nothing to read`);
+    return read ?? page;
+  } catch (err) {
+    rethrowFinal(err, signal);
+    deps.log(`📄 [PageRead] file read failed, ${reasonText(err)}`);
+    return page;
   }
 }
 
@@ -150,10 +189,11 @@ async function readPlain(url: string, deps: PageReaderDeps, signal?: AbortSignal
     answer = await deps.fetchPage(url, signal);
   } catch (err) {
     rethrowFinal(err, signal);
-    deps.log(`📄 [PageRead] plain read failed, ${reasonText(err)}`);
-    return { page: null, url, walled: false, status: 0 };
+    const reason = reasonText(err);
+    deps.log(`📄 [PageRead] plain read failed, ${reason}`);
+    return { page: null, url, walled: false, status: 0, nameGone: NAME_NOT_FOUND.test(reason) };
   }
-  if (answer.status === 404 || answer.status === 410) throw new PageReadError('missing', 'This page no longer exists on the site.');
+  if (answer.status === 404 || answer.status === 410) throw new PageReadError('missing', 'This page no longer exists on the site.', true);
   const finalUrl = answer.finalUrl || url;
   if (SIGN_IN_ADDRESS.test(finalUrl) && !SIGN_IN_ADDRESS.test(url)) throw signInFailure(url);
   const own = answer.status < 400 ? readBySite(answer.text, finalUrl) : null;
@@ -196,6 +236,7 @@ function readFailure(plain: FirstRead, rendered: WindowRead | null): PageReadErr
   if (plain.walled || rendered?.walled) return new PageReadError('walled', verificationWallMessage(name));
   if (rendered?.signIn) return signInFailure(plain.url);
   if (plain.status >= 400) return new PageReadError('refused', `${name} answered ${plain.status} instead of the page. Try again later or use another source.`);
+  if (plain.nameGone) return new PageReadError('unreachable', `${name} no longer answers: its name does not resolve, so the site may have closed. Use another source.`, true);
   if (plain.status === 0) return new PageReadError('unreachable', `${name} could not be reached just now. Try again later or use another source.`);
   return new PageReadError('no-text', `No text found at ${plain.url}. It may be an app that needs a browser, or the site's layout may have changed. Try the browser tool or another source.`);
 }
@@ -216,7 +257,8 @@ async function readPost(url: string, deps: PageReaderDeps, signal?: AbortSignal)
 }
 
 function isComplete(page: PageText): boolean {
-  return page.selfDeclared && !page.preview && !page.truncated && page.text.length >= MIN_COMPLETE_CHARS;
+  const enough = page.method === 'site' ? MIN_SITE_COMPLETE_CHARS : MIN_COMPLETE_CHARS;
+  return page.selfDeclared && !page.preview && !page.truncated && page.text.length >= enough;
 }
 
 /** A subscribers' page that gives a reader nothing but the invitation; an opening, whatever its length, is the story's. */
@@ -224,11 +266,8 @@ function isSubscribePrompt(page: PageText): boolean {
   return page.preview && page.method === 'whole page' && page.text.length < MIN_ARTICLE_CHARS;
 }
 
-/** One link's text; `PageReadError` when it cannot be read. */
-export async function readPage(link: string, deps: PageReaderDeps, signal?: AbortSignal): Promise<PageRead> {
-  const given = link.trim();
-  if (!isWebLink(given)) throw new PageReadError('not-a-page', 'Not a web address: give an http or https link.');
-  const url = await articleAddress(given, deps, signal);
+/** A page the site has, or had: everything but the archive. */
+async function readLive(url: string, deps: PageReaderDeps, signal?: AbortSignal): Promise<PageRead> {
   refuseVideo(url);
   const post = await readPost(url, deps, signal);
   if (post) return post;
@@ -242,7 +281,7 @@ export async function readPage(link: string, deps: PageReaderDeps, signal?: Abor
   // back with nothing, or with the little an app's shell holds before its script runs. A site whose
   // selector went stale still has its text from the plain read.
   const thin = plain.page?.method === 'whole page' && plain.page.text.length < MIN_ARTICLE_CHARS;
-  const rendered = !plain.page || thin ? await readRendered(plain.url, deps, signal) : null;
+  const rendered = (!plain.page || thin) && !plain.nameGone ? await readRendered(plain.url, deps, signal) : null;
   const shut = rendered?.walled === true || rendered?.signIn === true;
   const page = shut ? null : [plain.page, rendered?.page].reduce((best, next) => (next && next.text.length > (best?.text.length ?? 0) ? next : best), null);
   if (!page) throw readFailure(plain, rendered);
@@ -250,4 +289,76 @@ export async function readPage(link: string, deps: PageReaderDeps, signal?: Abor
   if (isSubscribePrompt(page)) throw new PageReadError('subscribers', `${name} shows this page to subscribers only, and this tool reads signed out. Use another source.`);
   noteStaleLayout(site, page, plain.url, deps);
   return { ...page, site: name, url: plain.url, complete: isComplete(page), images: [] };
+}
+
+/** An archived copy read like the page itself; null for one with nothing to read, or with a wall or an invitation to subscribe. */
+function pageOfCopy(answer: RawAnswer, url: string, deps: PageReaderDeps): PageRead | null {
+  const own = readBySite(answer.text, url);
+  if (own) return own;
+  const page = readBody(answer, url, deps);
+  if (!page || isVerificationWall(answer.text, page.text.length) || isSubscribePrompt(page)) return null;
+  const name = findPageSite(url)?.name || page.siteName || new URL(url).hostname;
+  return { ...page, site: name, url, complete: isComplete(page), images: [] };
+}
+
+async function readCopy(copy: ArchivedCopy, url: string, deps: PageReaderDeps, signal?: AbortSignal): Promise<PageRead | null> {
+  const day = snapshotDay(copy);
+  const answer = await deps.fetchPage(rawSnapshotAddress(copy), signal);
+  const page = answer.status < 400 ? pageOfCopy(answer, url, deps) : null;
+  if (!page) {
+    deps.log(`📄 [PageRead] the Internet Archive's copy of ${url} (${day}) answered ${answer.status} with nothing to read`);
+    return null;
+  }
+  deps.log(`📄 [PageRead] ${url} is gone from its site: read the Internet Archive's copy of ${day}`);
+  return { ...page, url, archived: { day, url: snapshotAddress(copy) } };
+}
+
+/**
+ * The Internet Archive's copy of a page its site no longer has; null when it has none to read. The
+ * newest first, and the first one when that is not the whole page: the longer of the two if neither is.
+ */
+async function readArchived(url: string, deps: PageReaderDeps, signal?: AbortSignal): Promise<PageRead | null> {
+  let best: PageRead | null = null;
+  let tried = '';
+  for (const choice of ['newest', 'first'] as const) {
+    const lookup = archiveLookupAddress(url, choice);
+    if (!lookup) return null;
+    try {
+      const found = await deps.fetchPage(lookup, signal);
+      const copy = found.status === 200 ? archivedCopyOf(found.text) : null;
+      if (!copy) {
+        if (choice === 'newest') deps.log(`📄 [PageRead] the Internet Archive has no copy of ${url}`);
+        return best;
+      }
+      // A page copied once is its own first copy.
+      if (copy.timestamp === tried) return best;
+      tried = copy.timestamp;
+      const page = await readCopy(copy, url, deps, signal);
+      if (page?.complete) return page;
+      if (page && page.text.length > (best?.text.length ?? 0)) best = page;
+    } catch (err) {
+      if (signal?.aborted) throw err;
+      deps.log(`📄 [PageRead] Internet Archive read failed, ${reasonText(err)}`);
+      return best;
+    }
+  }
+  return best;
+}
+
+/**
+ * One link's text; `PageReadError` when it cannot be read. A page its site says is gone, or on a
+ * site whose name no longer resolves, is read from the Internet Archive when it has a copy.
+ */
+export async function readPage(link: string, deps: PageReaderDeps, signal?: AbortSignal): Promise<PageRead> {
+  const given = link.trim();
+  if (!isWebLink(given)) throw new PageReadError('not-a-page', 'Not a web address: give an http or https link.');
+  const url = await articleAddress(given, deps, signal);
+  try {
+    return await readLive(url, deps, signal);
+  } catch (err) {
+    if (!(err instanceof PageReadError) || !err.gone) throw err;
+    const copy = await readArchived(url, deps, signal);
+    if (copy) return copy;
+    throw err;
+  }
 }

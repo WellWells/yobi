@@ -33,8 +33,18 @@ export type ShortcutScope =
   | { kind: 'widget'; owner: string }
   | { kind: 'reference'; owner: string };
 
+/**
+ * A part of the window a shortcut is confined to: the key only fires while focus is on an element
+ * marked `data-shortcut-area="<area>"` (or inside one). Anywhere else the key keeps its normal
+ * meaning — e.g. Shift+Tab moves focus back (WCAG 2.1.1).
+ */
+export type ShortcutFocusArea = 'composer';
+
+export const SHORTCUT_AREA_ATTR = 'data-shortcut-area';
+
 export interface ShortcutGuards {
   requireNoModal?: boolean;
+  requireFocusIn?: ShortcutFocusArea;
   blockWhileTyping?: boolean;
   ignoreShift?: boolean;
   phase?: 'bubble' | 'capture';

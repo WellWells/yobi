@@ -13,12 +13,26 @@ export interface ThemeColors {
   error: string;
 }
 
+/**
+ * A drawn page background: soft sheets of colour over `bgPrimary` and one band of sheen, flowing
+ * slowly while the window is in use. Every colour the page can show is a mix of these and
+ * `bgPrimary`, which is what lets text contrast be computed for it.
+ */
+export interface ThemeBackdrop {
+  sheets: readonly [string, string, string];
+  sheen: string;
+  /** How fast it flows, against the usual pace (1): silk is unhurried, the aurora lively. */
+  flow?: number;
+}
+
 export interface ThemeDef {
   colors: ThemeColors;
   light?: boolean;
   shiki: string;
   buttonAccent?: string;
+  backdrop?: ThemeBackdrop;
 }
+
 
 export const THEME_DEFS = {
   dark: {
@@ -42,6 +56,42 @@ export const THEME_DEFS = {
     },
     light: true,
     shiki: 'github-light',
+  },
+  silknight: {
+    colors: {
+      bgPrimary: '#0c0d11', bgSurface: '#14161c', bgElevated: '#1d2028',
+      border: '#2d313c',
+      textPrimary: '#eeeff3', textSecondary: '#d6d8e0', textMuted: '#b1b6c6', textDisabled: '#6f7482',
+      accent: '#b3c0ee',
+      success: '#6fd6a4', warning: '#e6c074', error: '#ff8a94',
+    },
+    shiki: 'tokyo-night',
+    buttonAccent: '#5266d6',
+    backdrop: { sheets: ['#1b1f2b', '#221f29', '#172228'], sheen: '#3d4559', flow: 0.8 },
+  },
+  silkpearl: {
+    colors: {
+      bgPrimary: '#f8f5f1', bgSurface: '#f1ece7', bgElevated: '#e8e1db',
+      border: '#d6ccc6',
+      textPrimary: '#2a2531', textSecondary: '#3a3442', textMuted: '#57515e', textDisabled: '#9a929f',
+      accent: '#6f4583',
+      success: '#2f7d5b', warning: '#9a6a12', error: '#b23a4c',
+    },
+    light: true,
+    shiki: 'rose-pine-dawn',
+    backdrop: { sheets: ['#f1dfe3', '#e3e0f4', '#dfeaf1'], sheen: '#fffdf8' },
+  },
+  aurora: {
+    colors: {
+      bgPrimary: '#0b1020', bgSurface: '#121a2e', bgElevated: '#1b2540',
+      border: '#2c3856',
+      textPrimary: '#f2f5ff', textSecondary: '#dfe5f7', textMuted: '#cdd1e0', textDisabled: '#7783a8',
+      accent: '#8fe0ff',
+      success: '#5fe0b0', warning: '#f0c36a', error: '#ff8597',
+    },
+    shiki: 'tokyo-night',
+    buttonAccent: '#2d79ba',
+    backdrop: { sheets: ['#223663', '#283c75', '#1f3f66'], sheen: '#2e4878', flow: 1.2 },
   },
   dracula: {
     colors: {

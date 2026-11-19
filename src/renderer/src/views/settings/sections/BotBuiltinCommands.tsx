@@ -13,6 +13,7 @@ import type {
   BotBuiltinCommandKey,
   BotBuiltinCommands as BuiltinCommandsConfig,
 } from '../../../../../shared/types';
+import { fillTemplate } from '../../../../../shared/fillTemplate';
 import { AppTextInput } from '../../../components/AppTextInput';
 import { SelectDropdown, ToggleSwitch } from '../components';
 import { PROVIDER_DROPDOWN_MAX_HEIGHT, providerSectionsToSelectData } from '../../../config/models';
@@ -81,6 +82,7 @@ const BuiltinCommandRow: React.FC<RowProps> = ({ commandKey, cfg, busy, onUpdate
         <Group gap={8} align="center" wrap="nowrap">
           <Text fz="var(--font-size-base)" c="dimmed">/</Text>
           <AppTextInput
+            aria-label={fillTemplate(t('a11y.f.commandName'), { name: t(`settings.bot.builtin.${commandKey}.label`) })}
             tone="body"
             mono
             w={150}
@@ -92,6 +94,7 @@ const BuiltinCommandRow: React.FC<RowProps> = ({ commandKey, cfg, busy, onUpdate
             error={invalid ? t('settings.bot.commands.invalid') : undefined}
           />
           <ToggleSwitch
+            aria-label={t(`settings.bot.builtin.${commandKey}.label`)}
             checked={cfg.enabled}
             disabled={busy}
             onChange={(e) => onUpdate(commandKey, { enabled: e.currentTarget.checked })}
@@ -105,6 +108,7 @@ const BuiltinCommandRow: React.FC<RowProps> = ({ commandKey, cfg, busy, onUpdate
             {t('settings.bot.builtin.modelLabel')}
           </Text>
           <SelectDropdown
+            aria-label={t('settings.bot.builtin.modelLabel')}
             value={known ? cfg.targetUrl : ''}
             options={options}
             onChange={(v) => onUpdate(commandKey, { targetUrl: v })}

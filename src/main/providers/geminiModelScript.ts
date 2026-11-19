@@ -1,3 +1,4 @@
+import { GEMINI_CATALOG_REV } from '../../shared/geminiModels';
 import type { GeminiPickerSnapshot, GeminiPickerTarget } from '../../shared/geminiModels';
 
 /*
@@ -37,10 +38,64 @@ export function withModelNameFirst<T extends { label: string; sublabel: string }
   return { ...row, label: row.sublabel, sublabel: row.label };
 }
 
-/** The script reports the page's lines as they are; this is what the rest of the app reads. */
-export function namedGeminiPickerResult(result: GeminiPickerResult): GeminiPickerResult {
+interface GeminiRowLines {
+  id: string;
+  label: string;
+  sublabel: string;
+}
+
+/**
+ * Once the account's quota runs out, Gemini replaces a row's model line with the reset time
+ * ("usage resets on Nov 15, 6:21 PM"), so neither line names the model and the purpose would be
+ * kept as the name. Such a row keeps the name last read for the same id, with the purpose under
+ * it; with no earlier name, the page's lines stand.
+ *
+ * The id alone does not make it the same row: the page can turn a model's row into one that names
+ * no model ("Auto") and keep the id. The name is carried only while the purpose line is still the
+ * one stored with it.
+ */
+function withKnownModelName<T extends GeminiRowLines>(row: T, known: readonly GeminiRowLines[]): T {
+  if (hasModelName(row)) return row;
+  const earlier = known.find((m) => m.id === row.id);
+  if (!earlier || !VERSION_LED.test(earlier.label) || earlier.sublabel !== row.label) return row;
+  return { ...row, label: earlier.label, sublabel: earlier.sublabel };
+}
+
+function hasModelName(row: GeminiRowLines): boolean {
+  return VERSION_LED.test(row.label) || VERSION_LED.test(row.sublabel);
+}
+
+interface StoredGeminiNames {
+  models: readonly GeminiRowLines[];
+  rev?: number;
+}
+
+/**
+ * Whether a stored list can be shown without reading the page again. Two things make it due:
+ * it was stored under an earlier naming rule (a name may sit on the wrong row, and the list looks
+ * healthy), or rows without a model name share their second line — the menu of an account out of
+ * quota, where one reset time replaces several model names. A single row without a model name is
+ * ordinary ("Auto").
+ */
+export function trustedGeminiCatalog<T extends StoredGeminiNames>(catalog: T | null): T | null {
+  if (!catalog || catalog.rev !== GEMINI_CATALOG_REV) return null;
+  const secondLines = catalog.models.filter((m) => !hasModelName(m)).map((m) => m.sublabel);
+  return new Set(secondLines).size === secondLines.length ? catalog : null;
+}
+
+/**
+ * The script reports the page's lines as they are; this is what the rest of the app reads.
+ * `stored` is the last stored list, for rows that show no model name this time; names in a list
+ * stored under an earlier rule are not used.
+ */
+export function namedGeminiPickerResult(
+  result: GeminiPickerResult,
+  stored: StoredGeminiNames | null = null,
+): GeminiPickerResult {
   if (!result.ok) return result;
-  return { ...result, snapshot: { ...result.snapshot, models: result.snapshot.models.map(withModelNameFirst) } };
+  const known = stored?.rev === GEMINI_CATALOG_REV ? stored.models : [];
+  const models = result.snapshot.models.map((row) => withKnownModelName(withModelNameFirst(row), known));
+  return { ...result, snapshot: { ...result.snapshot, models } };
 }
 
 /**

@@ -179,6 +179,19 @@ export function telegramCompactChunks(markdown: string, maxVisibleChars: number,
   return splitMarkdownIntoChunks(markdown, maxVisibleChars, maxChunks, (chunk) => telegramMessageWeight(chunk, maxVisibleChars));
 }
 
+/** Telegram's limit on a photo, video, audio or document caption, in visible characters. */
+export const TELEGRAM_CAPTION_LIMIT = 1024;
+
+/**
+ * Markdown for a caption, whole when it fits; otherwise cut where a chunk would be (a blank line,
+ * a line end, a space or punctuation outside any link) and marked with an ellipsis, never in the
+ * middle of a word or a link. One character is kept back for that ellipsis.
+ */
+export function fitTelegramCaption(markdown: string): string {
+  if (telegramHtmlFits(formatResponseForTelegramHtml(markdown), TELEGRAM_CAPTION_LIMIT)) return markdown;
+  return telegramCompactChunks(markdown, TELEGRAM_CAPTION_LIMIT - 1, 1)[0] ?? '';
+}
+
 /** A span of a plain-text message, in UTF-16 code units as Telegram counts them. */
 export interface TelegramPreEntity {
   type: 'pre' | 'expandable_blockquote';

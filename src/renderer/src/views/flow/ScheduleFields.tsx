@@ -130,6 +130,7 @@ export const ScheduleFields: React.FC<ScheduleFieldsProps> = ({ value, patch, t,
               withCheckIcon={false}
             />
             <SelectDropdown
+              aria-label={t('a11y.b.timeUnit')}
               options={unitOptions}
               value={intervalUnit}
               onChange={(v) => patch({ intervalUnit: v as 'minutes' | 'hours' })}
@@ -194,6 +195,7 @@ export const ScheduleFields: React.FC<ScheduleFieldsProps> = ({ value, patch, t,
                 withCheckIcon={false}
               />
               <SelectDropdown
+                aria-label={t('a11y.b.timeUnit')}
                 options={unitOptions}
                 value={repeatUnit}
                 onChange={(v) => patch({ repeatEveryUnit: v as 'minutes' | 'hours' })}
@@ -301,7 +303,7 @@ export const ScheduleFields: React.FC<ScheduleFieldsProps> = ({ value, patch, t,
               onBlur={(e) => applyCron(e.currentTarget.value)}
             />
             {cronError && (
-              <Text fz="xs" c="var(--mantine-color-warning)">{t('flow.trigger.schedule.advanced.invalid')}</Text>
+              <Text fz="xs" c="var(--warning-text)">{t('flow.trigger.schedule.advanced.invalid')}</Text>
             )}
           </Stack>
         </Collapse>

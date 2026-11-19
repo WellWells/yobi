@@ -32,7 +32,7 @@ Flows run on your computer; AI answers usually come from an external service. **
 
 - **Chat and writing**: switch providers and models, rewrite a selected passage, translate an answer or a whole conversation, and export Markdown, PDF or images.
 - **Agent**: describe a task and let AI search, read data and call tools, including skills you install. See [Security & Privacy](#security--privacy) for what needs approval.
-- **Flows**: 61 kinds of step, chained with `{{variables}}`. Add steps from a menu, or describe the task and let AI build a flow you can edit.
+- **Flows**: 63 kinds of step, chained with `{{variables}}`. Add steps from a menu, or describe the task and let AI build a flow you can edit.
 - **Connectors**: use LINE on this PC (Windows), Thunderbird, mail, calendars, Notion, GitHub and other MCP services.
 - **Links and media**: read articles and posts, analyze comments or Google Maps reviews, download supported videos, MP3s and subtitles, or ask Gemini or ChatGPT to make pictures.
 - **Taiwan services**: PTT, TRA, THSR, seven metro systems and uniform invoice prize checking.
@@ -108,7 +108,7 @@ Or describe it and AI builds the flow for you; every step stays editable:
 
 > *"Every weekday at 8am, summarize my RSS feed and send it to Telegram."*
 
-There are 30 templates to start from, run on a schedule, by a hotkey on selected text, when a file lands in a folder, or as a command in chat or to your bot.
+There are 34 templates to start from, run on a schedule, by a hotkey on selected text, when a file lands in a folder, or as a command in chat or to your bot.
 
 **Steps:**
 
@@ -140,7 +140,7 @@ Edits take effect when you save. Enabled flows run on their triggers, and versio
 
 **Free Translate.** On by default. The agent can use Microsoft to translate text and subtitle files without a translation API key. Supported formats are SRT, VTT, SBV, ASS, SSA and LRC; subtitles keep their timing and are saved as a new file. Provide a file path on this computer: attaching a file does not pass it directly to this tool. Content goes to Microsoft, and translation does not consider surrounding lines, so treat it as a draft. The agent itself still uses your selected model's quota.
 
-**Universal Page Reader.** On by default. Give the agent a link and it reads the text itself, without the menus and related stories: news, blogs, documentation, forums and posts on sites like Reddit, X and LinkedIn. Paste a link in chat or send it to a bot; a Google News link is followed to the article. Send a bot a link alone and a complete page comes straight back as its main text, with no model involved and an Analyze button under it; a link with words around it, or a page that reads incomplete, goes to the agent. Public pages only: what needs a sign-in (Zhihu, for one) stays shut, and subscriber articles give only their public opening.
+**Page Reader.** On by default. Give the agent a link and it reads the text itself, without the menus and related stories: news, blogs, documentation, forums and posts on sites like Reddit, X and LinkedIn. Paste a link in chat or send it to a bot; a Google News link is followed to the article. Send a bot a link alone and a complete page comes straight back as its main text, with no model involved and an Analyze button under it; a link with words around it, or a page that reads incomplete, goes to the agent. Public pages only: what needs a sign-in (Zhihu, for one) stays shut, and subscriber articles give only their public opening.
 
 **X (Twitter).** Search posts, see trends, read an account's latest posts and the replies to a post. Turn it on and sign in under **Settings → Connectors**; search and trends need the sign-in. Mention X or Twitter in a message and the agent looks there. Flows use **X Accounts**, **X Post & Replies** and **X Trends**. Signed out, you get each account's newest few posts and top replies, and no trends.
 
@@ -156,7 +156,7 @@ Edits take effect when you save. Enabled flows run on their triggers, and versio
 - **Business** — Stripe · Square · PayPal · Intercom
 - **Reference** — Context7 · DeepWiki · Microsoft Learn · Cloudflare Docs · Hugging Face
 
-Add other MCP services by their supported HTTPS endpoints in **Settings → Connectors**. Cloud catalog services need to be added and connected; Universal Page Reader and Free Translate are on by default, while PTT and Taiwan railways depend on your region. Agent changes require approval according to their risk; **Always allow this server** never skips approval for sending or deleting.
+Add other MCP services by their supported HTTPS endpoints in **Settings → Connectors**. Cloud catalog services need to be added and connected; Page Reader and Free Translate are on by default, while PTT and Taiwan railways depend on your region. Agent changes require approval according to their risk; **Always allow this server** never skips approval for sending or deleting.
 
 ---
 

@@ -2,6 +2,7 @@ import React from 'react';
 import { Box, Text } from '@mantine/core';
 import { SelectDropdown } from '../../components/SelectDropdown';
 import type { SelectDropdownProps } from '../../components/SelectDropdown';
+import type { DistributiveOmit } from '../../components/a11y';
 
 /**
  * Room around the label inside the select: the input's left padding (a third of its 36px
@@ -22,7 +23,7 @@ function optionLabels(options: SelectDropdownProps['options']): string[] {
  * grid cell with the select and gives the cell its width; the copies take no height, are not
  * rendered visibly (so `innerText` skips them) and are hidden from screen readers.
  */
-export const FitSelectDropdown: React.FC<Omit<SelectDropdownProps, 'style' | 'w'>> = (props) => (
+export const FitSelectDropdown: React.FC<DistributiveOmit<SelectDropdownProps, 'style' | 'w'>> = (props) => (
   <Box style={{ display: 'grid', maxWidth: FIT_SELECT_MAX_PX }}>
     <SelectDropdown {...props} style={{ gridArea: '1 / 1', minWidth: 0 }} />
     {[...new Set(optionLabels(props.options))].map((label) => (

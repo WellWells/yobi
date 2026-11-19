@@ -12,7 +12,7 @@ import { slugifyCommandName } from '../../shared/mcpCommand';
 import { connectsOnUse } from '../../shared/mcpConnectOnUse';
 import { BUILTIN_CONNECTORS, findBuiltinConnector } from '../../shared/builtinConnectors';
 import type { McpConnectionStatus, McpServerActionResult, McpServerConfig, McpServerSaveRequest, McpServerView, McpToolInfo } from '../../shared/types';
-import { PICTURES_META_KEY } from './mcpTypes';
+import { DOCUMENTS_META_KEY, PICTURES_META_KEY } from './mcpTypes';
 import type { McpTool, McpToolResult } from './mcpTypes';
 import { McpAuthProvider } from './mcpAuthProvider';
 import { startCallbackServer } from './mcpCallbackServer';
@@ -108,11 +108,11 @@ export class McpCallNotSentError extends Error {
 }
 
 /**
- * The pictures a built-in connector saved for the answer. Only a built-in's `_meta` is read: a
- * remote server could name any file on the computer, and a bot sends these as photos.
+ * The pictures or documents a built-in connector saved for the answer. Only a built-in's `_meta` is
+ * read: a remote server could name any file on the computer, and a bot sends these.
  */
-function builtinPictures(result: CallToolResult): string[] {
-  const files = result._meta?.[PICTURES_META_KEY];
+function builtinFiles(result: CallToolResult, key: string): string[] {
+  const files = result._meta?.[key];
   return Array.isArray(files) ? files.filter((file): file is string => typeof file === 'string' && file.length > 0) : [];
 }
 
@@ -134,8 +134,15 @@ export function flattenResult(result: CallToolResult, builtin = false): McpToolR
   }
   let text = parts.join('\n').trim();
   if (!text && result.structuredContent !== undefined) text = JSON.stringify(result.structuredContent);
-  const pictures = builtin && result.isError !== true ? builtinPictures(result) : [];
-  return { text, isError: result.isError === true, ...(pictures.length > 0 ? { pictures } : {}) };
+  const ok = builtin && result.isError !== true;
+  const pictures = ok ? builtinFiles(result, PICTURES_META_KEY) : [];
+  const documents = ok ? builtinFiles(result, DOCUMENTS_META_KEY) : [];
+  return {
+    text,
+    isError: result.isError === true,
+    ...(pictures.length > 0 ? { pictures } : {}),
+    ...(documents.length > 0 ? { documents } : {}),
+  };
 }
 
 /**

@@ -17,6 +17,7 @@ import { sendLog } from '../helpers';
 import { getLangCache, t } from '../i18n';
 import { measureTokens } from '../tokenMeter';
 import { recordFlowStep } from '../flowMeter';
+import { flowTraceName } from '../../shared/flowTrace';
 import type { FlowExecutorDeps, LogCallback } from './types';
 import {
   getProducedFiles,
@@ -40,6 +41,7 @@ import {
   withStepTimeout,
 } from './runtime';
 import { executeSkill } from './skills';
+import { CAPTION_BUDGET_KEY, captionBudgetFor } from './captionBudget';
 import { resolveMcpArguments } from './skills/mcpCall';
 import { navigatePageBlank } from './skills/browserPages';
 import { signInUseOf } from './skills/readAccess';
@@ -51,6 +53,7 @@ import { botStepTargets } from '../../shared/botRecipients';
 import { checkBlockStructure, describeBlockIssue } from '../../shared/flowBlockStructure';
 import { TRIGGER_IS_INPUT_VARIABLE } from '../../shared/builtin/steps';
 import { FAIL_SOFT_SKILLS } from '../../shared/flowFailSoft';
+import { currentSeenLedger, loopItemLink, runWithSeenLedger, SeenLedger, type SeenOutcome } from './seenLedger';
 
 interface RunProgress {
   completed: number;
@@ -136,11 +139,8 @@ function resultTextFor(type: SkillType, output: string, subVars: Record<string, 
 
 const NON_RESULT_STEP_TYPES = new Set<SkillType>(['loop', 'end_loop', 'if', 'end_if', 'comment', 'bot', 'break', 'continue', 'stop']);
 
-const MAX_TRACE_NAME_CHARS = 28;
-
 function flowTrace(flow: FlowDefinition): string {
-  const name = (flow.name ?? '').trim() || 'Flow';
-  return name.length > MAX_TRACE_NAME_CHARS ? `${name.slice(0, MAX_TRACE_NAME_CHARS)}…` : name;
+  return flowTraceName(flow.name);
 }
 
 interface StepOutput {
@@ -178,7 +178,7 @@ export function unwrapStepOutput(type: SkillType, raw: string): StepOutput {
     }
     return { output: raw, subVars: {} };
   }
-  if (type === 'stock' || type === 'forex' || type === 'weather' || type === 'air_quality' || type === 'calendar' || type === 'mail_fetch' || type === 'almanac' || type === 'tw_invoice' || type === 'gmap_reviews' || type === 'research' || type === 'sysinfo' || type === 'share' || type === 'line_read' || type === 'telegram_read' || type === 'mcp' || type === 'x_thread' || type === 'x_media' || type === 'youtube_info' || type === 'youtube_download' || type === 'on_change') {
+  if (type === 'stock' || type === 'forex' || type === 'weather' || type === 'air_quality' || type === 'calendar' || type === 'mail_fetch' || type === 'almanac' || type === 'tw_invoice' || type === 'app_store' || type === 'price_search' || type === 'gmap_reviews' || type === 'research' || type === 'sysinfo' || type === 'share' || type === 'line_read' || type === 'telegram_read' || type === 'mcp' || type === 'x_thread' || type === 'x_media' || type === 'youtube_info' || type === 'youtube_download' || type === 'on_change') {
     try {
       const env = JSON.parse(raw) as Record<string, unknown>;
       if (env && typeof env.output === 'string') {
@@ -319,9 +319,10 @@ export async function resolveStepConfig(
     // Which chat started the run decides where the media goes: a file for Telegram, a URL for LINE.
     resolvedConfig.__triggerPlatform = context.get('bot.triggerPlatform') ?? '';
   }
-  if (step.type === 'x_media' || step.type === 'x_thread') {
-    // A site that wants a person to click its check may show them a window only when they started
-    // the run at the computer (`siteVerification.ts`).
+  if (step.type === 'x_media' || step.type === 'x_thread' || step.type === 'youtube_info' || step.type === 'youtube_download') {
+    // A site that wants a person to click its check (Cloudflare's; Google's "unusual traffic" for
+    // YouTube) may show them a window only when they started the run at the computer
+    // (`siteVerification.ts`).
     resolvedConfig.__interactive = context.get(INTERACTIVE_RUN_KEY) === '1' ? '1' : '';
   }
   if (LINK_READING_STEPS.has(step.type)) {
@@ -472,13 +473,29 @@ async function expandLoop(
         }
         loopContext.set(loopVar, valStr);
       }
+      // An item a list step handed on is seen once its pass went through; a pass that lost a step
+      // to emitFailFlag (or threw) leaves it to be retried next run.
+      const link = loopItemLink(item);
+      const softBefore = progress.softFailures;
+      const settle = async (outcome: 'ack' | 'failed'): Promise<void> => {
+        if (!link) return;
+        await currentSeenLedger()?.settleItem(link, outcome).catch((err: unknown) => {
+          sendLog(`⚠️ [${iterationTrace}] Could not record ${link} as ${outcome}: ${err instanceof Error ? err.message : String(err)}`);
+        });
+      };
       try {
         await runRange(flow, loopIndex + 1, bodyEnd, loopContext, deps, bodyLog, progress, depth + 1, iterationTrace, signal);
       } catch (err) {
-        if (err instanceof BreakLoopSignal) break;
-        if (!(err instanceof ContinueLoopSignal)) throw err;
+        if (err instanceof BreakLoopSignal || err instanceof ContinueLoopSignal) {
+          await settle(progress.softFailures > softBefore ? 'failed' : 'ack');
+          if (err instanceof BreakLoopSignal) break;
+          continue;
+        }
+        await settle('failed');
+        throw err;
       }
       if (progress.aborted) break;
+      await settle(progress.error || progress.softFailures > softBefore ? 'failed' : 'ack');
     }
     if (!nested) {
       settleLoopBody(flow, loopIndex, bodyEnd, lastStatus, onLog);
@@ -557,6 +574,11 @@ async function runRange(
     clearStepOutputFields(step, context);
     try {
       const resolvedConfig = await resolveStepConfig(step, context, flow.id, flowBotCommand(flow));
+      if (step.type === 'llm') {
+        // Its answer may go out as a Telegram caption this run: the model is told the room it has.
+        const budget = captionBudgetFor(flow.steps, i, context);
+        if (budget > 0) resolvedConfig[CAPTION_BUDGET_KEY] = String(budget);
+      }
       // Only commit the collected strings when this invocation finishes. A timed-out skill may
       // still call back later, but it cannot write into the run's live context.
       const stepDeps: FlowExecutorDeps = {
@@ -755,10 +777,28 @@ export async function executeFlow(
   initialContext?: Record<string, string>,
   signal?: AbortSignal,
 ): Promise<FlowExecutionResult> {
+  const ledger = new SeenLedger();
   const { result, usage } = await measureTokens(
-    () => runFlowSteps(flow, deps, onLog, initialContext, signal),
+    () => runWithSeenLedger(ledger, () => settledRun(ledger, () => runFlowSteps(flow, deps, onLog, initialContext, signal))),
   );
   return { ...result, tokenUsage: usage };
+}
+
+/**
+ * Settles what the run's list steps handed on and the loops did not: a stopped run never reached
+ * it; a list used whole (no loop) is seen only if the run went through without a failed step.
+ */
+async function settledRun(ledger: SeenLedger, run: () => Promise<FlowExecutionResult>): Promise<FlowExecutionResult> {
+  let whole: SeenOutcome = 'failed';
+  try {
+    const result = await run();
+    whole = result.aborted ? 'unreached' : result.success && !result.softFailures ? 'ack' : 'failed';
+    return result;
+  } finally {
+    await ledger.settleRun(whole).catch((err: unknown) => {
+      sendLog(`⚠️ [Flow] Could not settle the seen cache: ${err instanceof Error ? err.message : String(err)}`);
+    });
+  }
 }
 
 async function runFlowSteps(

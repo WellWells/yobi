@@ -1,6 +1,6 @@
 import { isByokTargetUrl } from '../../../shared/types';
 import { extractJsonFromLlmResponse } from '../../../shared/llmJsonExtract';
-import { compactPreview } from '../../../shared/textBudget';
+import { wholeCharsWithin } from '../../../shared/textBudget';
 import { preparePromptForProvider, runAutomation } from '../../providers';
 import { isByokRetryable, runByokCompletion } from '../../providers/byokClient';
 import type { ByokImage, ByokPrompt } from '../../providers/byokClient';
@@ -63,6 +63,8 @@ export async function runProviderText(
         withByokImages(prompt, session?.images),
         timeoutMs,
         byokAbort.signal,
+        // A run with a conversation resends this prompt as the head of its next request.
+        session?.transcript ? { cachePrefix: true, conversationId: session.transcript.id } : {},
       );
       return response;
     } finally {
@@ -109,6 +111,22 @@ export async function runProviderText(
 
 const MAX_TRANSPORT_RETRIES = 2;
 const TRANSPORT_BACKOFF_MS = 1_000;
+/** The longest a rate-limited turn waits on the endpoint's `Retry-After` before trying again. */
+export const RATE_LIMIT_WAIT_MAX_MS = 60_000;
+
+/**
+ * How long to wait before the next try. A 429 that names its wait (`Retry-After`) waits that long,
+ * at most `RATE_LIMIT_WAIT_MAX_MS` and never past the turn's own deadline: retrying sooner only
+ * spends the retry inside the window the endpoint said to sit out. Anything else keeps the 1 s /
+ * 2 s backoff.
+ */
+export function transportRetryDelayMs(err: unknown, attempt: number, remainingMs: number): number {
+  const backoff = TRANSPORT_BACKOFF_MS * (attempt + 1);
+  // Read by shape (a `ByokFailure` carries both): the same check whichever module built the error.
+  const failure = err as { status?: unknown; retryAfterMs?: unknown } | null;
+  if (failure?.status !== 429 || typeof failure.retryAfterMs !== 'number') return backoff;
+  return Math.max(0, Math.min(failure.retryAfterMs, RATE_LIMIT_WAIT_MAX_MS, remainingMs));
+}
 
 export function shouldRetryTransport(err: unknown, aborted: boolean): boolean {
   if (aborted) return false;
@@ -147,6 +165,7 @@ async function callWithTransportRetry(
   session?: ProviderSession,
 ): Promise<string> {
   let lastError: unknown;
+  const deadline = Date.now() + timeoutMs;
   for (let attempt = 0; attempt <= MAX_TRANSPORT_RETRIES; attempt++) {
     if (signal?.aborted) throw new FlowAbortError();
     try {
@@ -159,7 +178,7 @@ async function callWithTransportRetry(
         throw err;
       }
       if (attempt >= MAX_TRANSPORT_RETRIES || !shouldRetryTransport(err, signal?.aborted ?? false)) throw err;
-      await sleep(TRANSPORT_BACKOFF_MS * (attempt + 1), signal);
+      await sleep(transportRetryDelayMs(err, attempt, deadline - Date.now()), signal);
     }
   }
   throw lastError;
@@ -194,16 +213,28 @@ export async function runSessionText(
 /** `otherwise`: worth one more ask, but good enough when no repair is left. */
 export type Validation<T> = { ok: true; value: T } | { ok: false; error: string; otherwise?: T };
 
-const REJECTED_PREVIEW_CHARS = 500;
+export const REJECTED_PREVIEW_HEAD = 40_000;
+export const REJECTED_PREVIEW_TAIL = 10_000;
+const LINE_SEPARATORS = new RegExp('[\\u2028\\u2029]', 'g');
 
 /**
- * A rejected reply as one log-safe line. The reason alone ("No JSON object was found") cannot tell
- * a prose answer from a sign-in page from an empty read, and each repair costs a full round-trip.
- * Masked before it is flattened and cut: the `.env`-style rules are anchored to line starts, and a
+ * A rejected reply, whole, as one log-safe line: the exact text escaped as a JSON string body, so
+ * a newline, a line-end backslash or an `&#x20;` stays visible — a whitespace-collapsed preview hid
+ * exactly the characters that broke a parse. Only a reply past head + tail loses its middle, and
+ * says how much. Masked before it is cut: the `.env`-style rules are anchored to line starts, and a
  * token straddling the cut is still seen whole. yobi.log is plaintext.
  */
 export function rejectedReplyPreview(raw: string): string {
-  return compactPreview(maskSecrets(raw, true), REJECTED_PREVIEW_CHARS);
+  const masked = maskSecrets(raw, true);
+  // JSON.stringify leaves U+2028/U+2029 raw, and a log viewer breaks the line on them.
+  const escape = (text: string): string => JSON.stringify(text).slice(1, -1).replace(LINE_SEPARATORS, (ch) => `\\u${ch.charCodeAt(0).toString(16)}`);
+  if (masked.length <= REJECTED_PREVIEW_HEAD + REJECTED_PREVIEW_TAIL) return escape(masked);
+  const head = wholeCharsWithin(masked, REJECTED_PREVIEW_HEAD);
+  const tailStart = masked.length - REJECTED_PREVIEW_TAIL;
+  // Never start the tail on the second half of a surrogate pair.
+  const tail = masked.slice(/[\uDC00-\uDFFF]/.test(masked[tailStart]) ? tailStart + 1 : tailStart);
+  const omitted = masked.length - head.length - tail.length;
+  return `${escape(head)}…[${omitted} chars]…${escape(tail)}`;
 }
 
 export interface AskJsonOptions<T> {
@@ -212,6 +243,11 @@ export interface AskJsonOptions<T> {
   deps: FlowExecutorDeps;
   timeoutMs: number;
   validate: (json: unknown) => Validation<T>;
+  /**
+   * The rejection for a reply with no JSON in it, read from that reply; undefined (or no function)
+   * keeps the generic one. Lets a caller name what the model did instead of answering in JSON.
+   */
+  noJsonError?: (raw: string) => string | undefined;
   buildRepair: (prevRaw: string, error: string) => string;
   /**
    * The repair message for a BYOK conversation, where the rejected reply is already in the
@@ -253,10 +289,18 @@ export interface AskStructuredOptions<T> extends Omit<AskJsonOptions<T>, 'valida
 
 const NO_JSON_ERROR = 'No JSON object was found in the response';
 
-function jsonReader<T>(validate: (json: unknown) => Validation<T>): (raw: string) => Validation<T> {
+function jsonReader<T>(
+  validate: (json: unknown) => Validation<T>,
+  noJsonError?: (raw: string) => string | undefined,
+): (raw: string) => Validation<T> {
   return (raw) => {
     const json = extractJsonFromLlmResponse(raw);
-    return json === null ? { ok: false, error: NO_JSON_ERROR } : validate(json);
+    if (json === null) return { ok: false, error: noJsonError?.(raw) ?? NO_JSON_ERROR };
+    const checked = validate(json);
+    // Prose holding a bracket ("[image](…)", "[1]") reads as a JSON array: still no object, so
+    // the reply gets the same specific reason as prose with nothing in it.
+    if (checked.ok || (typeof json === 'object' && json !== null && !Array.isArray(json))) return checked;
+    return { ok: false, error: noJsonError?.(raw) ?? checked.error };
   };
 }
 
@@ -348,6 +392,6 @@ export async function askStructured<T>(opts: AskStructuredOptions<T>): Promise<A
 }
 
 export function askJson<T>(opts: AskJsonOptions<T>): Promise<AskJsonResult<T>> {
-  const { validate, ...rest } = opts;
-  return askStructured({ ...rest, read: jsonReader(validate) });
+  const { validate, noJsonError, ...rest } = opts;
+  return askStructured({ ...rest, read: jsonReader(validate, noJsonError) });
 }

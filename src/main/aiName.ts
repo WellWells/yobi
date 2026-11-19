@@ -1,9 +1,9 @@
 import { runOneShot, cleanOneShotReply } from './chat/oneShot';
 import type { OneShotIo } from './chat/oneShot';
-import { nameMaterial, nameOutline } from './quickExportName';
+import { nameMaterial } from './quickExportName';
 import { fenceUntrusted } from '../shared/promptFencing';
 import { inInterfaceScript, nameLanguageRule } from './interfaceScript';
-import { markdownHeadings } from '../shared/markdownTitle';
+import { nameExcerpt, samplePositions, sampleText } from '../shared/nameExcerpt';
 import { parseConversationDoc, stripConversationMarkers } from '../shared/conversationDoc';
 import type { ConversationHeadingAliases } from '../shared/conversationDoc';
 import { folderNameProblem, normalizeFolderName } from '../shared/conversationFolders';
@@ -12,15 +12,13 @@ import type { AiNameKind, AiNameRequest, AiNameResult, AiNameSource } from '../s
 import type { FlowDefinition, SkillInstance, TriggerConfig } from '../shared/types';
 
 /**
- * A name for whatever a rename box holds, from the model the user picked on its ✨ button. Only an
- * outline goes out — the first prompts and the answers' headings of a conversation, a category's
- * member titles, a flow's steps — never the thing whole: a name needs the topic, and a long
- * conversation would spend a full message for a dozen characters back. One request, no retry.
+ * A name from the model picked on the rename box. Documents and conversations include bounded
+ * content excerpts; categories and flows use their members and steps. One request, no retry.
  */
 
-export const CONVERSATION_PROMPTS = 3;
-export const PROMPT_MAX_CHARS = 160;
-export const ANSWER_OUTLINE_MAX_CHARS = 240;
+export const CONVERSATION_SAMPLE_TURNS = 5;
+export const PROMPT_MAX_CHARS = 200;
+export const ANSWER_EXCERPT_MAX_CHARS = 350;
 export const FLOW_MATERIAL_MAX_CHARS = 900;
 export const FLOW_DESCRIPTION_MAX_CHARS = 200;
 export const STEP_PROMPT_MAX_CHARS = 120;
@@ -36,24 +34,34 @@ function oneLine(text: string): string {
   return text.replace(/\s+/g, ' ').trim();
 }
 
-/** The first prompts, then the answers' headings: what the user asked about and what came back. */
+const ACKNOWLEDGEMENT = /^(?:好[的啊]?|謝謝|谢谢|感謝|感谢|了解|收到|ok|thanks|thank you)[\s。.!！]*$/i;
+
+/** Paired questions and answers from the start, interior and recent substantive turns. */
 export function conversationNameMaterial(markdown: string, aliases: ConversationHeadingAliases): string {
   const doc = parseConversationDoc(markdown, aliases);
   if (doc.turns.length === 0) {
     // Not a conversation (a single saved answer): the document outline instead.
     const material = nameMaterial(markdown);
-    return [material.headings, material.opening].filter(Boolean).join('\n\n');
+    return [material.headings, material.excerpts].filter(Boolean).join('\n\n');
   }
-  const prompts = doc.turns
-    .slice(0, CONVERSATION_PROMPTS)
-    .map((turn) => clip(oneLine(stripConversationMarkers(turn.prompt)), PROMPT_MAX_CHARS))
-    .filter(Boolean);
-  const headings = doc.turns.flatMap((turn) => markdownHeadings(stripConversationMarkers(turn.response)));
-  const outline = nameOutline(headings, ANSWER_OUTLINE_MAX_CHARS);
-  return [
-    ...(prompts.length > 0 ? ['Questions:', ...prompts.map((prompt) => `- ${prompt}`)] : []),
-    ...(outline ? ['Answer headings:', outline] : []),
-  ].join('\n');
+  const turns = doc.turns.map((turn, index) => ({
+    index, prompt: stripConversationMarkers(turn.prompt).trim(), response: stripConversationMarkers(turn.response).trim(),
+  }));
+  const substantive = turns.filter((turn) => !ACKNOWLEDGEMENT.test(turn.prompt) || turn.response.length > 160);
+  const candidates = substantive.length ? substantive : turns;
+  const recent = Math.min(2, candidates.length);
+  const positions = [
+    ...samplePositions(candidates.length - recent, CONVERSATION_SAMPLE_TURNS - recent),
+    ...Array.from({ length: recent }, (_, i) => candidates.length - recent + i),
+  ];
+  return positions.map((position) => {
+    const turn = candidates[position];
+    return [
+      `Turn ${turn.index + 1}:`,
+      `Question: ${sampleText(oneLine(turn.prompt), PROMPT_MAX_CHARS)}`,
+      `Answer: ${nameExcerpt(turn.response, ANSWER_EXCERPT_MAX_CHARS) || sampleText(turn.response, ANSWER_EXCERPT_MAX_CHARS)}`,
+    ].join('\n');
+  }).join('\n\n');
 }
 
 export function categoryNameMaterial(items: readonly string[]): string {
@@ -152,6 +160,11 @@ export function buildAiNamePrompt(kind: AiNameKind, material: string, { locale, 
     `- Keep it short: ${LENGTH[kind]}.`,
     nameLanguageRule(locale, 'material below'),
     '- Name the topic. Do not use words such as "conversation", "document", "category", "folder", "automation" or "flow" unless that is all it is.',
+    ...(['conversation', 'document'].includes(kind) ? [
+      '- Name the specific subject and its purpose, problem or result using the content excerpts, not generic section labels.',
+      '- Cover the substantive topic across the excerpts. Later explicit corrections supersede earlier assumptions; acknowledgements and incidental asides do not define the topic.',
+      '- Do not invent a subject or claim an outcome not established by the excerpts. Omission marks indicate missing text.',
+    ] : []),
     ...(kind === 'category' ? ['- Name what the items have in common, not one of them.'] : []),
     ...(taken.length > 0 ? [`- It must differ from each of these existing names: ${taken.map((name) => JSON.stringify(name)).join(', ')}.`] : []),
     ...(diskSafe ? ['- Do not use any of these characters: \\ / : * ? " < > |'] : []),
@@ -199,7 +212,7 @@ async function materialOf(source: AiNameSource, deps: AiNameDeps): Promise<strin
       const raw = await deps.readFile(source.path);
       if (!raw) return '';
       const material = nameMaterial(raw);
-      return [material.headings, material.opening].filter(Boolean).join('\n\n');
+      return [material.headings, material.excerpts].filter(Boolean).join('\n\n');
     }
     case 'category':
       return categoryNameMaterial(source.items);

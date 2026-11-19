@@ -62,8 +62,8 @@ export const SelectionTranslatePanel: React.FC<SelectionTranslatePanelProps> = (
 
       {state.status === 'error' && (
         <Group gap={8} wrap="nowrap" align="flex-start">
-          <Box c="var(--mantine-color-error)" style={{ lineHeight: 0, paddingTop: 2 }}><TriangleExclamationPoint size={14} /></Box>
-          <Text component="div" fz="var(--font-size-sm)" c="var(--mantine-color-error)">{state.error}</Text>
+          <Box c="var(--error-text)" style={{ lineHeight: 0, paddingTop: 2 }}><TriangleExclamationPoint size={14} /></Box>
+          <Text component="div" fz="var(--font-size-sm)" c="var(--error-text)">{state.error}</Text>
         </Group>
       )}
 

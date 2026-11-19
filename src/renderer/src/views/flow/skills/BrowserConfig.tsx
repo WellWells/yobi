@@ -120,6 +120,7 @@ export const BrowserConfig: React.FC<SkillConfigProps> = ({ step, onChange, t })
           hint={t('flow.skill.browser.requireAll.hint')}
           control={
             <ToggleSwitch
+              aria-label={t('flow.skill.browser.requireAll')}
               checked={step.config.requireAll === 'true'}
               onChange={(e) => onChange({ ...step.config, requireAll: e.currentTarget.checked ? 'true' : 'false' })}
             />
@@ -134,9 +135,10 @@ export const BrowserConfig: React.FC<SkillConfigProps> = ({ step, onChange, t })
           label={t('flow.skill.includeImage')}
           hint={rows.length === 1
             ? t('flow.skill.includeImage.hint')
-            : <Text span inherit c="var(--mantine-color-warning)" data-cover-skipped="">{t('flow.skill.includeImage.batchSkipped')}</Text>}
+            : <Text span inherit c="var(--warning-text)" data-cover-skipped="">{t('flow.skill.includeImage.batchSkipped')}</Text>}
           control={
             <ToggleSwitch
+              aria-label={t('flow.skill.includeImage')}
               checked={includeImage}
               onChange={(e) => onChange({ ...step.config, includeImage: e.currentTarget.checked ? 'true' : 'false' })}
             />
@@ -149,6 +151,7 @@ export const BrowserConfig: React.FC<SkillConfigProps> = ({ step, onChange, t })
         hint={fillTemplate(t('flow.skill.browser.emitFailFlag.hint'), { flag: `{{${step.outputKey}.isFailed}}` })}
         control={
           <ToggleSwitch
+            aria-label={t('flow.skill.browser.emitFailFlag')}
             checked={step.config.emitFailFlag === 'true'}
             onChange={(e) => onChange({ ...step.config, emitFailFlag: e.currentTarget.checked ? 'true' : 'false' })}
           />

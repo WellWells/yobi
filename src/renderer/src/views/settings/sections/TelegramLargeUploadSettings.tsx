@@ -115,7 +115,7 @@ export const TelegramLargeUploadSettings: React.FC<Props> = ({ saved, reload, t 
       </Group>
 
       {upload.message && (
-        <Text fz="var(--font-size-sm)" c="var(--mantine-color-error)">{upload.message}</Text>
+        <Text fz="var(--font-size-sm)" c="var(--error-text)">{upload.message}</Text>
       )}
       {upload.testStatus === 'ok' && (
         <StatusLine tone="success">

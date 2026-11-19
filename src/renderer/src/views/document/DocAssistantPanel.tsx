@@ -1,12 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActionIcon, Alert, Box, Group, Loader, Stack, Text, Tooltip } from '@mantine/core';
-import { ArrowUp, MessageSquarePlus, PanelRightClose, Quote, Sparkles, Square, X } from 'lucide-react';
+import { ActionIcon, Alert, Box, Group, Loader, Stack, Text } from '@mantine/core';
+import { MessageSquarePlus, PanelRightClose, Quote, Sparkles, X } from 'lucide-react';
 import { AppButton } from '../../components/AppButton';
-import { AppTextarea } from '../../components/AppTextarea';
+import { ASSISTANT_TEXT, AssistantComposer, AssistantSuggestions } from '../../components/AssistantPanel';
 import { PanelToolbar, ToolbarIconButton } from '../../components/PanelToolbar';
-import { ModelDropdown } from '../../components/chat/ModelDropdown';
 import { ensureWritingModel } from '../../components/chat/writingToolsActions';
-import { Z_POPOVER } from '../../config/zLayers';
 import { threadOf, useDocAssistantStore, type AssistantEditCard } from '../../store/docAssistantStore';
 import { useWritingToolsStore } from '../../store/writingToolsStore';
 import { useNarrowCaptionPane } from '../../store/captionStore';
@@ -93,10 +91,10 @@ export const DocAssistantPanel: React.FC<DocAssistantPanelProps> = ({ path, cont
   }, [messages.length, job?.phase]);
 
   const send = useCallback((text: string): void => {
-    if (!text.trim() || job) return;
+    if (!text.trim() || job || !modelUrl) return;
     setDraft('');
     void sendAssistantMessage(path, text);
-  }, [job, path]);
+  }, [job, modelUrl, path]);
 
   const reveal = useCallback((edit: AssistantEditCard): void => {
     revealEdit(contentAreaRef.current, edit);
@@ -117,8 +115,14 @@ export const DocAssistantPanel: React.FC<DocAssistantPanelProps> = ({ path, cont
 
   return (
     <Box
+      // A complementary landmark and an F6 region (WCAG 1.3.1, 2.4.1); F6 lands in its text box.
+      component="aside"
+      aria-label={t('notion.assistant.title')}
+      data-region="panel"
+      data-region-focus="textarea"
       w={width}
       pos="relative"
+      data-doc-assistant=""
       data-selection-ignore
       style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', borderLeft: '1px solid var(--border)', background: 'var(--bg-secondary)', minHeight: 0 }}
     >
@@ -139,15 +143,10 @@ export const DocAssistantPanel: React.FC<DocAssistantPanelProps> = ({ path, cont
       <PanelToolbar caption="right" withBottomBorder={false}>
         <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
           <Sparkles size={15} color="var(--text-secondary)" />
-          <Text fz="var(--font-size-sm)" fw={600} truncate>{t('notion.assistant.title')}</Text>
+          <Text fz={ASSISTANT_TEXT.heading} fw={600} truncate>{t('notion.assistant.title')}</Text>
         </Group>
       </PanelToolbar>
-      <PanelToolbar>
-        <Box style={{ minWidth: 0 }}>
-          {modelUrl && (
-            <ModelDropdown value={modelUrl} onChange={chooseModel} menuDirection="down" zIndex={Z_POPOVER} tooltipLabel={t('notion.assistant.model')} />
-          )}
-        </Box>
+      <PanelToolbar justify="flex-end">
         <Group gap={2} wrap="nowrap">
           <ToolbarIconButton
             icon={MessageSquarePlus}
@@ -162,18 +161,12 @@ export const DocAssistantPanel: React.FC<DocAssistantPanelProps> = ({ path, cont
         </Group>
       </PanelToolbar>
 
-      <Box ref={listRef} flex={1} px={14} py={12} style={{ overflowY: 'auto', minHeight: 0 }}>
+      <Box ref={listRef} flex={1} px={10} py={10} style={{ overflowY: 'auto', minHeight: 0 }}>
         {messages.length === 0 && !job && !error ? (
-          <Stack gap={10}>
-            <Text fz="var(--font-size-sm)" fw={600}>{t('notion.assistant.empty.title')}</Text>
-            <Text fz="var(--font-size-xs)" c="var(--text-muted)" style={{ lineHeight: 1.6 }}>{t('notion.assistant.empty.body')}</Text>
-            <Stack gap={6} align="flex-start">
-              {SUGGESTIONS.map((key) => (
-                <AppButton key={key} size="compact-sm" variant="default" onClick={() => send(t(key))} style={{ maxWidth: '100%' }}>
-                  <Text fz="var(--font-size-xs)" truncate>{t(key)}</Text>
-                </AppButton>
-              ))}
-            </Stack>
+          <Stack gap={8}>
+            <Text fz={ASSISTANT_TEXT.heading} fw={600}>{t('notion.assistant.empty.title')}</Text>
+            <Text fz={ASSISTANT_TEXT.body} c="var(--text-muted)" style={{ lineHeight: 1.6 }}>{t('notion.assistant.empty.body')}</Text>
+            <AssistantSuggestions suggestions={SUGGESTIONS.map((key) => t(key))} onSelect={setDraft} disabled={!modelUrl} />
           </Stack>
         ) : (
           <Stack gap={16}>
@@ -182,7 +175,7 @@ export const DocAssistantPanel: React.FC<DocAssistantPanelProps> = ({ path, cont
                 {message.quote && (
                   <Group gap={4} wrap="nowrap" maw="90%">
                     <Quote size={11} color="var(--text-muted)" style={{ flexShrink: 0 }} />
-                    <Text fz="var(--font-size-xs)" c="var(--text-muted)" truncate>{message.quote}</Text>
+                    <Text fz={ASSISTANT_TEXT.secondary} c="var(--text-muted)" truncate>{message.quote}</Text>
                   </Group>
                 )}
                 <Box
@@ -191,7 +184,7 @@ export const DocAssistantPanel: React.FC<DocAssistantPanelProps> = ({ path, cont
                   maw="90%"
                   style={{ background: 'var(--bg-hover)', borderRadius: 'var(--mantine-radius-lg)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
                 >
-                  <Text fz="var(--font-size-sm)">{message.text}</Text>
+                  <Text fz={ASSISTANT_TEXT.body}>{message.text}</Text>
                 </Box>
               </Stack>
             ) : (
@@ -212,13 +205,13 @@ export const DocAssistantPanel: React.FC<DocAssistantPanelProps> = ({ path, cont
             {job && (
               <Group gap={8} wrap="nowrap">
                 <Loader size={14} />
-                <Text fz="var(--font-size-xs)" c="var(--text-muted)">{phaseText}</Text>
+                <Text fz={ASSISTANT_TEXT.secondary} c="var(--text-muted)">{phaseText}</Text>
               </Group>
             )}
             {error && (
               <Alert color="var(--mantine-color-error)" variant="light" p={10}>
                 <Group justify="space-between" gap={8} wrap="nowrap">
-                  <Text fz="var(--font-size-xs)">{error.message}</Text>
+                  <Text fz={ASSISTANT_TEXT.body}>{error.message}</Text>
                   <AppButton
                     size="compact-sm"
                     variant="subtle"
@@ -236,48 +229,30 @@ export const DocAssistantPanel: React.FC<DocAssistantPanelProps> = ({ path, cont
         )}
       </Box>
 
-      <Box px={12} pt={8} pb={12} style={{ borderTop: '1px solid var(--border)', flexShrink: 0 }}>
+      <AssistantComposer
+        inputRef={inputRef}
+        value={draft}
+        onChange={setDraft}
+        onSend={() => send(draft)}
+        onStop={() => cancelAssistant(path)}
+        running={Boolean(job)}
+        modelUrl={modelUrl}
+        onModelChange={chooseModel}
+        placeholder={t(selection ? 'notion.assistant.placeholderSelection' : 'notion.assistant.placeholder')}
+        modelLabel={t('notion.assistant.model')}
+        sendLabel={t('notion.assistant.send')}
+        stopLabel={t('notion.assistant.stop')}
+      >
         {selection && (
           <Group gap={6} wrap="nowrap" mb={6} px={8} py={4} style={{ background: 'var(--bg-hover)', borderRadius: 'var(--mantine-radius-sm)' }}>
             <Quote size={12} color="var(--text-muted)" style={{ flexShrink: 0 }} />
-            <Text fz="var(--font-size-xs)" c="var(--text-secondary)" truncate style={{ flex: 1, minWidth: 0 }}>{selection.text}</Text>
+            <Text fz={ASSISTANT_TEXT.secondary} c="var(--text-secondary)" truncate style={{ flex: 1, minWidth: 0 }}>{selection.text}</Text>
             <ActionIcon variant="subtle" size="xs" c="dimmed" aria-label={t('notion.assistant.selection.remove')} onClick={() => patch(path, { selection: null })}>
               <X size={12} />
             </ActionIcon>
           </Group>
         )}
-        <Group gap={6} wrap="nowrap" align="flex-end">
-          <AppTextarea
-            ref={inputRef}
-            value={draft}
-            onChange={(event) => setDraft(event.currentTarget.value)}
-            placeholder={t(selection ? 'notion.assistant.placeholderSelection' : 'notion.assistant.placeholder')}
-            autosize
-            minRows={2}
-            maxRows={8}
-            style={{ flex: 1 }}
-            onKeyDown={(event) => {
-              // Enter sends, Shift+Enter is a new line; Enter that ends an IME composition is neither.
-              if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return;
-              event.preventDefault();
-              send(draft);
-            }}
-          />
-          {job ? (
-            <Tooltip label={t('notion.assistant.stop')} position="top">
-              <ActionIcon size={32} variant="default" aria-label={t('notion.assistant.stop')} onClick={() => cancelAssistant(path)}>
-                <Square size={13} />
-              </ActionIcon>
-            </Tooltip>
-          ) : (
-            <Tooltip label={t('notion.assistant.send')} position="top">
-              <ActionIcon size={32} variant="filled" aria-label={t('notion.assistant.send')} disabled={!draft.trim()} onClick={() => send(draft)}>
-                <ArrowUp size={15} />
-              </ActionIcon>
-            </Tooltip>
-          )}
-        </Group>
-      </Box>
+      </AssistantComposer>
     </Box>
   );
 };

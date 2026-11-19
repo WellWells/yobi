@@ -104,7 +104,7 @@ export const BackupExportModal: React.FC<Props> = ({ open, t, onClose }) => {
 
         <Text fz="xs" c="dimmed">{t('settings.backup.secretsNote')}</Text>
 
-        {error && <Text fz="xs" c="var(--mantine-color-error)">{error}</Text>}
+        {error && <Text fz="xs" c="var(--error-text)">{error}</Text>}
 
         <Group justify="flex-end">
           <AppButton

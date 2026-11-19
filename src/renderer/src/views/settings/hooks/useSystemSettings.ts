@@ -11,6 +11,7 @@ const DEFAULT_NOTIFY_EVENTS: NotifyEventPrefs = {
   chatFailure: true,
   flowSuccess: false,
   flowFailure: true,
+  botRequests: true,
 };
 
 export function useSystemSettings() {

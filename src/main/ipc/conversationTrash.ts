@@ -51,7 +51,8 @@ function failureText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-async function moveToTrash(raw: unknown): Promise<TrashResult> {
+/** The sidebar's delete, and the Yobi connector's: Recently Deleted, the window told. */
+export async function moveToTrash(raw: unknown): Promise<TrashResult> {
   const paths = await conversationPaths(raw);
   if (paths.length === 0) return { trashIds: [], failed: [], busy: [] };
   const result = await trashConversations(paths, await getOutputDir()).catch((err: unknown): TrashResult => {

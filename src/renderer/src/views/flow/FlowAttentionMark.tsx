@@ -41,7 +41,7 @@ export const FlowAttentionMark: React.FC<FlowAttentionMarkProps> = ({ attention,
       {attention.length > 0 && (
         <Tooltip label={attentionText} position="top" maw={280} multiline>
           <Box component="span" role="img" aria-label={attentionText} style={{ display: 'inline-flex' }}>
-            <TriangleExclamationPoint size={13} color="var(--mantine-color-warning)" />
+            <TriangleExclamationPoint size={13} color="var(--warning-text)" />
           </Box>
         </Tooltip>
       )}

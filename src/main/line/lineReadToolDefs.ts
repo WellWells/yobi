@@ -6,7 +6,7 @@
  * accepted (`x-also-named`).
  */
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
-import { ALSO_NAMED } from '../mcp/schemaAliases';
+import { ALSO_NAMED, ENUM_ALIASES } from '../mcp/schemaAliases';
 import { SEARCH_TYPE_NAMES } from './lineSearchSql';
 import { STATS_GROUPINGS } from './reader';
 import { CHAT_TYPE_FILTERS } from './schema';
@@ -25,7 +25,15 @@ const FROM = {
 };
 const SINCE = "Range start: YYYY-MM-DD, YYYYMMDD, 'YYYY-MM-DD HH:MM', RFC3339, unix seconds or milliseconds; this computer's local time unless an offset is given. A sent_at can be passed back as it is.";
 const UNTIL = 'Range end (same formats; a bare date includes that whole day)';
-const ORDER = { type: 'string', description: 'desc = newest first (default), asc = oldest first', enum: ['desc', 'asc'] };
+const ORDER = {
+  type: 'string',
+  description: 'desc = newest first (default), asc = oldest first',
+  enum: ['desc', 'asc'],
+  [ENUM_ALIASES]: {
+    newest: 'desc', latest: 'desc', descending: 'desc', recent: 'desc',
+    oldest: 'asc', earliest: 'asc', ascending: 'asc',
+  },
+};
 const IDS = { type: 'boolean', description: 'Give sender_id on every row (by default only where two senders share a name)' };
 const CHAT_RESOLVES =
   'A chat name resolves by exact chat_id, then exact name, case-insensitive name, then substring (threads and your own chat only when nothing else matches) and must pick one chat: otherwise CHAT_AMBIGUOUS lists candidates to pick from (never guess), and a note says which chat a name resolved to.';

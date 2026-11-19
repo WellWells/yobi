@@ -5,6 +5,7 @@ import { fillTemplate } from '../shared/fillTemplate';
 import { MAP_REPORT_PROMPT_TOO_LONG } from '../shared/mapReviewsPrompt';
 import { formatResetTime, parseClaudeUsageLimit } from './providers/claudeUsageLimit';
 import { CLAUDE_BUSY, CLAUDE_LEFT_CONVERSATION } from './providers/claudeReadScript';
+import { DEEPSEEK_SEND_REFUSED } from './providers/deepseekReadScript';
 import { parseGeminiPromptTooLong } from './providers/geminiPromptTooLong';
 import { GEMINI_SIGNED_OUT_PROMPT_CAP } from './providers/geminiSignInState';
 import { WORKER_WINDOW_UNAVAILABLE } from './workerWindowError';
@@ -44,6 +45,11 @@ export function getLangCache(): Record<string, string> {
 
 export function setLangCache(data: Record<string, string>): void {
   langCache = data;
+}
+
+/** The en-US pack, for text that goes to a model rather than to the user. */
+export function getEnCache(): Record<string, string> {
+  return enCache;
 }
 
 export function setEnCache(data: Record<string, string>): void {
@@ -249,6 +255,10 @@ function localizeKnownError(raw: string, strings: Record<string, string>): strin
   if (raw.startsWith('GEMINI_BOUNCED')) return t(strings, 'main.error.answerNotStarted', { provider: 'Gemini' });
   if (raw.startsWith(CLAUDE_BUSY)) return t(strings, 'main.error.claudeBusy');
   if (raw.startsWith(CLAUDE_LEFT_CONVERSATION)) return t(strings, 'main.error.claudeLeftConversation');
+  if (raw.startsWith(`${DEEPSEEK_SEND_REFUSED}:`)) {
+    const notice = / — (.+)$/.exec(raw)?.[1]?.trim() ?? '';
+    return t(strings, notice ? 'main.error.deepseekRefused' : 'main.error.deepseekRefusedNoNotice', { notice });
+  }
   for (const [pattern, key] of PROVIDER_ERROR_PATTERNS) {
     const match = pattern.exec(raw);
     if (match) return t(strings, key, { provider: match[1] });

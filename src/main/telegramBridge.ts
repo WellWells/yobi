@@ -56,6 +56,7 @@ export async function buildTelegramSettingsSnapshot(): Promise<TelegramSettingsS
       apiHashPreview: maskToken(config.telegram.apiHash),
     },
     allowGroupCommands: config.telegram.allowGroupCommands,
+    replaceLinkMessage: config.telegram.replaceLinkMessage,
     permissions: config.telegram.permissions,
     defaultGrants: config.telegram.defaultGrants,
     llmDirect: config.telegram.llmDirect,

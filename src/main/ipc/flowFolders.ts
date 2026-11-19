@@ -1,10 +1,14 @@
 import { ipcMain } from 'electron';
 import { IPC } from '../../shared/types';
 import type { FlowFolderDeleteResult, FlowFolderMoveResult, FlowFolderResult } from '../../shared/flowFolders';
-import { sendLog, sendToRenderer } from '../helpers';
+import type { FlowFolderRunState } from '../../shared/flowFolderRun';
+import { folderKey } from '../../shared/conversationFolders';
+import { sendLog, sendToRenderer, sendWebNotification } from '../helpers';
+import { getLangCache, t } from '../i18n';
 import { getFlowDataDir } from '../flow/paths';
 import { configureFlowFolders } from '../flow/flowFolders';
 import type { FlowFolderStore } from '../flow/flowFolders';
+import { FlowFolderRunner } from '../flow/flowFolderRun';
 import type { IpcContext } from './context';
 
 const FAILED = { ok: false, error: 'failed' } as const;
@@ -56,5 +60,49 @@ export function registerFlowFolderHandlers(ctx: IpcContext): FlowFolderStore {
     return guarded<FlowFolderMoveResult>('move flows into', FAILED, () => store.move(flowIds, folder, before ?? undefined));
   });
 
+  const runner = new FlowFolderRunner({
+    folderFlows: async (folder) => {
+      const found = (await store.list()).find((entry) => folderKey(entry.name) === folderKey(folder));
+      if (!found || !flowManager) return found ? [] : null;
+      const inside = new Set(found.flowIds);
+      return flowManager.getAll().filter((flow) => inside.has(flow.id));
+    },
+    flowById: (flowId) => flowManager?.getAll().find((flow) => flow.id === flowId),
+    isBusy: (flowId) => flowManager?.isQueuedOrRunning(flowId) ?? false,
+    run: (flowId, signal) => {
+      if (!flowManager) return Promise.reject(new Error('FlowManager not available'));
+      return flowManager.queueExecutionWithId(flowId, undefined, 'ui', undefined, signal).result;
+    },
+    broadcast: (states) => sendToRenderer(IPC.FLOW_FOLDER_RUN_CHANGED, states),
+    notifyDone: (state) => notifyFolderRunDone(state, (flowId) => flowManager?.getAll().find((flow) => flow.id === flowId)?.name ?? ''),
+    log: sendLog,
+  });
+
+  ipcMain.handle(IPC.FLOW_FOLDER_RUN, (_event, folder: unknown) => {
+    if (typeof folder !== 'string') return { ok: false, reason: 'unknownFolder' };
+    return runner.start(folder).catch((err: unknown) => {
+      sendLog(`⚠️ [Flow] Could not run a flow folder: ${err instanceof Error ? err.message : String(err)}`);
+      return { ok: false, reason: 'unknownFolder' };
+    });
+  });
+  ipcMain.handle(IPC.FLOW_FOLDER_RUN_STOP, (_event, folder: unknown) => (typeof folder === 'string' ? runner.stop(folder) : false));
+  ipcMain.handle(IPC.FLOW_FOLDER_RUN_LIST, () => runner.list());
+
   return store;
+}
+
+/** One notice for the whole batch: the flows' own notices still say what each did. */
+function notifyFolderRunDone(state: FlowFolderRunState, nameOf: (flowId: string) => string): void {
+  const strings = getLangCache();
+  const title = t(strings, 'notify.flowFolder.done.title', { folder: state.folder });
+  if (state.failed.length === 0) {
+    sendWebNotification(title, t(strings, 'notify.flowFolder.done.allOk', { count: String(state.succeeded.length) }), 'success');
+    return;
+  }
+  const names = state.failed.map(nameOf).filter(Boolean).join(t(strings, 'flow.folder.sort.nameSeparator'));
+  sendWebNotification(title, t(strings, 'notify.flowFolder.done.someFailed', {
+    ok: String(state.succeeded.length),
+    failed: String(state.failed.length),
+    names,
+  }), 'warning');
 }

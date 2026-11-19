@@ -75,7 +75,7 @@ export const PromptBlock = React.memo<PromptBlockProps>(({
             gap: 4,
             marginTop: 6,
             fontSize: 'var(--font-size-sm)',
-            color: 'var(--accent)',
+            color: 'var(--accent-text)',
             padding: '2px 0',
             fontWeight: 600,
           }}

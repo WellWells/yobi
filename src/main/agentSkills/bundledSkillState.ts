@@ -22,6 +22,8 @@ export interface BundledRecord {
   version: string;
   hash: string;
   revisions: BundledRevision[];
+  /** The user went back to an archived revision: a newer shipped copy waits for them to take it. */
+  held?: boolean;
 }
 
 export type BundledState = Record<string, BundledRecord>;
@@ -63,7 +65,7 @@ export async function readBundledState(root: string): Promise<BundledState> {
         throw new Error('Invalid bundled skill revision record.');
       }
     }
-    records[name] = { version: entry.version, hash: entry.hash, revisions: entry.revisions };
+    records[name] = { version: entry.version, hash: entry.hash, revisions: entry.revisions, ...(entry.held === true ? { held: true } : {}) };
   }
   return records;
 }

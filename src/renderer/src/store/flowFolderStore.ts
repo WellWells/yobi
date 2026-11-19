@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { FlowFolder } from '../../../shared/flowFolders';
+import type { FlowFolderRunState } from '../../../shared/flowFolderRun';
 import { folderKey } from '../../../shared/conversationFolders';
 import { flowFolderApi } from '../api/electronApi';
 import { parseStoredOpenFolders } from './folderStore';
@@ -14,6 +15,13 @@ import type { FlowSectionKey } from '../views/flow/flowSidebarRows';
 
 const OPEN_STORAGE_KEY = 'yobi-flow-folders-open';
 const SECTIONS_STORAGE_KEY = 'yobi-flow-sections-collapsed';
+/** The flow home's closed groups (`folderKey`s; '' = 未分類); apart from the sidebar's, which start closed. */
+const HOME_CLOSED_STORAGE_KEY = 'yobi-flow-home-closed';
+
+/** The key of a flow home group: its folder's, or '' for the flows in none. */
+export function homeGroupKey(name: string | null): string {
+  return name === null ? '' : folderKey(name);
+}
 
 export function parseStoredSections(raw: string | null): Set<FlowSectionKey> {
   if (!raw) return new Set();
@@ -53,12 +61,20 @@ interface FlowFolderState {
   renameOpen: (from: string, to: string) => void;
   setCollapsed: (section: FlowSectionKey, collapsed: boolean) => void;
   toggleCollapsed: (section: FlowSectionKey) => void;
+  /** `homeGroupKey`s of the flow home's closed groups. */
+  homeClosed: ReadonlySet<string>;
+  toggleHomeClosed: (name: string | null) => void;
+  /** 「全部執行」 batches running now, by `folderKey`. */
+  runs: Readonly<Record<string, FlowFolderRunState>>;
+  setRuns: (states: readonly FlowFolderRunState[]) => void;
 }
 
 export const useFlowFolderStore = create<FlowFolderState>((set, get) => ({
   folders: [],
   open: parseStoredOpenFolders(readStored(OPEN_STORAGE_KEY)),
   collapsed: parseStoredSections(readStored(SECTIONS_STORAGE_KEY)),
+  homeClosed: parseStoredOpenFolders(readStored(HOME_CLOSED_STORAGE_KEY)),
+  runs: {},
   setFolders: (folders) => set({ folders }),
   setOpen: (name, open) => {
     const key = folderKey(name);
@@ -71,12 +87,21 @@ export const useFlowFolderStore = create<FlowFolderState>((set, get) => ({
   },
   toggleOpen: (name) => get().setOpen(name, !get().open.has(folderKey(name))),
   renameOpen: (from, to) => {
-    if (!get().open.has(folderKey(from))) return;
-    const next = new Set(get().open);
-    next.delete(folderKey(from));
-    next.add(folderKey(to));
-    writeStored(OPEN_STORAGE_KEY, next);
-    set({ open: next });
+    const { open, homeClosed } = get();
+    if (open.has(folderKey(from))) {
+      const next = new Set(open);
+      next.delete(folderKey(from));
+      next.add(folderKey(to));
+      writeStored(OPEN_STORAGE_KEY, next);
+      set({ open: next });
+    }
+    if (homeClosed.has(folderKey(from))) {
+      const next = new Set(homeClosed);
+      next.delete(folderKey(from));
+      next.add(folderKey(to));
+      writeStored(HOME_CLOSED_STORAGE_KEY, next);
+      set({ homeClosed: next });
+    }
   },
   setCollapsed: (section, collapsed) => {
     if (get().collapsed.has(section) === collapsed) return;
@@ -87,6 +112,20 @@ export const useFlowFolderStore = create<FlowFolderState>((set, get) => ({
     set({ collapsed: next });
   },
   toggleCollapsed: (section) => get().setCollapsed(section, !get().collapsed.has(section)),
+  toggleHomeClosed: (name) => {
+    const key = homeGroupKey(name);
+    const next = new Set(get().homeClosed);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    writeStored(HOME_CLOSED_STORAGE_KEY, next);
+    set({ homeClosed: next });
+  },
+  // The same batches again (a broadcast that changed nothing, the first read after the broadcast)
+  // keep the held map: the flow page and its home both read it whole.
+  setRuns: (states) => set((current) => {
+    const runs = Object.fromEntries(states.filter((state) => !state.finished).map((state) => [folderKey(state.folder), state]));
+    return JSON.stringify(runs) === JSON.stringify(current.runs) ? current : { runs };
+  }),
 }));
 
 /** Reads the folders from main again. */
@@ -102,4 +141,6 @@ export function initFlowFolderStore(): void {
   if (listening) return;
   listening = true;
   flowFolderApi.onChanged((folders) => useFlowFolderStore.getState().setFolders(folders));
+  void flowFolderApi.listRuns().then((states) => useFlowFolderStore.getState().setRuns(states), () => undefined);
+  flowFolderApi.onRunsChanged((states) => useFlowFolderStore.getState().setRuns(states));
 }

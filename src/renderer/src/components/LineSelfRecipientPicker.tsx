@@ -3,6 +3,7 @@ import { Group, Stack, Text } from '@mantine/core';
 import { RefreshCw, Settings } from 'lucide-react';
 import { AppButton } from './AppButton';
 import { MultiSelectDropdown } from './MultiSelectDropdown';
+import { nameProps } from './a11y';
 import { RecipientNotes } from './RecipientNotes';
 import { lineApi, socketBotApi } from '../api/electronApi';
 import { useI18nStore } from '../store/i18nStore';
@@ -72,8 +73,7 @@ export const LineSelfRecipientPicker: React.FC<LineSelfRecipientPickerProps> = (
   return (
     <Stack gap={4}>
       <MultiSelectDropdown
-        label={label}
-        aria-label={label ? undefined : t('flow.recipient.lineSelf.pick')}
+        {...nameProps(label, t('flow.recipient.lineSelf.pick'))}
         options={withTypedRecipient(options, search, t)}
         value={tokens}
         onChange={(next) => onChange(next.join(','))}
@@ -87,7 +87,7 @@ export const LineSelfRecipientPicker: React.FC<LineSelfRecipientPickerProps> = (
       />
       {failure && (
         <Group gap="xs" align="center" wrap="nowrap">
-          <Text fz="xs" c="var(--mantine-color-warning)" style={{ flex: 1 }}>{failure.message}</Text>
+          <Text fz="xs" c="var(--warning-text)" style={{ flex: 1 }}>{failure.message}</Text>
           {failure.reason === 'disabled' ? (
             <AppButton
               variant="light"

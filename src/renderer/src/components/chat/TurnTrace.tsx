@@ -7,6 +7,7 @@ import { runAsText, traceFromRun } from '../../utils/agentTrace';
 import { AgentTraceRows } from '../AgentTraceRows';
 import { CopyIconButton } from '../CopyIconButton';
 import { TraceHeader } from './TraceHeader';
+import { TraceScroll } from './TraceScroll';
 
 interface TurnTraceProps {
   runId: string;
@@ -68,7 +69,12 @@ function TurnTraceInner({ runId, title, durationMs, t }: TurnTraceProps) {
           {loaded?.kind === 'run' && steps.length === 0 && (
             <Text fz="var(--font-size-xs)" c="dimmed">{t('chat.trace.empty')}</Text>
           )}
-          {steps.length > 0 && <AgentTraceRows trace={steps} />}
+          {steps.length > 0 && (
+            // Opened while it ran: it lands where the reader was watching, on the newest step.
+            <TraceScroll follow={liveView !== undefined}>
+              <AgentTraceRows trace={steps} />
+            </TraceScroll>
+          )}
           {loaded?.kind === 'run' && steps.length > 0 && (
             <Box mt={4}>
               <CopyIconButton

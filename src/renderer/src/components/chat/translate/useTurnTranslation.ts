@@ -6,7 +6,7 @@ import { findModelOption } from '../../../config/models';
 import { useProviderModels } from '../../../hooks/useProviderModels';
 import { NEW_CONVERSATION_KEY } from '../../../store/appStore';
 import {
-  translateBusy, turnKey, useTranslateStore, type TranslationView, type TurnTranslateJob,
+  translateBusy, turnKey, useTranslateStore, type TurnTranslateJob,
 } from '../../../store/translateStore';
 
 export interface TurnTranslationState {
@@ -16,7 +16,6 @@ export interface TurnTranslationState {
   outdated: boolean;
   job: TurnTranslateJob | undefined;
   busy: boolean;
-  view: TranslationView;
 }
 
 /**
@@ -28,12 +27,19 @@ export function useTurnTranslation(path: string, turnIndex: number, meta: TurnMe
   const temp = !path || path === NEW_CONVERSATION_KEY;
   const job = useTranslateStore((s) => s.jobs[key]);
   const remembered = useTranslateStore((s) => (temp ? s.memory[key] : undefined));
-  const view = useTranslateStore((s) => s.views[key] ?? 'both');
   const hash = useMemo(() => fnv1a(response.trim()), [response]);
   const stored = temp ? remembered ?? null : readTurnTranslation(meta);
   const outdated = stored !== null && stored.h !== hash;
-  const translation = temp && outdated ? null : stored;
-  return { key, translation, outdated: translation !== null && outdated, job, busy: translateBusy(job), view };
+  const translation = (temp && outdated) || (outdated && replacedBy(stored, response)) ? null : stored;
+  return { key, translation, outdated: translation !== null && outdated, job, busy: translateBusy(job) };
+}
+
+/**
+ * The answer was replaced with its own translation: nothing is left to show under it. The marker
+ * stays, so undoing the replacement brings the translation back with the original.
+ */
+export function replacedBy(translation: TurnTranslation | null, response: string): boolean {
+  return translation !== null && translation.text.trim() === response.trim();
 }
 
 /** The provider's name as menus show it, for "translated by". */

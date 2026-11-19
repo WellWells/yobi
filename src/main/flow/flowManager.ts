@@ -694,6 +694,11 @@ export class FlowManager {
     });
   }
 
+  /** A run of this flow is in progress or waiting in the queue. */
+  isQueuedOrRunning(flowId: string): boolean {
+    return this._running.has(flowId) || this.queue.hasFlow(flowId);
+  }
+
   abort(flowId: string): boolean {
     const removedFromQueue = this.queue.cancelQueuedForFlow(flowId);
     const controller = this._abortControllers.get(flowId);
@@ -739,6 +744,8 @@ export class FlowManager {
     else stopSignal?.addEventListener('abort', stopRun, { once: true });
     const event: FlowExecutionEvent = { flowId, name: flow.name };
     sendToRenderer(IPC.FLOW_EXECUTION_STARTED, event);
+    // A run that throws before it has a result failed.
+    let outcome: FlowExecutionEvent['outcome'] = 'failed';
 
     try {
       // A failed step arrives with both texts: the run panel shows `displayError`, while its copy
@@ -757,6 +764,7 @@ export class FlowManager {
           controller.signal,
         ),
       ));
+      outcome = result.aborted ? 'stopped' : result.success ? 'succeeded' : 'failed';
       this.recordRunMetrics(result);
       const deleted = fire?.oneTimeSchedule === true && await this.deleteAfterOneTimeRun(flowId, result);
       this.notifyRunOutcome(flow, result, deleted);
@@ -769,7 +777,7 @@ export class FlowManager {
       const waiters = this._runEndWaiters.get(runKey) ?? [];
       this._runEndWaiters.delete(runKey);
       for (const wake of waiters) wake();
-      sendToRenderer(IPC.FLOW_EXECUTION_ENDED, { flowId, name: flow.name } satisfies FlowExecutionEvent);
+      sendToRenderer(IPC.FLOW_EXECUTION_ENDED, { flowId, name: flow.name, outcome } satisfies FlowExecutionEvent);
       this.blankWorkerWhenIdle();
     }
   }
@@ -780,7 +788,7 @@ export class FlowManager {
    */
   private admitSystemFire(flowId: string, event: SystemEvent): boolean {
     const name = this.flows.find((f) => f.id === flowId)?.name ?? flowId;
-    if (this._running.has(flowId) || this.queue.hasFlow(flowId)) {
+    if (this.isQueuedOrRunning(flowId)) {
       sendLog(`🖥️ [Flow] "${name}" is still queued or running — skipped this ${event}`);
       return false;
     }

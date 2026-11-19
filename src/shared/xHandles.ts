@@ -1,20 +1,38 @@
 /** X screen names: 1-15 letters, digits or underscores. */
 const HANDLE_RE = /^[A-Za-z0-9_]{1,15}$/;
 
-const X_HOSTS = new Set(['x.com', 'www.x.com', 'mobile.x.com', 'twitter.com', 'www.twitter.com', 'mobile.twitter.com']);
+const X_HOSTS: ReadonlySet<string> = new Set(['x.com', 'www.x.com', 'mobile.x.com', 'twitter.com', 'www.twitter.com', 'mobile.twitter.com']);
+
+/**
+ * Embed-fix mirrors people re-post X posts through so chat apps show the media (FxEmbed's
+ * fixupx / fixvx, BetterTwitFix's vxtwitter / fxtwitter, and vstwitter, gone since 2023 while its
+ * links still name live posts). Their post path is X's own, so only a post link is read from them,
+ * rebuilt on x.com; nothing is ever fetched from the mirror.
+ */
+const X_POST_MIRROR_HOSTS: ReadonlySet<string> = new Set(
+  ['fixupx.com', 'fixvx.com', 'vxtwitter.com', 'fxtwitter.com', 'vstwitter.com'].flatMap((host) => [host, `www.${host}`]),
+);
 
 /** Paths that look like a profile but are X's own pages. */
 const RESERVED_PATHS = new Set(['home', 'explore', 'search', 'i', 'settings', 'notifications', 'messages', 'compose', 'login', 'logout', 'signup', 'tos', 'privacy']);
 
-function xUrl(raw: string): URL | null {
+function xUrl(raw: string, hosts: ReadonlySet<string> = X_HOSTS): URL | null {
   const withScheme = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
   try {
     const url = new URL(withScheme);
-    return X_HOSTS.has(url.hostname.toLowerCase()) ? url : null;
+    return hosts.has(url.hostname.toLowerCase()) ? url : null;
   } catch {
     return null;
   }
 }
+
+/** The X post URL forms' hosts: X's own and the embed-fix mirrors. */
+function xPostUrl(raw: string): URL | null {
+  return xUrl(raw) ?? xUrl(raw, X_POST_MIRROR_HOSTS);
+}
+
+/** Whether a token may hold an X post URL, before parsing it: a cheap host check for the link table. */
+export const X_POST_HOST_HINT = /(?:^|[./])(?:x|twitter|fixupx|fixvx|vxtwitter|fxtwitter|vstwitter)\.com\//i;
 
 /** The screen name in `@name`, `name`, or an x.com / twitter.com profile or post URL; null otherwise. */
 export function parseXHandle(entry: string): string | null {
@@ -57,9 +75,9 @@ export function splitXAccountLines(text: string): string[] {
   return text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
 }
 
-/** The post id (and author, when the URL names one) in an x.com / twitter.com status URL. */
+/** The post id (and author, when the URL names one) in an x.com / twitter.com (or embed-fix mirror) status URL. */
 export function parseXPostUrl(raw: string): { author: string; id: string } | null {
-  const url = xUrl(raw.trim());
+  const url = xPostUrl(raw.trim());
   if (!url) return null;
   const match = /^\/(?:([A-Za-z0-9_]{1,15})|i(?:\/web)?)\/status(?:es)?\/(\d{1,25})/.exec(url.pathname);
   if (!match) return null;

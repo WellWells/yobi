@@ -1,7 +1,17 @@
 import { create } from 'zustand';
+import { parseOutlineWidth } from '../views/flow/outline/outlineWidth';
 
 /** Where "show the outline" is kept: a view preference of this window, like the sidebar's fold. */
 export const OUTLINE_OPEN_KEY = 'flow.outline.open';
+export const OUTLINE_WIDTH_KEY = 'flow.outline.width';
+
+function readWidth(): number {
+  try {
+    return parseOutlineWidth(globalThis.localStorage?.getItem(OUTLINE_WIDTH_KEY) ?? null);
+  } catch {
+    return parseOutlineWidth(null);
+  }
+}
 
 function readOpen(): boolean {
   try {
@@ -14,6 +24,8 @@ function readOpen(): boolean {
 interface FlowOutlineState {
   /** Beside the editor when it is wide enough. */
   open: boolean;
+  /** Preferred width, retained when a smaller editor temporarily constrains the pane. */
+  width: number;
   /** The drawer, when the editor is too narrow to have it beside. */
   drawerOpen: boolean;
   /** The step being worked on, per flow; only in memory, never in the flow. */
@@ -22,11 +34,15 @@ interface FlowOutlineState {
   folded: Record<string, readonly string[] | undefined>;
   /** Loops and conditions folded in the editor (their steps hidden under the card), per flow. */
   editorFolded: Record<string, readonly string[] | undefined>;
-  /** The steps the editor shows right now, first and last, for the outline's rail. */
-  visible: { flowId: string; first: string; last: string } | null;
+  /**
+   * Skip-only conditions the user opened, per flow (`guardBlocks`): the rest read as one row in the
+   * editor and the outline. Shared by both, so opening one shows its steps in both places.
+   */
+  openGuards: Record<string, readonly string[] | undefined>;
   /** Bumped to ask the outline's search box for focus (Ctrl+F). */
   focusSearch: number;
   setOpen: (open: boolean) => void;
+  setWidth: (width: number) => void;
   setDrawerOpen: (open: boolean) => void;
   select: (flowId: string, stepId: string | undefined) => void;
   toggleFold: (flowId: string, stepId: string) => void;
@@ -34,7 +50,9 @@ interface FlowOutlineState {
   toggleEditorFold: (flowId: string, stepId: string) => void;
   /** Opens the editor's folded blocks around a step a jump lands on. */
   unfoldEditor: (flowId: string, stepIds: readonly string[]) => void;
-  setVisible: (visible: FlowOutlineState['visible']) => void;
+  toggleGuard: (flowId: string, stepId: string) => void;
+  /** Opens the guards among `stepIds` (a jump to a step inside one). */
+  openGuardsOf: (flowId: string, stepIds: readonly string[]) => void;
   requestSearchFocus: () => void;
   /** Drops ids no longer in the flow (discard, version restore, an AI edit, a delete). */
   prune: (flowId: string, stepIds: ReadonlySet<string>) => void;
@@ -42,15 +60,21 @@ interface FlowOutlineState {
 
 export const useFlowOutlineStore = create<FlowOutlineState>((set) => ({
   open: readOpen(),
+  width: readWidth(),
   drawerOpen: false,
   selected: {},
   folded: {},
   editorFolded: {},
-  visible: null,
+  openGuards: {},
   focusSearch: 0,
   setOpen: (open) => {
     try { globalThis.localStorage?.setItem(OUTLINE_OPEN_KEY, String(open)); } catch { /* not kept */ }
     set({ open });
+  },
+  setWidth: (value) => {
+    const width = parseOutlineWidth(String(value));
+    try { globalThis.localStorage?.setItem(OUTLINE_WIDTH_KEY, String(width)); } catch { /* not kept */ }
+    set({ width });
   },
   setDrawerOpen: (drawerOpen) => set({ drawerOpen }),
   select: (flowId, stepId) => set((state) => (
@@ -66,11 +90,11 @@ export const useFlowOutlineStore = create<FlowOutlineState>((set) => ({
     const next = without(state.editorFolded, flowId, stepIds);
     return next === state.editorFolded ? state : { editorFolded: next };
   }),
-  setVisible: (visible) => set((state) => {
-    const before = state.visible;
-    if (before && visible && before.flowId === visible.flowId && before.first === visible.first && before.last === visible.last) return state;
-    if (!before && !visible) return state;
-    return { visible };
+  toggleGuard: (flowId, stepId) => set((state) => ({ openGuards: toggled(state.openGuards, flowId, stepId) })),
+  openGuardsOf: (flowId, stepIds) => set((state) => {
+    const current = state.openGuards[flowId] ?? [];
+    const added = stepIds.filter((id) => !current.includes(id));
+    return added.length === 0 ? state : { openGuards: { ...state.openGuards, [flowId]: [...current, ...added] } };
   }),
   requestSearchFocus: () => set((state) => ({ focusSearch: state.focusSearch + 1 })),
   prune: (flowId, stepIds) => set((state) => {
@@ -79,11 +103,13 @@ export const useFlowOutlineStore = create<FlowOutlineState>((set) => ({
     const gone = (map: Record<string, readonly string[] | undefined>): string[] => (map[flowId] ?? []).filter((id) => !stepIds.has(id));
     const folded = without(state.folded, flowId, gone(state.folded));
     const editorFolded = without(state.editorFolded, flowId, gone(state.editorFolded));
-    if (keepSelection && folded === state.folded && editorFolded === state.editorFolded) return state;
+    const openGuards = without(state.openGuards, flowId, gone(state.openGuards));
+    if (keepSelection && folded === state.folded && editorFolded === state.editorFolded && openGuards === state.openGuards) return state;
     return {
       selected: keepSelection ? state.selected : { ...state.selected, [flowId]: undefined },
       folded,
       editorFolded,
+      openGuards,
     };
   }),
 }));

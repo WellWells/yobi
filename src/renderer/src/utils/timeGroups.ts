@@ -8,15 +8,21 @@ import type { TitleCompare } from './sidebarOrder';
 export type TimeGroupKey = 'today' | 'yesterday' | 'past7' | 'past30' | 'older' | 'undated';
 
 /**
- * The sidebar's three sections, in drawn order, as ChatGPT's, Claude's and Perplexity's sidebars
- * have them: the pinned conversations, the folders, the other (top-level) conversations. Each has
- * a heading that closes and opens it.
+ * The sidebar's sections, in drawn order, as ChatGPT's, Claude's and Perplexity's sidebars have
+ * them: the knowledge bases right under 「新對話」 (as ChatGPT's projects and NotebookLM's notebooks:
+ * each starts a chat with it), the pinned conversations, the folders, the other (top-level)
+ * conversations. Each has a heading that closes and opens it.
  */
-export const SIDEBAR_SECTIONS = ['pinned', 'folders', 'conversations'] as const;
+export const SIDEBAR_SECTIONS = ['knowledge', 'pinned', 'folders', 'conversations'] as const;
 export type SidebarSectionKey = typeof SIDEBAR_SECTIONS[number];
 
 export function isSidebarSectionKey(value: unknown): value is SidebarSectionKey {
   return typeof value === 'string' && (SIDEBAR_SECTIONS as readonly string[]).includes(value);
+}
+
+export interface SidebarKnowledgeBase {
+  id: string;
+  name: string;
 }
 
 export type SidebarRow =
@@ -25,6 +31,8 @@ export type SidebarRow =
   /** A time bucket inside the conversations section. */
   | { kind: 'header'; key: TimeGroupKey }
   | { kind: 'folder'; folder: ConversationFolder; count: number; expanded: boolean }
+  /** A knowledge base: a click starts a chat with it. */
+  | { kind: 'knowledge'; base: SidebarKnowledgeBase }
   | {
     kind: 'file';
     file: OutputFile;
@@ -60,6 +68,11 @@ export interface SidebarRowOptions {
   collapsed?: ReadonlySet<SidebarSectionKey>;
   /** Only the top-level conversations answered by this model (the name saved in the file). */
   provider?: string | null;
+  /**
+   * The knowledge bases, in their saved order. Given = the section is drawn, its heading even with
+   * none (and with no conversation yet): it is where the first one is added.
+   */
+  knowledge?: readonly SidebarKnowledgeBase[];
 }
 
 function startOfDay(date: Date): number {
@@ -99,6 +112,16 @@ export function sectionRowKey(key: string): string {
   return `section:${key}`;
 }
 
+/** A knowledge base's row key; never a path, a folder's or a section's key. */
+export function knowledgeRowKey(id: string): string {
+  return `kb:${id}`;
+}
+
+/** The knowledge base a row key names, or null for any other row. */
+export function knowledgeOfRowKey(rowKey: string): string | null {
+  return rowKey.startsWith('kb:') ? rowKey.slice('kb:'.length) : null;
+}
+
 /** The section a row key names, or null for any other row. */
 export function sectionOfRowKey(rowKey: string): SidebarSectionKey | null {
   const key = rowKey.startsWith('section:') ? rowKey.slice('section:'.length) : null;
@@ -112,6 +135,7 @@ export function sectionOfRowKey(rowKey: string): SidebarSectionKey | null {
 export function sidebarRowKey(row: SidebarRow): string {
   if (row.kind === 'header') return `group:${row.key}`;
   if (row.kind === 'section') return sectionRowKey(row.key);
+  if (row.kind === 'knowledge') return knowledgeRowKey(row.base.id);
   return row.kind === 'folder' ? folderRowKey(row.folder.name) : row.file.path;
 }
 
@@ -179,6 +203,11 @@ export function buildSidebarRows(files: readonly OutputFile[], now: Date, option
     rows.push({ kind: 'section', key, collapsed });
     return !collapsed;
   };
+
+  if (options.knowledge) {
+    if (options.knowledge.length === 0) rows.push({ kind: 'section', key: 'knowledge', collapsed: false, empty: true });
+    else if (openSection('knowledge')) for (const base of options.knowledge) rows.push({ kind: 'knowledge', base });
+  }
 
   const compareTitles = options.compareTitles ?? byLocale;
   const pinned = files.filter((file) => file.pinned);

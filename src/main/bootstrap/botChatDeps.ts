@@ -8,12 +8,13 @@ import { BOT_PLATFORM_NAMES } from '../../shared/types';
 import type { BotPlatform } from '../../shared/types';
 import { isFlowAdminOnly } from '../../shared/botCommandAccess';
 import {
-  botAccessDeniedText,
+  botAnalyzeAllowed,
   botBuiltinAllowed,
   botChatAllowed,
   botDownloadAllowed,
   botFlowAdminAllowed,
   botFlowAllowed,
+  botFlowDeniedText,
   isBotGroupPending,
   isBotUserBlocked,
 } from '../botPermissions';
@@ -60,6 +61,7 @@ export function botChatDeps<E extends BotChatEvent>(
     ),
     canUseBuiltin: (key, chatId, userId) => botBuiltinAllowed(platform, key, userId, chatId),
     canUseDownloader: (chatId, userId) => botDownloadAllowed(platform, userId, chatId),
+    canAnalyze: (chatId, userId) => botAnalyzeAllowed(platform, userId, chatId),
     linkSites: currentLinkSiteFilter,
     canChat: (chatId, userId) => botChatAllowed(platform, userId, chatId),
     isFlowAdmin: (chatId, userId) => botFlowAdminAllowed(platform, userId, chatId),
@@ -104,14 +106,14 @@ export function botChatDeps<E extends BotChatEvent>(
           }),
         };
       }
-      if (!(await botFlowAllowed(platform, flowId, userId, chatId))) {
-        sendLog(`[Flow] ${name} flow ${flowId} refused for user ${userId} — no download grant`);
+      if (!(await botFlowAllowed(platform, flowId, userId, chatId, input))) {
+        sendLog(`[Flow] ${name} flow ${flowId} refused for user ${userId} — the grant it needs is missing`);
         return {
           taskId: createTaskId(),
           result: Promise.resolve({
             success: false,
             error: 'Downloader not granted',
-            displayError: botAccessDeniedText(getLangCache(), 'download'),
+            displayError: botFlowDeniedText(getLangCache(), flowId, input),
           }),
         };
       }

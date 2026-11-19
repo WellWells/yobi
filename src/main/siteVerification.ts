@@ -1,7 +1,7 @@
 import { BrowserWindow } from 'electron';
 import type { WebContents } from 'electron';
 import { FlowUserError } from './flow/userError';
-import { sendLog, sendWebNotification, setSiteVerificationOpener } from './helpers';
+import { sendActionNeededNotification, sendLog, setSiteVerificationOpener } from './helpers';
 import { getLangCache, t } from './i18n';
 import { openSignInWindow } from './signInWindow';
 import { prepareSiteWindow } from './siteAccounts';
@@ -163,7 +163,7 @@ export function offerSiteVerification(request: Omit<SiteVerificationRequest, 'si
     noticedAt.set(site, now);
     const strings = getLangCache();
     const label = siteLabel(site);
-    sendWebNotification(
+    sendActionNeededNotification(
       t(strings, 'siteVerify.notify.title', { site: label }),
       t(strings, 'siteVerify.notify.body', { site: label }),
       'warning',

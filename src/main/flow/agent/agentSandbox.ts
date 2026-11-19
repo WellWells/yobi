@@ -52,6 +52,18 @@ export async function resolveAgentReadPath(raw: string): Promise<string> {
   return resolveUserPath(raw);
 }
 
+/**
+ * Every folder the agent knows by name, as the model writes it (`Documents`, `chat-media`, `.` for
+ * the output folder), with where it really is: what turns an absolute path back into those names.
+ */
+export async function agentNamedFolders(): Promise<Array<{ dir: string; name: string }>> {
+  const named = Object.values(READ_FOLDERS).flatMap((folder) => {
+    const dir = folderDir(folder);
+    return dir ? [{ dir, name: folder.name }] : [];
+  });
+  return [{ dir: await getOutputDir(), name: '.' }, ...named];
+}
+
 function inside(dir: string, file: string): string | null {
   const rel = path.relative(path.resolve(dir), path.resolve(file));
   if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) return null;

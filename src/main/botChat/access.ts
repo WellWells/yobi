@@ -1,5 +1,6 @@
 import { isBotCommandAdminOnly, isBotCommandAllowed } from '../../shared/botCommandAccess';
 import type { BotCommandAccess } from '../../shared/botCommandAccess';
+import type { BuiltinFlowRight } from '../../shared/builtinFlowRight';
 import type { BotBuiltinCommandKey } from '../../shared/types';
 
 /**
@@ -14,6 +15,7 @@ export interface BotChatAccessDeps {
   canChat?: (chatId: string, userId: string) => Promise<boolean>;
   canUseBuiltin?: (key: BotBuiltinCommandKey, chatId: string, userId: string) => Promise<boolean>;
   canUseDownloader?: (chatId: string, userId: string) => Promise<boolean>;
+  canAnalyze?: (chatId: string, userId: string) => Promise<boolean>;
   isFlowAdmin?: (chatId: string, userId: string) => Promise<boolean>;
 }
 
@@ -24,6 +26,10 @@ export interface BotChatAccess {
   mayUseBuiltin: (key: BotBuiltinCommandKey, chatId: string, userId: string) => Promise<boolean>;
   /** Whether this account may run the downloader here. Without the check, `fallback` decides. */
   mayDownload: (chatId: string, userId: string) => Promise<boolean>;
+  /** Whether the analysis buttons work for this account here. Without the check, `fallback` decides. */
+  mayAnalyze: (chatId: string, userId: string) => Promise<boolean>;
+  /** The right one built-in line asks for (`builtinFlowRight`), checked for this account here. */
+  mayRunBuiltin: (right: BuiltinFlowRight, chatId: string, userId: string) => Promise<boolean>;
   /** The owner (or an admin) in their own private chat. Without the check, nobody. */
   isFlowAdmin: (chatId: string, userId: string) => Promise<boolean>;
   /** A flow command's own allow list, or for one limited to admins who is asking and where. */
@@ -50,7 +56,21 @@ export function createBotChatAccess(
     return failClosed(userId, 'grants', () => check(chatId, userId));
   };
 
+  const mayDownload = async (chatId: string, userId: string): Promise<boolean> => {
+    const check = deps.canUseDownloader;
+    if (!check) return downloadFallback(userId);
+    return failClosed(userId, 'grants', () => check(chatId, userId));
+  };
+  const mayAnalyze = async (chatId: string, userId: string): Promise<boolean> => {
+    const check = deps.canAnalyze;
+    if (!check) return downloadFallback(userId);
+    return failClosed(userId, 'grants', () => check(chatId, userId));
+  };
+
   return {
+    mayDownload,
+    mayAnalyze,
+    mayRunBuiltin: (right, chatId, userId) => (right === 'analyze' ? mayAnalyze(chatId, userId) : mayDownload(chatId, userId)),
     mayChat: async (chatId, userId) => {
       const check = deps.canChat;
       if (!check) return deps.isPairedUser(userId);
@@ -60,11 +80,6 @@ export function createBotChatAccess(
       const check = deps.canUseBuiltin;
       if (!check) return true;
       return failClosed(userId, 'grants', () => check(key, chatId, userId));
-    },
-    mayDownload: async (chatId, userId) => {
-      const check = deps.canUseDownloader;
-      if (!check) return downloadFallback(userId);
-      return failClosed(userId, 'grants', () => check(chatId, userId));
     },
     isFlowAdmin,
     mayRunFlowCommand: async (command, chatId, userId) => {

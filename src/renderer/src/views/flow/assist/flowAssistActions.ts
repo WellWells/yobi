@@ -1,6 +1,6 @@
 import { flowAssistApi } from '../../../api/electronApi';
 import { useFlowAssistStore, threadOf } from '../../../store/useFlowAssistStore';
-import type { AssistNameRow, AssistResult } from '../../../store/useFlowAssistStore';
+import type { AssistKeyRow, AssistNameRow, AssistResult } from '../../../store/useFlowAssistStore';
 import { useFlowStore } from '../../../store/useFlowStore';
 import { useI18nStore } from '../../../store/i18nStore';
 import { assistBaseKey, assistChanges, singleStepMaterial } from '../../../../../shared/flowAssist';
@@ -10,11 +10,12 @@ import type { NamedModel } from '../flowCapabilities';
 import type { FlowAssistFailure } from '../../../../../shared/flowAssist';
 import type { FlowClarification, FlowDefinition } from '../../../../../shared/types';
 import type { StepSummaryContext } from '../stepSummary';
-import { collectStepIssues } from '../outline/stepIssues';
-import { namingTargets, problemLines, stepNameMaterial } from './assistMaterial';
+import { namingTargets, outputKeyTargets, reservedOutputNames, stepNameMaterial } from './assistMaterial';
+import { countOutputReferences, renameOutputReferences } from '../../../../../shared/flowOutputRename';
+import { stepDisplayName } from '../stepSummary';
 
 /*
- * The assistant's three requests and what applying their results does. Each reads the draft at
+ * The assistant's four requests and what applying their results does. Each reads the draft at
  * the moment it is sent; a reply for a request that was cancelled or replaced is dropped. Nothing
  * here saves: applying changes the draft, and the editor's Save is what writes it.
  */
@@ -33,7 +34,7 @@ function settle(flowId: string, id: string, result: AssistResult): void {
   state.patch(flowId, { job: null, result });
 }
 
-function begin(flowId: string, kind: 'edit' | 'explain' | 'names'): string | null {
+function begin(flowId: string, kind: 'edit' | 'explain' | 'names' | 'keys'): string | null {
   const state = useFlowAssistStore.getState();
   if (threadOf(state.threads, flowId).job || !state.modelUrl) return null;
   const id = crypto.randomUUID();
@@ -111,9 +112,8 @@ export async function startExplain(flowId: string): Promise<void> {
   if (!draft) return;
   const id = begin(flowId, 'explain');
   if (!id) return;
-  const problems = problemLines(draft, collectStepIssues(draft, tr), tr);
   try {
-    const result = await flowAssistApi.explain({ id, providerUrl: useFlowAssistStore.getState().modelUrl, flow: draft, problems });
+    const result = await flowAssistApi.explain({ id, providerUrl: useFlowAssistStore.getState().modelUrl, flow: draft });
     const next = result.ok ? { kind: 'explain' as const, markdown: result.markdown } : failure(result, { kind: 'explain' });
     if (next) settle(flowId, id, next);
   } catch {
@@ -176,5 +176,63 @@ export function applyNames(flowId: string, stepIds: readonly string[]): number {
     count += 1;
   }
   state.patch(flowId, { result: { kind: 'applied', what: 'names', count } });
+  return count;
+}
+
+/** Better output names for the steps still called `llm_1` and the like; all of them when none is. */
+export async function startKeys(flowId: string, context: Omit<StepSummaryContext, 'index'>): Promise<void> {
+  const draft = draftOf(flowId);
+  if (!draft) return;
+  const targets = outputKeyTargets(draft);
+  if (targets.length === 0) return;
+  const id = begin(flowId, 'keys');
+  if (!id) return;
+  const steps = stepNameMaterial(draft, tr, context);
+  try {
+    const result = await flowAssistApi.keys({
+      id, providerUrl: useFlowAssistStore.getState().modelUrl, flowName: draft.name, steps, targets, reserved: reservedOutputNames(draft),
+    });
+    if (!result.ok) {
+      const next = failure(result, { kind: 'keys' });
+      if (next) settle(flowId, id, next);
+      return;
+    }
+    const rows: AssistKeyRow[] = draft.steps.flatMap((step, index) => {
+      const key = result.keys[step.id];
+      if (!key) return [];
+      const before = step.outputKey.trim();
+      return [{ stepId: step.id, index: index + 1, stepName: stepDisplayName(step, tr), before, key, references: countOutputReferences(draft.steps, before) }];
+    });
+    settle(flowId, id, { kind: 'keys', rows, skipped: Math.max(0, targets.length - rows.length) });
+  } catch {
+    onThrow(flowId, id, { kind: 'keys' })();
+  }
+}
+
+/**
+ * The ticked output names onto their steps, each with every `{{reference}}` to it, as one
+ * change to the draft. A step whose output was renamed or removed since, or a name another step
+ * or a built-in took meanwhile, is left as it is.
+ */
+export function applyKeys(flowId: string, stepIds: readonly string[]): number {
+  const state = useFlowAssistStore.getState();
+  const result = threadOf(state.threads, flowId).result;
+  const draft = draftOf(flowId);
+  if (!draft || result?.kind !== 'keys') return 0;
+  const wanted = new Set(stepIds);
+  const reserved = new Set(reservedOutputNames(draft));
+  let steps = draft.steps;
+  let count = 0;
+  for (const row of result.rows) {
+    if (!wanted.has(row.stepId)) continue;
+    const step = steps.find((entry) => entry.id === row.stepId);
+    if (!step || step.outputKey.trim() !== row.before) continue;
+    if (reserved.has(row.key) || steps.some((other) => other.outputKey.trim() === row.key)) continue;
+    steps = renameOutputReferences(steps, row.before, row.key)
+      .map((entry) => (entry.id === row.stepId ? { ...entry, outputKey: row.key } : entry));
+    count += 1;
+  }
+  if (count > 0) useFlowStore.getState().updateFlow({ ...draft, steps });
+  state.patch(flowId, { result: { kind: 'applied', what: 'keys', count } });
   return count;
 }

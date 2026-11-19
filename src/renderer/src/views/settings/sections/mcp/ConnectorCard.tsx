@@ -1,10 +1,11 @@
 import React from 'react';
-import { ActionIcon, Badge, Box, Group, Loader, Menu, Stack, Text, Tooltip } from '@mantine/core';
+import { ActionIcon, Badge, Box, Group, Loader, Menu, Stack, Text } from '@mantine/core';
 import { KeyRound, LogIn, EllipsisVertical, Pencil, Plug, Trash, Unplug } from 'lucide-react';
 import { AppButton } from '../../../../components/AppButton';
-import { connectorTint, renderConnectorIcon } from '../../../../config/connectorIcons';
+import { DangerMenuItem } from '../../../../components/DangerMenuItem';
+import { TooltipTarget } from '../../../../components/TooltipTarget';
 import { Z_POPOVER } from '../../../../config/zLayers';
-import { useThemeStore } from '../../../../store/themeStore';
+import { ConnectorTile } from './ConnectorTile';
 import classes from './ConnectorCard.module.css';
 import { connectorCardDetail } from './connectorTiles';
 import { BotAccessCaption } from '../BotAccessCaption';
@@ -63,8 +64,6 @@ export const ConnectorCard: React.FC<ConnectorCardProps> = ({
   const needsAuth = status === 'needs_auth' || status === 'error';
   const toolCount = server?.toolCount ?? 0;
   const interactive = connected && toolCount > 0;
-  const theme = useThemeStore((state) => state.theme);
-  const tint = connectorTint(entry, theme);
   const kind = connectorCardAction(entry, server);
   const action = kind ? ACTION_LOOK[kind] : null;
 
@@ -84,16 +83,7 @@ export const ConnectorCard: React.FC<ConnectorCardProps> = ({
     >
       <Group justify="space-between" align="flex-start" wrap="nowrap" gap={10}>
         <Group gap={10} align="flex-start" wrap="nowrap" flex={1} miw={0}>
-          <Box
-            c={tint ?? 'var(--text-primary)'}
-            style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              width: 30, height: 30, flexShrink: 0, borderRadius: 'var(--mantine-radius-sm)',
-              background: 'var(--bg-tertiary)',
-            }}
-          >
-            {renderConnectorIcon(entry)}
-          </Box>
+          <ConnectorTile entry={entry} />
           <Stack gap={3} miw={0}>
             <Group gap={6} wrap="nowrap" miw={0}>
               <Text fz="var(--font-size-base)" fw={600} c="var(--text-primary)" truncate>{name}</Text>
@@ -136,11 +126,11 @@ export const ConnectorCard: React.FC<ConnectorCardProps> = ({
           {server && (
             <Menu position="bottom-end" withinPortal zIndex={Z_POPOVER}>
               <Menu.Target>
-                <Tooltip label={t('common.moreActions')} position="bottom">
+                <TooltipTarget label={t('common.moreActions')} position="bottom">
                   <ActionIcon variant="subtle" size={30} aria-label={t('common.moreActions')}>
                     <EllipsisVertical size={15} />
                   </ActionIcon>
-                </Tooltip>
+                </TooltipTarget>
               </Menu.Target>
               <Menu.Dropdown>
                 {connected && (
@@ -151,9 +141,9 @@ export const ConnectorCard: React.FC<ConnectorCardProps> = ({
                 <Menu.Item leftSection={<Pencil size={14} />} onClick={onEdit}>
                   {t('settings.mcp.edit')}
                 </Menu.Item>
-                <Menu.Item leftSection={<Trash size={14} />} c="red" onClick={onRemove}>
+                <DangerMenuItem leftSection={<Trash size={14} />} onClick={onRemove}>
                   {t('settings.mcp.delete')}
-                </Menu.Item>
+                </DangerMenuItem>
               </Menu.Dropdown>
             </Menu>
           )}

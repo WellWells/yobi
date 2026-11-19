@@ -137,6 +137,8 @@ export const NotionImportDialog: React.FC<NotionImportDialogProps> = ({ open, on
   const pageRow = (hit: NotionSearchHit): React.ReactNode => (
     <NavLink
       key={hit.page}
+      component="button"
+      type="button"
       label={plainNotionTitle(hit.title) || t('notion.import.untitled')}
       leftSection={hit.icon ? <Text component="span" fz="var(--font-size-md)">{hit.icon}</Text> : <FileText size={14} />}
       rightSection={importing === hit.page
@@ -181,7 +183,7 @@ export const NotionImportDialog: React.FC<NotionImportDialogProps> = ({ open, on
             leftSection={searching ? <Loader size={12} /> : <Search size={14} />}
             aria-label={t('notion.import.placeholder')}
           />
-          {shownError && <Text fz="var(--font-size-sm)" c="var(--mantine-color-error)">{t(`notion.error.${shownError}`)}</Text>}
+          {shownError && <Text fz="var(--font-size-sm)" c="var(--error-text)">{t(`notion.error.${shownError}`)}</Text>}
           <Box mah={360} style={{ overflowY: 'auto' }}>
             {typed && hits.map(pageRow)}
             {typed && !searching && hits.length === 0 && !error && (

@@ -1,4 +1,5 @@
 import { NO_BOT_RIGHTS, intersectBotRights } from '../../shared/botPermissions';
+import { BUILTIN_YOBI_SERVER_ID } from '../../shared/builtinConnectors';
 import type { BotRights } from '../../shared/botPermissions';
 import type { AgentRunState } from '../../shared/types';
 import { isBotSelfAccount, parseBotChatKey } from '../memory/memoryContext';
@@ -41,12 +42,14 @@ export async function botChatFlowBuilder(chatKey: string): Promise<{ owner: bool
 }
 
 function grantsOf(rights: BotRights): BotRunGrants {
-  const { connectors } = rights;
+  const { connectors, knowledge } = rights;
   return {
     web: rights.web,
     local: rights.local,
     shell: rights.shell,
+    manage: rights.manage,
     connectors: connectors === 'all' || connectors === 'none' ? connectors : [...connectors],
+    knowledge: knowledge === 'all' || knowledge === 'none' ? knowledge : [...knowledge],
   };
 }
 
@@ -58,10 +61,14 @@ function asRights(grants: BotRunGrants): BotRights {
     admin: true,
     download: true,
     preview: true,
+    analyze: true,
     web: grants.web,
     local: grants.local,
     shell: grants.shell === true,
+    manage: grants.manage === true,
     connectors: grants.connectors,
+    // A run saved before knowledge bases existed searched none.
+    knowledge: grants.knowledge ?? 'none',
   };
 }
 
@@ -75,8 +82,23 @@ function legacyGrants(state: AgentRunState): BotRunGrants {
     web: state.web !== false,
     local: false,
     shell: false,
+    manage: false,
     connectors: state.connectors === 'none' ? 'none' : 'all',
+    knowledge: 'none',
   };
+}
+
+/**
+ * Which connectors a bot run reaches, from its recorded grants. The Yobi connector is never a
+ * connector grant: it is in the run with `manage` and out of it without, whatever the connector
+ * grants say (`connector:*` and the owner's "every connector" included).
+ */
+export function botRunConnectorScope(grants: BotRunGrants | undefined): { allowed?: string[]; denied?: string[] } {
+  const connectors = grants?.connectors ?? 'none';
+  const manage = grants?.manage === true;
+  if (connectors === 'all') return manage ? {} : { denied: [BUILTIN_YOBI_SERVER_ID] };
+  const listed = connectors === 'none' ? [] : connectors.filter((id) => id !== BUILTIN_YOBI_SERVER_ID);
+  return { allowed: manage ? [...listed, BUILTIN_YOBI_SERVER_ID] : listed };
 }
 
 /**
@@ -89,7 +111,8 @@ export function applyBotRunGrants(state: AgentRunState, rights: BotRights, resum
   const saved = state.botGrants ?? (resuming ? legacyGrants(state) : null);
   const next = saved ? grantsOf(intersectBotRights(asRights(saved), asRights(now))) : now;
   state.botGrants = next;
-  if (next.connectors === 'none') state.connectors = 'none';
+  // `manage` still reaches the Yobi connector with no connector grant (`botRunConnectorScope`).
+  if (next.connectors === 'none' && !next.manage) state.connectors = 'none';
   if (!next.web) state.web = false;
   return next;
 }

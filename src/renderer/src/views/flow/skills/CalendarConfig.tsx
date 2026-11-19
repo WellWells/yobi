@@ -69,7 +69,7 @@ export const CalendarConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }
     <Stack gap="xs">
       {none ? (
         <Group gap={8} wrap="nowrap" align="center">
-          <Text fz="sm" c="var(--mantine-color-warning)" style={{ flex: 1 }}>{t('flow.skill.calendar.calendar.none')}</Text>
+          <Text fz="sm" c="var(--warning-text)" style={{ flex: 1 }}>{t('flow.skill.calendar.calendar.none')}</Text>
           <AppButton
             variant="default"
             size="compact-xs"

@@ -144,6 +144,7 @@ export const FlowGenerateModal: React.FC<FlowGenerateModalProps> = ({
           <>
             <Text fz="sm" fw={600}>{t('flow.generate.description.label')}</Text>
             <AppTextarea
+              aria-label={t('flow.generate.description.label')}
               value={description}
               onChange={(e) => setDescription(e.currentTarget.value)}
               placeholder={t('flow.generate.description.placeholder')}
@@ -188,6 +189,7 @@ export const FlowGenerateModal: React.FC<FlowGenerateModalProps> = ({
                   <Stack key={`${index}-${question}`} gap={4}>
                     <Text fz="xs">{`${index + 1}. ${question}`}</Text>
                     <AppTextInput
+                      aria-label={`${index + 1}. ${question}`}
                       value={answers[index] ?? ''}
                       onChange={(e) => {
                         // Read before the updater: React may run it after currentTarget is cleared.

@@ -154,14 +154,14 @@ export const RewriteResultCard: React.FC<RewriteResultCardProps> = ({ job, t }) 
 
         {job.status === 'error' && (
           <Group gap={8} wrap="nowrap" align="flex-start">
-            <Box c="var(--mantine-color-error)" style={{ lineHeight: 0, paddingTop: 2 }}><TriangleExclamationPoint size={14} /></Box>
-            <Text component="div" fz="var(--font-size-sm)" c="var(--mantine-color-error)" style={{ flex: 1 }}>{job.error}</Text>
+            <Box c="var(--error-text)" style={{ lineHeight: 0, paddingTop: 2 }}><TriangleExclamationPoint size={14} /></Box>
+            <Text component="div" fz="var(--font-size-sm)" c="var(--error-text)" style={{ flex: 1 }}>{job.error}</Text>
           </Group>
         )}
 
         {job.status === 'done' && unchanged && (
           <Group gap={8} wrap="nowrap">
-            <Box c="var(--mantine-color-success)" style={{ lineHeight: 0 }}><Check size={14} /></Box>
+            <Box c="var(--success-text)" style={{ lineHeight: 0 }}><Check size={14} /></Box>
             <Text component="div" fz="var(--font-size-sm)" c="var(--text-secondary)">{t('chat.rewrite.unchanged')}</Text>
           </Group>
         )}
@@ -183,7 +183,7 @@ export const RewriteResultCard: React.FC<RewriteResultCardProps> = ({ job, t }) 
         )}
 
         {job.status === 'done' && job.error && (
-          <Text component="div" fz="var(--font-size-sm)" c="var(--mantine-color-error)" mt={4}>{job.error}</Text>
+          <Text component="div" fz="var(--font-size-sm)" c="var(--error-text)" mt={4}>{job.error}</Text>
         )}
       </Box>
 

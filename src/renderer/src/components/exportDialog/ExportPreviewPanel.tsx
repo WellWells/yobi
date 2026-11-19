@@ -32,7 +32,7 @@ export const ExportPreviewPanel: React.FC<ExportPreviewPanelProps> = ({ request,
         <ScaledCardFrame request={request} onMeasure={setLogicalHeight} />
       </Box>
       {logicalHeight > 0 && (
-        <Text fz="var(--font-size-sm)" c={tooTall ? 'var(--mantine-color-warning)' : 'var(--text-muted)'} ta="center">
+        <Text fz="var(--font-size-sm)" c={tooTall ? 'var(--warning-text)' : 'var(--text-muted)'} ta="center">
           {[
             turnCount > 0 ? fillTemplate(t('capture.turnCount'), { count: String(turnCount) }) : '',
             `${request?.options.width ?? 0} × ${Math.round(pixelHeight)} px`,

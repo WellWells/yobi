@@ -108,7 +108,7 @@ export const BrowserJsConfig: React.FC<SkillConfigProps> = ({ step, onChange, t 
           />
         </Box>
         {code.trim() === '' && (
-          <Text fz="xs" c="var(--mantine-color-warning)" mt={4} data-code-empty="">{t('flow.skill.browser_js.code.empty')}</Text>
+          <Text fz="xs" c="var(--warning-text)" mt={4} data-code-empty="">{t('flow.skill.browser_js.code.empty')}</Text>
         )}
         <Text fz="xs" c="var(--text-muted)" mt={4}>{t('flow.skill.browser_js.code.hint')}</Text>
         {formatHint && <Text fz="xs" c="dimmed" mt={4}>{formatHint}</Text>}
@@ -142,6 +142,7 @@ export const BrowserJsConfig: React.FC<SkillConfigProps> = ({ step, onChange, t 
         hint={fillTemplate(t('flow.skill.browser_js.emitFailFlag.hint'), { flag: `{{${step.outputKey}.isFailed}}` })}
         control={
           <ToggleSwitch
+            aria-label={t('flow.skill.browser_js.emitFailFlag')}
             checked={step.config.emitFailFlag === 'true'}
             onChange={(e) => onChange({ ...step.config, emitFailFlag: e.currentTarget.checked ? 'true' : 'false' })}
           />

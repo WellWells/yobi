@@ -3,6 +3,7 @@ import type { FlowDefinition, SkillInstance, TriggerConfig, TriggerType } from '
 import { SKILL_TYPES } from '../../../../shared/flowSkillSchema';
 import { sanitizeFlowVariables } from '../../../../shared/flowVariables';
 import { createId } from '../../store/flowHelpers';
+import { readFlowStepColor } from '../../../../shared/flowStepColor';
 
 function hasFlowShape(val: unknown): val is Record<string, unknown> {
   if (typeof val !== 'object' || val === null) return false;
@@ -38,6 +39,7 @@ function sanitizeStep(raw: unknown): SkillInstance | null {
     label: typeof obj.label === 'string' ? obj.label : '',
     config,
     outputKey: typeof obj.outputKey === 'string' ? obj.outputKey : '',
+    ...(readFlowStepColor(obj.color) ? { color: readFlowStepColor(obj.color) } : {}),
   };
 }
 

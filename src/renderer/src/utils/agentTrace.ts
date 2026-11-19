@@ -39,6 +39,17 @@ export function helperStepLine(step: AgentHelperStep, t: (key: string) => string
   return step.doing ?? programLine(traceToolLabel(step.tool, undefined, t), step.param);
 }
 
+/**
+ * How a helper's call ended, in the marks the step rows use. A call without a status is running
+ * while its row is; once the row has ended it never will say — the helper stopped, or the record
+ * predates statuses — and it gets no mark rather than a guessed one.
+ */
+export function helperStepMark(step: AgentHelperStep, rowStatus: AgentTraceTurn['status']): 'done' | 'failed' | 'active' | undefined {
+  if (step.status === 'error') return 'failed';
+  if (step.status === 'ok') return 'done';
+  return rowStatus === 'running' ? 'active' : undefined;
+}
+
 /** The step's line while it runs: the helper's newest title, the step's own, then the program's. */
 function runningLine(row: AgentTraceTurn & { tool: string }, t: (key: string) => string): string {
   return row.helperSteps?.filter((step) => step.doing).at(-1)?.doing
@@ -245,7 +256,9 @@ export function runAsText(state: AgentRunState): string {
     if (turn.thought) lines.push(`    thought: ${turn.thought}`);
     lines.push(`    config: ${JSON.stringify(turn.config)}`);
     for (const step of turn.helperSteps ?? []) {
-      lines.push(`    helper: ${step.tool}${step.param ? ` ${step.param}` : ''}${step.doing ? ` — ${step.doing}` : ''}`);
+      // A record written before statuses has none to give: the line reads as it did then.
+      const status = step.status ? ` (${step.status})` : '';
+      lines.push(`    helper: ${step.tool}${step.param ? ` ${step.param}` : ''}${status}${step.doing ? ` — ${step.doing}` : ''}`);
     }
     if (turn.research) lines.push(`    ${researchAsText(turn.research)}`);
     lines.push(`    observation: ${turn.observation || '(empty)'}`);

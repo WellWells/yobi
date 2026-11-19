@@ -34,6 +34,8 @@ const NO_ANSWER_FAILURES: ReadonlyArray<readonly [RegExp, ProviderFallbackReason
   [/\bCLAUDE_USAGE_LIMIT:/, 'limit'],
   // After the send: Claude's reply ended in its over-capacity error, with no answer.
   [/\bCLAUDE_BUSY\b/, 'busy'],
+  // After the send: DeepSeek drew the user's row, then refused it (too many messages) with no answer.
+  [/\bDEEPSEEK_SEND_REFUSED:/, 'busy'],
   [/\b(?:Gemini|ChatGPT|Perplexity) input area not found\b/, 'notReady'],
   [/\bTimeout waiting for: (?:ChatGPT|Perplexity|DeepSeek) input area\b/, 'notReady'],
   // Thrown when the composer would not take the text, before the send control is clicked.

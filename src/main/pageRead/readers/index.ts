@@ -1,9 +1,13 @@
 import type { PageRead } from '../pageReader';
+import { amazonReader } from './amazon';
 import { bahamutReader } from './bahamut';
 import { discourseReader } from './discourse';
+import { githubReader } from './github';
 import { linkedinReader } from './linkedin';
+import { mediawikiReader } from './mediawiki';
 import { mobile01Reader } from './mobile01';
 import { pinterestReader } from './pinterest';
+import { productReader } from './product';
 import { xenforoReader } from './xenforo';
 
 /**
@@ -17,7 +21,10 @@ export interface PageSiteReader {
 }
 
 export const PAGE_READERS: readonly PageSiteReader[] = [
-  linkedinReader, pinterestReader, discourseReader, xenforoReader, bahamutReader, mobile01Reader,
+  linkedinReader, pinterestReader, discourseReader, xenforoReader, bahamutReader, mobile01Reader, mediawikiReader, githubReader,
+  amazonReader,
+  // Any site's page can be a shop's: last, after every site named above.
+  productReader,
 ];
 
 /** The first reader that claims the page and can read it. A page they cannot parse is the general reader's. */

@@ -28,7 +28,7 @@
 .heroTitle {
   /* Dedicated hero size — the shared scale tops out at 17px (tuned for dense
      inline UI), which is too small for the app-name title under the 88px icon. */
-  font-size: 30px;
+  font-size: 1.875rem;
   font-weight: 800;
   /* Near-neutral tracking: tighter tracking cramps a short wordmark. */
   letter-spacing: -0.01em;

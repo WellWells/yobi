@@ -70,7 +70,7 @@ export const MemoryCurateCard: React.FC<Props> = ({ change, pick, maxChars, onCh
                 onChange={(event) => onChange({ ...pick, text: event.currentTarget.value })}
               />
               {invalid && (
-                <Text fz="var(--font-size-sm)" c="var(--mantine-color-error)">{`${length} / ${maxChars}`}</Text>
+                <Text fz="var(--font-size-sm)" c="var(--error-text)">{`${length} / ${maxChars}`}</Text>
               )}
             </>
           )}

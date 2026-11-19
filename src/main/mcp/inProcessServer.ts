@@ -7,7 +7,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { CallToolRequestSchema, ListToolsRequestSchema, type CallToolResult, type Tool } from '@modelcontextprotocol/sdk/types.js';
-import { PICTURES_META_KEY } from './mcpTypes';
+import { DOCUMENTS_META_KEY, PICTURES_META_KEY } from './mcpTypes';
 
 const SERVER_VERSION = '1.0.0';
 
@@ -36,6 +36,15 @@ export class ToolResultWithPictures {
  */
 export class ToolResultWithNotes {
   constructor(readonly value: unknown, readonly notes: readonly string[]) {}
+}
+
+/**
+ * A result passed on as it is, for a connector that relays to another MCP server (OfficeCLI): its
+ * text and images reach the model unchanged, and `documents` (absolute paths of files the call
+ * wrote) ride in `_meta` for the answer.
+ */
+export class RelayedToolResult {
+  constructor(readonly result: CallToolResult, readonly documents: readonly string[] = []) {}
 }
 
 /** A thrown error whose JSON body carries more than `error` and `message` (e.g. `candidates`). */
@@ -67,6 +76,10 @@ export function createToolServer(spec: ToolServerSpec): ToolServer {
     const args = (req.params.arguments ?? {}) as Record<string, unknown>;
     try {
       const result = await spec.dispatch(req.params.name, args, extra.signal);
+      if (result instanceof RelayedToolResult) {
+        const { _meta: _ignored, ...rest } = result.result;
+        return result.documents.length > 0 ? { ...rest, _meta: { [DOCUMENTS_META_KEY]: [...result.documents] } } : rest;
+      }
       if (result instanceof ToolResultWithPictures) {
         return {
           content: [{ type: 'text', text: JSON.stringify(result.value) }],

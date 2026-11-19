@@ -9,6 +9,18 @@ export const PPLX_INPUT_SELECTORS = [
   'div[contenteditable="true"][data-lexical-editor="true"]',
 ];
 
+/**
+ * The box around the ask field and its buttons. The page has marked it two ways; the newer one
+ * comes first, and both are kept because which one a visitor is served is the page's choice.
+ */
+export const PPLX_COMPOSER_BOX_SELECTORS = ['[data-composer="true"]', '[data-ask-input-container="true"]'];
+export const PPLX_COMPOSER_BOX_SELECTOR = PPLX_COMPOSER_BOX_SELECTORS.join(', ');
+
+/** A selector for `inner` inside the ask box, whichever way the box is marked. */
+export function pplxInComposerBox(inner: string): string {
+  return PPLX_COMPOSER_BOX_SELECTORS.map((box) => `${box} ${inner}`).join(', ');
+}
+
 /** Wrapper around an answer's final text. Not a completion signal: it mounts with the first token. */
 export const PPLX_FINAL_TEXT_SELECTOR = '[data-workflow-final-text]';
 
@@ -180,7 +192,7 @@ export const INJECTED_PPLX_READ_JS = `
 
   /** Up from the moment a turn is sent until its last token lands. */
   function isPerplexityGenerating() {
-    var uses = document.querySelectorAll('[data-ask-input-container="true"] button use');
+    var uses = document.querySelectorAll(${JSON.stringify(pplxInComposerBox('button use'))});
     for (var i = 0; i < uses.length; i++) {
       if (getUseHref(uses[i]) === PPLX_STOP_ICON_ID) return true;
     }

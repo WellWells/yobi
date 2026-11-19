@@ -1,6 +1,6 @@
 import { sendLog } from '../../helpers';
 import { makeCheckpointStore } from '../checkpoint';
-import { cacheWindowMs, reconcileSeenCache, type SeenCheckpoint } from '../seenCache';
+import { cacheWindowMs, openSeenCache, type SeenCheckpoint } from '../seenCache';
 import { FlowUserError } from '../userError';
 import { RSS_BURST_CAP } from './rssRead';
 import { PttBoardMissingError, PttHttpError, pttService, type PttService } from '../../ptt/pttService';
@@ -86,8 +86,12 @@ export async function execPttBoard(
   // names are case-blind on PTT, and resolveBoard answers a board outside the hot boards as typed
   // until the directory is crawled, then as the directory spells it: the key must not change then.
   const queryKey = `ptt-query:${pttListUrl({ ...query, board: query.board.toLowerCase() })}`;
-  const { fresh, lapsed } = await reconcileSeenCache(pttBoardCheckpoints, stepId, [queryKey, ...posts.map((p) => p.link)], undefined);
-  const freshLinks = new Set(fresh);
+  const observed = [queryKey, ...posts.map((p) => p.link)];
+  const cache = await openSeenCache(pttBoardCheckpoints, stepId);
+  const { lapsed } = cache;
+  const freshLinks = new Set(cache.freshOf(observed));
+  // Over the burst cap: left new, so the next run hands them on.
+  let deferred: string[] = [];
   const oldest = Date.now() - cacheWindowMs(undefined);
   const inWindow = (post: PttListing): boolean => post.postedAt >= oldest;
 
@@ -103,8 +107,10 @@ export async function execPttBoard(
       sendLog(`📰 [Flow] PTT board: ${unseen.length - recent.length} unseen article(s) posted before the seen window — dropped`);
     }
     out = recent.slice(0, RSS_BURST_CAP);
-    if (recent.length > RSS_BURST_CAP) sendLog(`📰 [Flow] PTT board: burst of ${recent.length} — returning the newest ${RSS_BURST_CAP}`);
+    deferred = recent.slice(RSS_BURST_CAP).map((p) => p.link);
+    if (recent.length > RSS_BURST_CAP) sendLog(`📰 [Flow] PTT board: burst of ${recent.length} — returning the newest ${RSS_BURST_CAP}, the rest next run`);
     sendLog(`📰 [Flow] PTT board: ${out.length} new article(s) since the last run`);
   }
+  await cache.commit({ observed, handed: out.map((p) => p.link), deferred });
   return out.length === 0 ? '[]' : JSON.stringify(out.map(pttBoardItem));
 }

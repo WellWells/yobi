@@ -47,6 +47,7 @@ export const OnChangeConfig: React.FC<SkillConfigProps> = ({ step, onChange, t, 
         hint={fillTemplate(t('flow.skill.on_change.withDiff.hint'), { diff: `{{${step.outputKey}.diff}}` })}
         control={
           <ToggleSwitch
+            aria-label={t('flow.skill.on_change.withDiff')}
             checked={step.config.withDiff === 'true'}
             onChange={(e) => onChange({ ...step.config, withDiff: e.currentTarget.checked ? 'true' : 'false' })}
           />

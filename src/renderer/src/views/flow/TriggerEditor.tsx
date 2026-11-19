@@ -6,6 +6,9 @@ import { useFlowStore } from '../../store/useFlowStore';
 import { normalizeCronTrigger } from '../../../../shared/flowSchedule';
 import { AppButton } from '../../components/AppButton';
 import { AppSegmentedControl } from '../../components/AppSegmentedControl';
+import { SelectDropdown } from '../../components/SelectDropdown';
+import { useWidthBelow } from '../../hooks/useWidthBelow';
+import { segmentsMinWidth } from '../../utils/segmentWidth';
 import { GroupHeader } from '../../components/GroupHeader';
 import type { FlowDefinition, TriggerConfig, TriggerType } from '../../../../shared/types';
 import type { FlowIssue } from '../../../../shared/flowIssues';
@@ -59,15 +62,31 @@ const TriggerConfigForm: React.FC<TriggerConfigFormProps> = ({
     if (allowManual) opts.unshift({ value: 'manual', label: t('flow.trigger.manual') });
     return opts;
   }, [t, allowManual]);
+  // Seven segments outgrow a narrow editor (a 480px window, English, or a larger system text size)
+  // and every label would end in "…": there the same choice is a select.
+  const [typeRef, typeNarrow] = useWidthBelow(segmentsMinWidth(triggerOptions.map((option) => option.label)));
 
   return (
     <Stack gap="sm">
-      <AppSegmentedControl
-        value={value.type}
-        options={triggerOptions}
-        onChange={(v) => patch({ type: v as TriggerType })}
-        size="sm"
-      />
+      <Box ref={typeRef}>
+        {typeNarrow ? (
+          <SelectDropdown
+            aria-label={t('flow.trigger')}
+            value={value.type}
+            options={triggerOptions}
+            onChange={(v) => patch({ type: v as TriggerType })}
+            allowDeselect={false}
+            size="sm"
+          />
+        ) : (
+          <AppSegmentedControl
+            value={value.type}
+            options={triggerOptions}
+            onChange={(v) => patch({ type: v as TriggerType })}
+            size="sm"
+          />
+        )}
+      </Box>
 
       {value.type === 'hotkey' && (
         <Box pt="xs">

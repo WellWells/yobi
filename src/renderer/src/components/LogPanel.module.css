@@ -56,9 +56,11 @@
 }
 
 /* Severity in a fixed-width column so the tags line up; long translations clip instead of
-   breaking the column. Clickable, like .scope. */
+   breaking the column. Clickable, like .scope. Both are at least MIN_TARGET_PX (24px) tall: the
+   12px tag at line-height 1.9 is 22.8px, next to other targets (WCAG 2.5.8). */
 .level {
   flex-shrink: 0;
+  min-height: 24px;
   width: 54px;
   padding: 0 3px;
   font-family: var(--font-mono);
@@ -76,12 +78,12 @@
 
 /* Only error and warning get a wash, so they stand out while scrolling. */
 .level.levelError {
-  color: var(--mantine-color-error);
+  color: var(--error-text);
   background: color-mix(in srgb, var(--error) 16%, transparent);
 }
 
 .level.levelWarning {
-  color: var(--mantine-color-warning);
+  color: var(--warning-text);
   background: color-mix(in srgb, var(--warning) 16%, transparent);
 }
 
@@ -91,14 +93,14 @@
 
 .level:hover {
   background: var(--mantine-color-accent-dim);
-  color: var(--mantine-color-accent);
+  color: var(--mantine-color-accent-text);
 }
 
-/* Fixed-width dimmed column so the eye skips straight to the message. */
+/* Fixed-width dimmed column so the eye skips straight to the message. Colour only, no opacity on
+   top: muted at 0.75 opacity falls to 3.9:1 (WCAG 1.4.3). */
 .logTime {
   flex-shrink: 0;
   color: var(--mantine-color-dimmed);
-  opacity: 0.75;
   font-variant-numeric: tabular-nums;
   user-select: text;
 }
@@ -109,6 +111,7 @@
 .scope {
   flex-shrink: 1;
   min-width: 0;
+  min-height: 24px;
   max-width: min(240px, 35%);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -117,17 +120,15 @@
   font-size: var(--font-size-xs);
   line-height: 1.9;
   color: var(--mantine-color-dimmed);
-  opacity: 0.8;
   cursor: pointer;
   border-radius: var(--mantine-radius-sm);
   padding: 0 4px;
-  transition: color 0.12s ease, background 0.12s ease, opacity 0.12s ease;
+  transition: color 0.12s ease, background 0.12s ease;
 }
 
 .scope:hover {
-  color: var(--mantine-color-accent);
+  color: var(--mantine-color-accent-text);
   background: var(--mantine-color-accent-dim);
-  opacity: 1;
 }
 
 .message {
@@ -170,7 +171,7 @@
 @container (max-width: 599px) {
   .logEntry {
     display: grid;
-    grid-template-columns: 54px max-content minmax(0, 1fr) 22px;
+    grid-template-columns: 54px max-content minmax(0, 1fr) 24px;
     row-gap: 0;
   }
 

@@ -38,7 +38,7 @@ export const LinkRecognitionSetting: React.FC<Props> = ({ t, visible, sectionGap
         <SettingRow
           label={t('settings.linkRecognition.maps')}
           hint={t('settings.linkRecognition.maps.hint')}
-          control={<ToggleSwitch checked={state.maps} onChange={() => { void toggle('maps', !state.maps); }} />}
+          control={<ToggleSwitch aria-label={t('settings.linkRecognition.maps')} checked={state.maps} onChange={() => { void toggle('maps', !state.maps); }} />}
         />
         <SettingDivider />
         <Text fz="var(--font-size-sm)" c="dimmed" lh={1.6}>{t('settings.linkRecognition.sites.hint')}</Text>

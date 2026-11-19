@@ -10,7 +10,7 @@ import { providerFromUrl } from '../../shared/types';
 import type { Provider } from '../../shared/types';
 import { GEMINI_STOP_SELECTOR } from './geminiReadScript';
 import { CLAUDE_STOP_SELECTOR } from './claudeSendScript';
-import { PPLX_STOP_ICON_ID } from './perplexityReadScript';
+import { PPLX_STOP_ICON_ID, pplxInComposerBox } from './perplexityReadScript';
 import { DEEPSEEK_DISABLED_CLASS, DEEPSEEK_INPUT_SELECTOR, DEEPSEEK_SEND_SELECTOR } from './deepseekSendScript';
 
 /** ChatGPT's stop is a real button; the selector the read uses also matches a turn's state attribute. */
@@ -33,7 +33,7 @@ export const STOP_GENERATION_SCRIPTS: Record<Provider, string> = {
   chatgpt: clickExpression(`
     return document.querySelector(${JSON.stringify(CHATGPT_STOP_BUTTON_SELECTOR)});`),
   perplexity: clickExpression(`
-    var uses = document.querySelectorAll('[data-ask-input-container="true"] button use');
+    var uses = document.querySelectorAll(${JSON.stringify(pplxInComposerBox('button use'))});
     for (var i = 0; i < uses.length; i++) {
       var href = uses[i].getAttribute('href') || uses[i].getAttribute('xlink:href') || '';
       if (href === ${JSON.stringify(PPLX_STOP_ICON_ID)}) return uses[i].closest('button');

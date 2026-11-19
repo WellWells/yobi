@@ -2,23 +2,12 @@ import { ipcMain, app, shell } from 'electron';
 import * as fs from 'node:fs/promises';
 import { IPC, isByokTargetUrl } from '../../shared/types';
 import type { CaptureSettings, QuickExportSettings, HiddenSources, HotkeyBindResult, SecretScope, SecretTarget } from '../../shared/types';
-import { isThemePreference } from '../../shared/themes';
-import { mergeReadingPrefs, readingPrefsFromConfig, readingPrefsToConfig } from '../../shared/readingPrefs';
+import { readingPrefsFromConfig } from '../../shared/readingPrefs';
 import { mergeSidebarView, normalizeSidebarView } from '../../shared/sidebarView';
-import { getProviderLabel } from '../providers';
-import {
-  config,
-  saveConfig,
-  clearStoredSecret,
-  getHiddenSources,
-  normalizePromptPreferences,
-  normalizeCaptureSettings,
-  normalizeQuickExport,
-  normalizeHiddenSources,
-  normalizeNotifyEvents,
-} from '../config';
+import { setChatTarget } from '../chatTarget';
+import { config, saveConfig, clearStoredSecret, getHiddenSources } from '../config';
 import type { Config } from '../config';
-import { sendLog, normalizeAiUrl, applyLaunchAtStartup, relaunchApp } from '../helpers';
+import { sendLog, applyLaunchAtStartup, relaunchApp } from '../helpers';
 import { getLogDir } from '../logFile';
 import { getAppVersion } from '../appVersion';
 import { getMetricsSnapshot, resetMetrics } from '../metrics';
@@ -35,17 +24,18 @@ import { probeStoredSecrets } from '../bootstrap/secretHealthSetup';
 import { clearBrokenCalendarSecret } from '../calendar/calendarStore';
 import { flushPendingTempChatResult, isTempChatMode, setTempChatMode } from '../tempChat';
 import { getWorkerWin } from '../windows';
-import { llmLane } from '../flow/lanes';
-import { releaseHotkeySlots, setHotkeyPaused, wouldCollide } from '../hotkey';
-import { normalizeLinkAnalysisPreferences, normalizeShortcuts } from '../configNormalizers';
-import { isSelectableAnalysisTarget } from '../linkAnalysis';
-import { PROMPT_TEMPLATE_MAX_CHARS } from '../../shared/promptAuthor';
-import { isRegisterableAccelerator } from '../../shared/shortcuts';
+import { releaseHotkeySlots, setHotkeyPaused } from '../hotkey';
+import { normalizeShortcuts } from '../configNormalizers';
 import type { ShortcutOverride } from '../../shared/shortcuts';
-import { isLinkRecognitionTarget, withLinkRecognition } from '../../shared/linkRecognition';
 import type { LinkRecognitionState } from '../../shared/linkRecognition';
-import { broadcastLinkRecognition, currentLinkRecognition } from '../linkRecognition';
+import { currentLinkRecognition } from '../linkRecognition';
 import { buildSettingsSnapshot } from './context';
+import {
+  applyCaptureSettings, applyCloseToTray, applyHiddenSources, applyHotkey, applyLaunchAtStartupSetting, applyLayoutMode,
+  applyLinkAnalysis, applyLinkRecognition, applyMarkdownZoom, applyMetricsEnabled, applyNotifyEvents, applyNotifyOnComplete,
+  applyPlainFlag, applyPromptPreferences, applyQuickExport, applyReadingPrefs, applyRegionHotkey, applyResponseTimeout,
+  applyTheme, applyYoutubePrompt, setSettingsContext,
+} from './settingsApply';
 import type { IpcContext } from './context';
 
 export function applyImportedConfigLiveEffects(importedConfig: Config, ctx: IpcContext): void {
@@ -122,46 +112,13 @@ export function registerSettingsHandlers(ctx: IpcContext): void {
   });
   ipcMain.handle(IPC.DELETE_BROKEN_SECRET, (_event, raw: unknown) => clearBrokenSecret(raw));
 
-  ipcMain.handle(IPC.GET_HOTKEY, () => config.hotkey);
-  ipcMain.handle(IPC.UPDATE_HOTKEY, (_event, newHotkey: string): HotkeyBindResult => {
-    if (!isRegisterableAccelerator(newHotkey)) return 'taken';
-    if (wouldCollide(newHotkey, config.hotkey, config.quickExport.hotkey, config.regionHotkey)) return 'conflict';
+  setSettingsContext(ctx);
 
-    // Bind BEFORE persisting: registerHotkey releases the current accelerator to try the new
-    // one, so a combo the OS refuses leaves no hotkey at all, and persisting it first would
-    // keep that dead combo across every restart.
-    const previous = config.hotkey;
-    config.hotkey = newHotkey;
-    if (!ctx.bindHotkey()) {
-      config.hotkey = previous;
-      ctx.bindHotkey();
-      sendLog(`⌨️  ${newHotkey} was refused by the system — keeping ${previous}`);
-      return 'taken';
-    }
-    saveConfig({ hotkey: newHotkey });
-    if (newHotkey) sendLog(`⌨️  Hotkey updated to: ${newHotkey}`);
-    return 'ok';
-  });
+  ipcMain.handle(IPC.GET_HOTKEY, () => config.hotkey);
+  ipcMain.handle(IPC.UPDATE_HOTKEY, (_event, newHotkey: string): HotkeyBindResult => applyHotkey(newHotkey));
 
   ipcMain.handle(IPC.GET_REGION_HOTKEY, () => config.regionHotkey);
-  ipcMain.handle(IPC.UPDATE_REGION_HOTKEY, (_event, raw: unknown): HotkeyBindResult => {
-    const next = typeof raw === 'string' ? raw.trim() : '';
-    if (!isRegisterableAccelerator(next)) return 'taken';
-    if (wouldCollide(next, config.regionHotkey, config.hotkey, config.quickExport.hotkey)) return 'conflict';
-
-    // Bound before it is saved, for the same reason as the ask hotkey above.
-    const previous = config.regionHotkey;
-    config.regionHotkey = next;
-    if (!ctx.bindRegionHotkey()) {
-      config.regionHotkey = previous;
-      ctx.bindRegionHotkey();
-      sendLog(`⌨️  ${next} was refused by the system — keeping ${previous}`);
-      return 'taken';
-    }
-    saveConfig({ regionHotkey: next });
-    if (next) sendLog(`⌨️  Screen region hotkey updated to: ${next}`);
-    return 'ok';
-  });
+  ipcMain.handle(IPC.UPDATE_REGION_HOTKEY, (_event, raw: unknown): HotkeyBindResult => applyRegionHotkey(raw));
 
   ipcMain.handle(IPC.SET_HOTKEY_PAUSED, (_event, paused: boolean) => {
     setHotkeyPaused(paused);
@@ -178,114 +135,67 @@ export function registerSettingsHandlers(ctx: IpcContext): void {
 
   ipcMain.handle(IPC.GET_AI_URL, () => config.targetUrl);
   ipcMain.handle(IPC.UPDATE_AI_URL, (_event, nextUrl: string) => {
-    const normalized = normalizeAiUrl(nextUrl);
-    config.targetUrl = normalized;
-    saveConfig({ targetUrl: normalized });
-    if (!isByokTargetUrl(normalized)) {
-      void llmLane.runExclusive(async () => {
-        const worker = getWorkerWin();
-        if (!worker || worker.isDestroyed() || config.targetUrl !== normalized) return;
-        await worker.loadURL(normalized).catch(() => undefined);
-      });
-    }
-    sendLog(`🌐 AI target updated: ${getProviderLabel(normalized)}`);
+    setChatTarget(nextUrl);
     return true;
   });
 
   ipcMain.handle(IPC.GET_HIDDEN_SOURCES, (): HiddenSources => getHiddenSources());
 
   ipcMain.handle(IPC.UPDATE_HIDDEN_SOURCES, (_event, raw: unknown) => {
-    const next = normalizeHiddenSources(raw);
-    config.hiddenProviders = next.providers;
-    config.hiddenByokIds = next.byokIds;
-    config.hiddenByokGroupIds = next.byokGroupIds;
-    saveConfig({
-      hiddenProviders: config.hiddenProviders,
-      hiddenByokIds: config.hiddenByokIds,
-      hiddenByokGroupIds: config.hiddenByokGroupIds,
-    });
-    void ctx.telegramRuntime.refreshBotCommands();
+    applyHiddenSources(raw);
     return { ok: true as const };
   });
 
   ipcMain.handle(IPC.GET_PROMPT_PREFERENCES, () => config.promptPreferences);
   ipcMain.handle(IPC.UPDATE_PROMPT_PREFERENCES, (_event, prefs: unknown) => {
-    config.promptPreferences = normalizePromptPreferences(prefs);
-    saveConfig({ promptPreferences: config.promptPreferences });
+    applyPromptPreferences(prefs);
     return true;
   });
 
   ipcMain.handle(IPC.GET_YOUTUBE_PROMPT, () => config.youtubePrompt);
   ipcMain.handle(IPC.GET_LINK_ANALYSIS_PREFERENCES, () => config.linkAnalysis);
-  ipcMain.handle(IPC.UPDATE_LINK_ANALYSIS_PREFERENCES, (_event, prefs: unknown) => {
-    const next = normalizeLinkAnalysisPreferences(prefs);
-    const current = config.linkAnalysis;
-    if (next.mapsPrompt.length > PROMPT_TEMPLATE_MAX_CHARS) throw new Error('Maps prompt is too long');
-    if (!isSelectableAnalysisTarget(next.mapsTargetUrl, current?.mapsTargetUrl)
-      || !isSelectableAnalysisTarget(next.articleTargetUrl, current?.articleTargetUrl)) {
-      throw new Error('Unknown analysis model');
-    }
-    saveConfig({ linkAnalysis: next });
-    return config.linkAnalysis;
-  });
+  ipcMain.handle(IPC.UPDATE_LINK_ANALYSIS_PREFERENCES, (_event, prefs: unknown) => applyLinkAnalysis(prefs));
   ipcMain.handle(IPC.UPDATE_YOUTUBE_PROMPT, (_event, prompt: unknown) => {
-    config.youtubePrompt = typeof prompt === 'string' ? prompt : '';
-    saveConfig({ youtubePrompt: config.youtubePrompt });
+    applyYoutubePrompt(prompt);
     return true;
   });
 
   ipcMain.handle(IPC.GET_RESPONSE_TIMEOUT, () => config.responseTimeout);
-  ipcMain.handle(IPC.UPDATE_RESPONSE_TIMEOUT, (_event, ms: number) => {
-    const clamped = Math.max(15_000, Math.min(300_000, Number(ms)));
-    if (!Number.isFinite(clamped)) return false;
-    config.responseTimeout = clamped;
-    saveConfig({ responseTimeout: clamped });
-    return true;
-  });
+  ipcMain.handle(IPC.UPDATE_RESPONSE_TIMEOUT, (_event, ms: number) => applyResponseTimeout(ms));
 
   ipcMain.handle(IPC.GET_SYNC_SYSTEM_LANGUAGE_TO_MODEL, () => config.syncSystemLanguageToModel);
   ipcMain.handle(IPC.UPDATE_SYNC_SYSTEM_LANGUAGE_TO_MODEL, (_event, enabled: boolean) => {
-    config.syncSystemLanguageToModel = Boolean(enabled);
-    saveConfig({ syncSystemLanguageToModel: config.syncSystemLanguageToModel });
+    applyPlainFlag('syncSystemLanguageToModel', enabled);
     return true;
   });
 
   ipcMain.handle(IPC.GET_ONE_SHOT_TEMPORARY_CHAT, () => config.oneShotTemporaryChat);
   ipcMain.handle(IPC.UPDATE_ONE_SHOT_TEMPORARY_CHAT, (_event, enabled: boolean) => {
-    config.oneShotTemporaryChat = Boolean(enabled);
-    saveConfig({ oneShotTemporaryChat: config.oneShotTemporaryChat });
+    applyPlainFlag('oneShotTemporaryChat', enabled);
     return true;
   });
 
   ipcMain.handle(IPC.GET_PROVIDER_FALLBACK, () => config.providerFallback);
   ipcMain.handle(IPC.UPDATE_PROVIDER_FALLBACK, (_event, enabled: boolean) => {
-    config.providerFallback = Boolean(enabled);
-    saveConfig({ providerFallback: config.providerFallback });
+    applyPlainFlag('providerFallback', enabled);
     return true;
   });
 
   ipcMain.handle(IPC.GET_NOTIFY_ON_COMPLETE, () => config.notifyOnComplete);
   ipcMain.handle(IPC.UPDATE_NOTIFY_ON_COMPLETE, (_event, enabled: boolean) => {
-    config.notifyOnComplete = Boolean(enabled);
-    saveConfig({ notifyOnComplete: config.notifyOnComplete });
-    sendLog(`🔔 Completion notification ${config.notifyOnComplete ? 'enabled' : 'disabled'}`);
-    ctx.onTrayMenuRebuild?.();
+    applyNotifyOnComplete(enabled);
     return true;
   });
 
   ipcMain.handle(IPC.GET_NOTIFY_EVENTS, () => config.notifyEvents);
   ipcMain.handle(IPC.UPDATE_NOTIFY_EVENTS, (_event, prefs: unknown) => {
-    config.notifyEvents = normalizeNotifyEvents(prefs);
-    saveConfig({ notifyEvents: config.notifyEvents });
+    applyNotifyEvents(prefs);
     return true;
   });
 
   ipcMain.handle(IPC.GET_LAUNCH_AT_STARTUP, () => config.launchAtStartup);
   ipcMain.handle(IPC.UPDATE_LAUNCH_AT_STARTUP, (_event, enabled: boolean) => {
-    config.launchAtStartup = Boolean(enabled);
-    saveConfig({ launchAtStartup: config.launchAtStartup });
-    applyLaunchAtStartup(config.launchAtStartup, config.closeToTray);
-    ctx.onTrayMenuRebuild?.();
+    applyLaunchAtStartupSetting(enabled);
     return true;
   });
 
@@ -314,53 +224,37 @@ export function registerSettingsHandlers(ctx: IpcContext): void {
   ipcMain.handle(IPC.GET_UPDATE_SOURCE, () => (process.windowsStore ? 'store' : 'github'));
 
   ipcMain.handle(IPC.GET_THEME, () => config.theme);
-  ipcMain.handle(IPC.UPDATE_THEME, (_event, theme: string) => {
-    if (!isThemePreference(theme)) return false;
-    saveConfig({ theme });
+  ipcMain.handle(IPC.UPDATE_THEME, (_event, theme: string) => applyTheme(theme));
+  ipcMain.handle(IPC.GET_BACKDROP_MOTION, () => config.backdropMotion);
+  ipcMain.handle(IPC.UPDATE_BACKDROP_MOTION, (_event, moves: boolean) => {
+    applyPlainFlag('backdropMotion', moves);
     return true;
   });
 
   ipcMain.handle(IPC.GET_LAYOUT_MODE, () => config.layoutMode);
   ipcMain.handle(IPC.UPDATE_LAYOUT_MODE, (_event, layoutMode: string) => {
-    const normalized = layoutMode === 'side-by-side' ? 'side-by-side' : 'stacked';
-    saveConfig({ layoutMode: normalized });
+    applyLayoutMode(layoutMode);
     return true;
   });
   ipcMain.handle(IPC.GET_SHOW_TOKEN_USAGE, () => config.showTokenUsage);
   ipcMain.handle(IPC.UPDATE_SHOW_TOKEN_USAGE, (_event, show: boolean) => {
-    config.showTokenUsage = Boolean(show);
-    saveConfig({ showTokenUsage: config.showTokenUsage });
+    applyPlainFlag('showTokenUsage', show);
     return true;
   });
   ipcMain.handle(IPC.GET_SHOW_RECAP, () => config.showRecap);
   ipcMain.handle(IPC.UPDATE_SHOW_RECAP, (_event, show: boolean) => {
-    config.showRecap = Boolean(show);
-    saveConfig({ showRecap: config.showRecap });
+    applyPlainFlag('showRecap', show);
     return true;
   });
   ipcMain.handle(IPC.GET_LINK_RECOGNITION, (): LinkRecognitionState => currentLinkRecognition());
-  ipcMain.handle(IPC.SET_LINK_RECOGNITION, (_event, target: unknown, on: unknown): LinkRecognitionState => {
-    const current = currentLinkRecognition();
-    // A site not shown here (a Taiwan-only site outside Taiwan) has no switch, so nothing may set it.
-    const shown = target === 'maps' || current.sites.some((entry) => entry.site === target);
-    if (!isLinkRecognitionTarget(target) || typeof on !== 'boolean' || !shown) return current;
-    config.linkRecognition = withLinkRecognition(config.linkRecognition ?? {}, target, on);
-    saveConfig({ linkRecognition: config.linkRecognition });
-    broadcastLinkRecognition();
-    return currentLinkRecognition();
-  });
+  ipcMain.handle(IPC.SET_LINK_RECOGNITION, (_event, target: unknown, on: unknown): LinkRecognitionState => applyLinkRecognition(target, on));
   ipcMain.handle(IPC.GET_MARKDOWN_ZOOM, () => config.markdownZoom);
   ipcMain.handle(IPC.UPDATE_MARKDOWN_ZOOM, (_event, zoom: number) => {
-    const clamped = Math.min(200, Math.max(70, Math.round(Number(zoom) / 10) * 10));
-    saveConfig({ markdownZoom: clamped });
+    applyMarkdownZoom(zoom);
     return true;
   });
   ipcMain.handle(IPC.GET_READING_PREFS, () => readingPrefsFromConfig(config));
-  ipcMain.handle(IPC.UPDATE_READING_PREFS, (_event, patch: unknown) => {
-    const next = mergeReadingPrefs(readingPrefsFromConfig(config), patch);
-    saveConfig(readingPrefsToConfig(next));
-    return next;
-  });
+  ipcMain.handle(IPC.UPDATE_READING_PREFS, (_event, patch: unknown) => applyReadingPrefs(patch));
   ipcMain.handle(IPC.GET_SIDEBAR_VIEW, () => normalizeSidebarView(config.sidebarView));
   ipcMain.handle(IPC.UPDATE_SIDEBAR_VIEW, (_event, patch: unknown) => {
     const next = mergeSidebarView(normalizeSidebarView(config.sidebarView), patch);
@@ -370,33 +264,12 @@ export function registerSettingsHandlers(ctx: IpcContext): void {
 
   ipcMain.handle(IPC.GET_CAPTURE_SETTINGS, () => config.captureSettings);
   ipcMain.handle(IPC.UPDATE_CAPTURE_SETTINGS, (_event, settings: CaptureSettings) => {
-    config.captureSettings = normalizeCaptureSettings(settings);
-    saveConfig({ captureSettings: config.captureSettings });
+    applyCaptureSettings(settings);
     return true;
   });
 
   ipcMain.handle(IPC.GET_QUICK_EXPORT, () => config.quickExport);
-  ipcMain.handle(IPC.UPDATE_QUICK_EXPORT, (_event, settings: QuickExportSettings): HotkeyBindResult => {
-    const next = normalizeQuickExport(settings);
-    if (wouldCollide(next.hotkey, config.quickExport.hotkey, config.hotkey, config.regionHotkey)) return 'conflict';
-
-    const previousHotkey = config.quickExport.hotkey;
-    config.quickExport = next;
-    if (next.hotkey === previousHotkey) {
-      saveConfig({ quickExport: config.quickExport });
-      return 'ok';
-    }
-    if (!ctx.bindQuickExportHotkey()) {
-      // Only the combo goes back — everything else the user just changed still applies.
-      config.quickExport = { ...next, hotkey: previousHotkey };
-      ctx.bindQuickExportHotkey();
-      saveConfig({ quickExport: config.quickExport });
-      sendLog(`⌨️  ${next.hotkey} was refused by the system — keeping ${previousHotkey}`);
-      return 'taken';
-    }
-    saveConfig({ quickExport: config.quickExport });
-    return 'ok';
-  });
+  ipcMain.handle(IPC.UPDATE_QUICK_EXPORT, (_event, settings: QuickExportSettings): HotkeyBindResult => applyQuickExport(settings));
 
   ipcMain.handle(IPC.METRICS_GET, () => getMetricsSnapshot());
   ipcMain.handle(IPC.FLOW_METRICS_GET, () => getFlowMetricsView());
@@ -409,9 +282,7 @@ export function registerSettingsHandlers(ctx: IpcContext): void {
   });
   ipcMain.handle(IPC.GET_METRICS_ENABLED, () => config.metricsEnabled);
   ipcMain.handle(IPC.UPDATE_METRICS_ENABLED, (_event, enabled: boolean) => {
-    config.metricsEnabled = Boolean(enabled);
-    saveConfig({ metricsEnabled: config.metricsEnabled });
-    sendLog(`📊 Usage statistics ${config.metricsEnabled ? 'enabled' : 'disabled'}`);
+    applyMetricsEnabled(enabled);
     return true;
   });
 
@@ -426,10 +297,7 @@ export function registerSettingsHandlers(ctx: IpcContext): void {
 
   ipcMain.handle(IPC.GET_CLOSE_TO_TRAY, () => config.closeToTray);
   ipcMain.handle(IPC.UPDATE_CLOSE_TO_TRAY, (_event, enabled: boolean) => {
-    config.closeToTray = Boolean(enabled);
-    saveConfig({ closeToTray: config.closeToTray });
-    applyLaunchAtStartup(config.launchAtStartup, config.closeToTray);
-    ctx.onTraySettingsChanged?.();
+    applyCloseToTray(enabled);
     return true;
   });
 

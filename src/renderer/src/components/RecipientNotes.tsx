@@ -18,12 +18,12 @@ export const RecipientNotes: React.FC<{
   return (
     <>
       {unlisted > 0 && (
-        <Text fz="xs" c="var(--mantine-color-warning)">
+        <Text fz="xs" c="var(--warning-text)">
           {fillTemplate(t('flow.recipient.unlistedWarning'), { count: String(unlisted) })}
         </Text>
       )}
       {hint && <Text fz="xs" c="var(--text-muted)">{hint}</Text>}
-      {tokens.length === 0 && blankHint && <Text fz="xs" c="var(--mantine-color-warning)">{blankHint}</Text>}
+      {tokens.length === 0 && blankHint && <Text fz="xs" c="var(--warning-text)">{blankHint}</Text>}
     </>
   );
 };

@@ -119,7 +119,10 @@ export const SHORTCUTS = [
     defaultCombo: 'Shift+Tab',
     rebindable: true,
     storage: 'config.shortcuts',
-    guards: { requireNoModal: true, phase: 'capture', stopPropagation: true },
+    hintKey: 'settings.shortcut.chat.cycleModel.hint',
+    // Only in the composer's text box (as in Claude Code): anywhere else Shift+Tab must move focus
+    // back, or the chat view has no reverse Tab at all (WCAG 2.1.1).
+    guards: { requireNoModal: true, requireFocusIn: 'composer', phase: 'capture', stopPropagation: true },
   },
 
   {
@@ -211,6 +214,26 @@ export const SHORTCUTS = [
     group: 'nav',
     scope: { kind: 'view', views: ['chat', 'flow'] },
     defaultCombo: 'CommandOrControl+Shift+S',
+    rebindable: false,
+    lockReasonKey: 'settings.shortcut.lock.convention',
+    guards: { requireNoModal: true },
+  },
+  {
+    // Windows' pane cycling (Explorer, Outlook, Edge): focus to the next region of the window —
+    // sidebar, main content, composer, side panel — and back (WCAG 2.4.1).
+    id: 'nav.nextRegion',
+    group: 'nav',
+    scope: { kind: 'window' },
+    defaultCombo: 'F6',
+    rebindable: false,
+    lockReasonKey: 'settings.shortcut.lock.convention',
+    guards: { requireNoModal: true },
+  },
+  {
+    id: 'nav.previousRegion',
+    group: 'nav',
+    scope: { kind: 'window' },
+    defaultCombo: 'Shift+F6',
     rebindable: false,
     lockReasonKey: 'settings.shortcut.lock.convention',
     guards: { requireNoModal: true },

@@ -73,6 +73,7 @@ export const FlowSearchOverlay: React.FC<FlowSearchOverlayProps> = ({ opened, on
       getKey={flowKey}
       onSelect={openFlow}
       placeholder={t('flow.search.placeholder')}
+      label={t('flow.search.tooltip')}
       emptyLabel={t('flow.search.empty')}
       renderRow={renderRow}
     />

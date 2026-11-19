@@ -42,7 +42,7 @@ export const ModelCommandMenu: React.FC<ModelCommandMenuProps> = ({
             onMouseDown={(event) => { event.preventDefault(); onSelect(stop); }}
             leftSection={<Icon size={15} />}
             rightSection={key === currentKey
-              ? <Check size={13} color="var(--mantine-color-accent)" />
+              ? <Check size={13} color="var(--mantine-color-accent-text)" />
               : undefined}
             label={(
               <Group gap={6} wrap="nowrap">

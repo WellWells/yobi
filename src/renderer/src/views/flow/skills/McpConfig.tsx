@@ -255,7 +255,7 @@ export const McpConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) => 
         error={argsError}
       />
       {parsed.ok && parsed.repaired && (
-        <Text fz="xs" c="var(--mantine-color-warning)" ff="monospace" style={{ wordBreak: 'break-all' }}>
+        <Text fz="xs" c="var(--warning-text)" ff="monospace" style={{ wordBreak: 'break-all' }}>
           {fillTemplate(t('flow.skill.mcp.arguments.readAs'), { json: JSON.stringify(parsed.value) })}
         </Text>
       )}

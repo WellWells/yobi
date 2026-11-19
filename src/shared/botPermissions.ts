@@ -10,32 +10,63 @@
  * two are always granted by name, the owner's account included — nor the video preview, which is
  * a choice rather than a right (`ownerImpliesGrant`).
  *
+ * `manage` (control Yobi itself: its settings, flows, conversations, statistics, updates and
+ * restarts, through the Yobi connector) is the owner's by the mark and, like admin, only the owner
+ * hands it to anyone else, by name. The Yobi connector is never a connector grant of its own: a
+ * `connector:builtin-yobi` token is not a grant, and `connector:*` does not reach it.
+ *
  * Pure on purpose: main decides with `resolveBotRights`, and the settings page derives what it
  * shows from the same functions, so the two cannot disagree.
  */
 import { BOT_CAPABILITIES, GROUP_CAPABILITIES, connectorCapability } from './botCapabilities';
 import type { BotCapability, BotCapabilityKey, BotGroupCapability } from './botCapabilities';
-import { PUBLIC_DATA_CONNECTOR_IDS } from './builtinConnectors';
+import { BUILTIN_YOBI_SERVER_ID, PUBLIC_DATA_CONNECTOR_IDS } from './builtinConnectors';
+import { KB_ID_PATTERN } from './knowledgeBase';
 import type { BotBuiltinCommandKey, BotPlatform } from './types';
 
 /**
  * Schema version of the permissions map. A map without one is migrated by giving paired accounts
  * LEGACY_PAIRED_GRANTS; a map older than DOWNLOAD_GRANT_VERSION gets `download` added for every
  * account paired at the time, since every paired account could use the downloader before.
+ * A map older than ANALYZE_GRANT_VERSION gets `analyze` for every account that holds `download`:
+ * the downloader brought the analysis buttons before they became a grant of their own.
  */
-export const BOT_PERMISSIONS_VERSION = 2;
+export const BOT_PERMISSIONS_VERSION = 3;
 
 /** The version that added the `download` grant. */
 export const DOWNLOAD_GRANT_VERSION = 2;
+
+/** The version that split the analysis buttons off the downloader, as the `analyze` grant. */
+export const ANALYZE_GRANT_VERSION = 3;
 
 export const CONNECTOR_GRANT_PREFIX = 'connector:';
 export const ALL_CONNECTORS_GRANT = 'connector:*';
 
 /** The fixed, non-connector tokens. */
-export const BOT_CAPABILITY_GRANTS = ['agent', 'web', 'download', 'preview', 'local', 'shell', 'admin'] as const;
+export const BOT_CAPABILITY_GRANTS = ['agent', 'web', 'download', 'preview', 'analyze', 'local', 'shell', 'admin', 'manage'] as const;
 export type BotCapabilityGrant = typeof BOT_CAPABILITY_GRANTS[number];
 export type BotConnectorGrant = `connector:${string}`;
-export type BotGrant = BotCapabilityGrant | BotConnectorGrant;
+/**
+ * One knowledge base (`kb:<id>`): the agent may search that folder's documents. Only the owner
+ * hands it out, by name, from Settings; the owner mark and the admin grant hold every base.
+ */
+export type BotKnowledgeGrant = `kb:${string}`;
+export type BotGrant = BotCapabilityGrant | BotConnectorGrant | BotKnowledgeGrant;
+
+export const KNOWLEDGE_GRANT_PREFIX = 'kb:';
+
+export function knowledgeGrant(kbId: string): BotKnowledgeGrant {
+  return `${KNOWLEDGE_GRANT_PREFIX}${kbId}`;
+}
+
+export function isKnowledgeGrant(grant: string): grant is BotKnowledgeGrant {
+  return grant.startsWith(KNOWLEDGE_GRANT_PREFIX) && KB_ID_PATTERN.test(grant.slice(KNOWLEDGE_GRANT_PREFIX.length));
+}
+
+/** The knowledge bases named in a grant list. */
+export function knowledgeGrantIds(grants: readonly string[]): string[] {
+  return [...new Set(grants.filter(isKnowledgeGrant).map((grant) => grant.slice(KNOWLEDGE_GRANT_PREFIX.length)))];
+}
 
 /**
  * Grants "me" does not imply. Running commands on this computer from a phone is a different risk
@@ -68,11 +99,20 @@ export interface BotRights {
    * with `download` (an account's own or its group's), which `ytdlAccessFor` checks.
    */
   preview: boolean;
+  /** The analysis buttons under a pasted post, video or page work for this person here. */
+  analyze: boolean;
   local: boolean;
   /** Run commands on this computer, each one approved in the chat first. Private chats only. */
   shell: boolean;
   admin: boolean;
+  /** Control Yobi itself through the Yobi connector, each change asked in the chat. Private chats only. */
+  manage: boolean;
   connectors: BotConnectorRights;
+  /**
+   * The knowledge bases the agent may search: every one (the owner, an admin), the named ones, or
+   * none. Private chats only, and only with agent (`kb_search` is a tool of the agent kit).
+   */
+  knowledge: BotConnectorRights;
 }
 
 export interface BotRightsInput {
@@ -90,10 +130,13 @@ export const NO_BOT_RIGHTS: BotRights = Object.freeze({
   web: false,
   download: false,
   preview: false,
+  analyze: false,
   local: false,
   shell: false,
   admin: false,
+  manage: false,
   connectors: 'none',
+  knowledge: 'none',
 }) as BotRights;
 
 export function connectorGrant(serverId: string): BotConnectorGrant {
@@ -104,8 +147,11 @@ export function isBotGrant(value: unknown): value is BotGrant {
   if (typeof value !== 'string') return false;
   if ((BOT_CAPABILITY_GRANTS as readonly string[]).includes(value)) return true;
   if (value === ALL_CONNECTORS_GRANT) return true;
+  if (isKnowledgeGrant(value)) return true;
   if (!value.startsWith(CONNECTOR_GRANT_PREFIX)) return false;
-  return CONNECTOR_ID_PATTERN.test(value.slice(CONNECTOR_GRANT_PREFIX.length));
+  const id = value.slice(CONNECTOR_GRANT_PREFIX.length);
+  // Controlling Yobi is the `manage` grant, never a connector one: a hand edit cannot add it this way.
+  return id !== BUILTIN_YOBI_SERVER_ID && CONNECTOR_ID_PATTERN.test(id);
 }
 
 /**
@@ -125,15 +171,17 @@ function grantRank(grant: BotGrant): number {
     case 'web': return 1;
     case 'download': return 2;
     case 'preview': return 3;
-    case 'local': return 4;
-    case 'shell': return 5;
-    case ALL_CONNECTORS_GRANT: return 6;
-    case 'admin': return 8;
-    default: return 7;
+    case 'analyze': return 4;
+    case 'local': return 5;
+    case 'shell': return 6;
+    case ALL_CONNECTORS_GRANT: return 7;
+    case 'admin': return 10;
+    case 'manage': return 11;
+    default: return isKnowledgeGrant(grant) ? 9 : 8;
   }
 }
 
-/** Display order: agent, web, download, preview, local, shell, all connectors, single connectors (by id), admin. */
+/** Display order: agent, web, download, preview, analyze, local, shell, all connectors, single connectors (by id), knowledge bases, admin, manage. */
 export function sortBotGrants(grants: readonly BotGrant[]): BotGrant[] {
   return [...grants].sort((a, b) => grantRank(a) - grantRank(b) || (a < b ? -1 : a > b ? 1 : 0));
 }
@@ -159,7 +207,7 @@ export function normalizeGrantList(raw: unknown, platform: BotPlatform): BotGran
  * data (local, `connector:*`, a private connector), which an admin could otherwise hand a friend.
  */
 export function isAdminGrantable(grant: BotGrant): boolean {
-  if (grant === 'agent' || grant === 'web' || grant === 'download' || grant === 'preview') return true;
+  if (grant === 'agent' || grant === 'web' || grant === 'download' || grant === 'preview' || grant === 'analyze') return true;
   return grant.startsWith(CONNECTOR_GRANT_PREFIX) && PUBLIC_DATA_CONNECTOR_IDS.includes(grant.slice(CONNECTOR_GRANT_PREFIX.length));
 }
 
@@ -225,6 +273,14 @@ export function resolveBotRights(input: BotRightsInput): BotRights {
     const given = (input.isOwner && row.owner) || row.paired || (isGrant(key) && grants.includes(key));
     return given && (input.isPrivate || row.inGroups);
   };
+  // The owner and an admin hold every base (an admin is trusted with the bot's people already); anyone
+  // else the ones named. Answers quote the documents, so only where the account alone reads them.
+  let knowledge: BotConnectorRights = 'none';
+  if (input.isPrivate && has('agent')) {
+    const named = knowledgeGrantIds(grants);
+    if (input.isOwner || (isGrantAvailableOn('admin', input.platform) && has('admin'))) knowledge = 'all';
+    else if (named.length > 0) knowledge = named;
+  }
   const allConnectors = input.isOwner || grants.includes(ALL_CONNECTORS_GRANT);
   const named = connectorGrantIds(grants);
   let connectors: BotConnectorRights = 'none';
@@ -241,10 +297,14 @@ export function resolveBotRights(input: BotRightsInput): BotRights {
     web: has('web'),
     download: has('download'),
     preview: has('preview'),
+    analyze: has('analyze'),
     local: has('local'),
     shell: has('shell') && has('agent'),
     admin: isGrantAvailableOn('admin', input.platform) && has('admin'),
+    // The Yobi connector is a tool of the agent kit: without agent the grant would do nothing.
+    manage: has('manage') && has('agent'),
     connectors,
+    knowledge,
   };
 }
 
@@ -348,6 +408,7 @@ export function resolveGroupRights(grants: readonly string[]): BotRights {
     chat: list.includes('chat'),
     web: list.includes('web'),
     download: list.includes('download'),
+    analyze: list.includes('analyze'),
     connectors: ids.length > 0 ? ids : 'none',
   };
 }
@@ -367,10 +428,13 @@ export function unionBotRights(a: BotRights, b: BotRights): BotRights {
     web: a.web || b.web,
     download: a.download || b.download,
     preview: a.preview || b.preview,
+    analyze: a.analyze || b.analyze,
     local: a.local || b.local,
     shell: a.shell || b.shell,
     admin: a.admin || b.admin,
+    manage: a.manage || b.manage,
     connectors: unionConnectors(a.connectors, b.connectors),
+    knowledge: unionConnectors(a.knowledge, b.knowledge),
   };
 }
 
@@ -403,10 +467,13 @@ export function intersectBotRights(a: BotRights, b: BotRights): BotRights {
     web: a.web && b.web,
     download: a.download && b.download,
     preview: a.preview && b.preview,
+    analyze: a.analyze && b.analyze,
     local: a.local && b.local,
     shell: a.shell && b.shell,
     admin: a.admin && b.admin,
+    manage: a.manage && b.manage,
     connectors: intersectConnectors(a.connectors, b.connectors),
+    knowledge: intersectConnectors(a.knowledge, b.knowledge),
   };
 }
 

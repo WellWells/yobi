@@ -9,6 +9,7 @@ import {
   AGENT_BUILTIN_TOOLS, buildBuiltinCatalog, builtinConfigKeys, builtinRequiredFields, builtinToolEntry, isBuiltinTool,
 } from './agentBuiltins';
 import type { AgentBuiltinTool } from './agentBuiltins';
+import type { KnowledgeScopeEntry } from './agentKnowledge';
 import { readDoing } from './agentDoing';
 import { readPlanFields, readStepBudget } from './agentPrompts';
 import { readIntent } from './actionGate';
@@ -34,6 +35,7 @@ export const AGENT_ALLOWED_SKILLS: readonly SkillType[] = [
   'forex',
   'almanac',
   'tw_invoice',
+  'app_store',
   'random',
   'notify',
 ];
@@ -79,9 +81,31 @@ export interface AgentToolScope {
   /**
    * Offer `use_skill` and the SKILLS section. Never set by a scope constant: the engine sets it on a
    * run with `builtins` when the user has skills switched on, and a skill's test run asks for it
-   * (`skillTestScope`). Either way only with a skill to offer. A helper never gets it (`readOnlyScope`).
+   * (`skillTestScope`). Either way only with a skill to offer. `readOnlyScope` drops it; the engine
+   * gives it back to a helper whose delegating run offered skills (read-only there: no `shell`).
    */
   agentSkills?: boolean;
+  /**
+   * The knowledge bases `kb_search` may read, by id and name. Never set by a scope constant: the
+   * desktop gets every base, a bot account the ones it was granted (`withKnowledgeCapability`).
+   * Reading only, so a helper keeps it; the web switch does not touch it.
+   */
+  knowledge?: readonly KnowledgeScopeEntry[];
+}
+
+/** `kb_search` over these bases, or out of the scope when there are none. */
+export function withKnowledgeCapability(scope: AgentToolScope, entries: readonly KnowledgeScopeEntry[]): AgentToolScope {
+  const { knowledge: _knowledge, ...rest } = scope;
+  return entries.length > 0 ? { ...rest, knowledge: entries } : rest;
+}
+
+/**
+ * "Knowledge base only": `kb_search` over these bases and nothing else — no skill (files, web,
+ * clipboard), no built-ins (flows, `delegate`, skills), no pictures or exports. The caller also
+ * leaves every connector out (`noConnectors`).
+ */
+export function knowledgeOnlyScope(entries: readonly KnowledgeScopeEntry[]): AgentToolScope {
+  return { skills: [], builtins: false, knowledge: entries };
 }
 
 /** `export_file` in or out of a scope; a helper never gets it (`readOnlyScope`). */
@@ -116,6 +140,7 @@ export function readOnlyScope(scope: AgentToolScope): AgentToolScope {
     skills: scope.skills.filter((skill) => !HELPER_EXCLUDED_SKILLS.has(skill)),
     builtins: false,
     delegate: false,
+    ...(scope.knowledge?.length ? { knowledge: scope.knowledge } : {}),
   };
 }
 
@@ -156,7 +181,7 @@ const WEB_SKILL_SET = new Set<SkillType>(WEB_SKILLS);
 
 /** A recorded step went online — what tells the composer the run used the web. */
 export function isWebTool(tool: string): boolean {
-  return WEB_SKILL_SET.has(tool as SkillType) || tool === 'agoda_reviews' || tool === 'movie_info';
+  return WEB_SKILL_SET.has(tool as SkillType) || tool === 'agoda_reviews' || tool === 'movie_info' || tool === 'price_search';
 }
 
 /**
@@ -212,7 +237,7 @@ export function withShellCapability(scope: AgentToolScope, enabled: boolean): Ag
  * turn every paired contact's small talk into something that can read local files.
  */
 export const BOT_CHAT_TOOL_SCOPE: AgentToolScope = {
-  skills: ['search', 'research', 'browser', 'youtube', 'gmap_reviews', 'weather', 'air_quality', 'stock', 'forex', 'almanac', 'tw_invoice', 'random'],
+  skills: ['search', 'research', 'browser', 'youtube', 'gmap_reviews', 'weather', 'air_quality', 'stock', 'forex', 'almanac', 'tw_invoice', 'app_store', 'random'],
   builtins: false,
 };
 
@@ -265,7 +290,7 @@ export function isHelpTool(name: string): name is AgentHelpTool {
 // prompt past its cap, cutting off the closing fence and the action instruction. `search` paid for
 // `agoda_reviews`: its one option is a result count, and research is what answers.
 export const AGENT_BRIEF_ONLY_TOOLS: readonly SkillType[] = [
-  'sysinfo', 'air_quality', 'almanac', 'tw_invoice', 'gmap_reviews', 'youtube', 'llm', 'forex', 'random', 'stock', 'weather',
+  'sysinfo', 'air_quality', 'almanac', 'tw_invoice', 'app_store', 'gmap_reviews', 'youtube', 'llm', 'forex', 'random', 'stock', 'weather',
   'file_read', 'file_list', 'file_write', 'shell', 'clipboard', 'notify', 'search',
 ];
 
@@ -276,7 +301,7 @@ const BRIEF_ONLY_SET = new Set<SkillType>(AGENT_BRIEF_ONLY_TOOLS);
 const AGENT_TOOL_BRIEFS: Partial<Record<SkillType, string>> = {
   search: 'Web search: a ranked JSON list of {title, link, snippet}, no page content. Use it for a link to open or pass on; for an answer, research.',
   file_read: 'Read a local text or PDF file in your workspace only (app output folder, Documents, Downloads, Desktop); a guessed path is refused, so call file_list first.',
-  file_list: 'List the files in a local folder (non-recursive). Only your workspace is allowed (app output folder, Documents, Downloads, Desktop). Use it to learn a file name before reading it.',
+  file_list: 'List the files in a local folder (non-recursive), in your workspace only (app output folder, Documents, Downloads, Desktop). Use it to learn a file name before reading it.',
   // Every optional field of these three opens something a user asks for, so each is named in the
   // spelling the config takes. Terse on purpose: together they cost what the three briefs did
   // before history and the hourly forecast existed (Gemini's MCP room has no slack); the rest is
@@ -294,6 +319,9 @@ const AGENT_TOOL_BRIEFS: Partial<Record<SkillType, string>> = {
   almanac: '農民曆 of ANY "date", month or year ("lunar"/"leap": lunar → Gregorian): 宜忌, clash, lucky hours. "time" HH:MM: 時辰 + 八字 (birth time → their 八字). Good days for an "activity" over "days" (a year, ONE call), no "zodiac" clash, "weekends":"true" Sat/Sun. Never guess.',
   // Both optional fields open something a user asks for (checking a receipt, an older period).
   tw_invoice: 'Taiwan receipt lottery (統一發票) winning numbers, or check "numbers" (8 digits or last 3) in code; "period" blank = every claimable one. Never match digits yourself.',
+  // Search results have no in-app purchases; the store page does, and this reads it. A name search
+  // can land on a look-alike app, so the answer carries the app's link for the user to check.
+  app_store: 'App price + in-app purchases by name or link; store "googleplay" = Android. Show its link.',
   // Every other llm field is hidden from the agent, so tier 1 drops only wording; the misuse warning stays.
   llm: 'Ask a language model a sub-question about text you put in the prompt (summarize, extract). Do NOT use it for reasoning you can do yourself: it costs a whole step.',
   shell: "Run ONE system command; returns its output. The user approves each one; a refusal is final. Never as admin; credential stores and system folders are refused. For what no other tool reads: ports, processes, services.",
@@ -500,16 +528,20 @@ function builtinNames(scope: AgentToolScope): AgentBuiltinTool[] {
     if (tool === 'draw_image') return scope.pictures === true;
     if (tool === 'agoda_reviews') return scope.hotelReviews === true;
     if (tool === 'export_file') return scope.documents === true;
+    if (tool === 'kb_search') return (scope.knowledge?.length ?? 0) > 0;
     if (tool === 'use_skill') return scope.agentSkills === true;
     // Named by the movie guide skill, not the catalog; it reads pages, so it goes with the web.
     if (tool === 'movie_info') return scope.agentSkills === true && scope.skills.includes('browser');
+    // Named by the Taiwan price skill. It asks the shops' own search, not a page the web switch governs (like app_store).
+    if (tool === 'price_search') return scope.agentSkills === true;
+    if (tool === 'ai_usage') return scope.agentSkills === true && scope.skills.includes('shell') && scope.skills.includes('sysinfo');
     if (!scope.builtins) return false;
     return tool === 'delegate' ? scope.delegate === true : flows;
   });
 }
 
 /** Built-ins the catalog leaves out because a skill names them; `use_skill` hands their line over. */
-const SKILL_NAMED_TOOLS: readonly AgentBuiltinTool[] = ['movie_info'];
+const SKILL_NAMED_TOOLS: readonly AgentBuiltinTool[] = ['movie_info', 'price_search', 'ai_usage'];
 
 /** The skill-named tools callable in this scope, each with its full line. */
 export function skillNamedTools(scope: AgentToolScope): Record<string, string> {
@@ -525,6 +557,7 @@ function builtinCatalogFor(scope: AgentToolScope): string {
     scope.hotelReviews === true,
     scope.documents === true,
     scope.agentSkills === true,
+    scope.knowledge ?? [],
   );
 }
 
@@ -818,6 +851,9 @@ export function validateAgentAction(
     return { ok: false, error: 'The "config" field must be a JSON object of string values.' };
   }
   const allowed = allowedConfigKeys(tool);
+  if (tool === 'ai_usage' && Object.keys(rawConfig ?? {}).length > 0) {
+    return { ok: false, error: 'Tool "ai_usage" accepts no config fields.' };
+  }
   const config: Record<string, string> = {};
   for (const [key, value] of Object.entries((rawConfig as Record<string, unknown>) ?? {})) {
     // Undeclared keys are dropped, not rejected (no repair round-trip). This keeps hidden fields such as

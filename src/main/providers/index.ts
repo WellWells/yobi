@@ -1,6 +1,7 @@
 import type { BrowserWindow } from 'electron';
 import { runGeminiAutomation } from './gemini';
 import { runPerplexityAutomation } from './perplexity';
+import { isPerplexityVisitorSpent } from './perplexityVisitor';
 import { isChatgptLoginRequiredError, runChatgptAutomation } from './chatgpt';
 import { runClaudeAutomation } from './claude';
 import { isClaudeLoginRequiredError } from './claudeSession';
@@ -181,6 +182,12 @@ export async function runAutomation(
   // DeepSeek's new conversations are deleted after reading. Rebuild from local history instead
   // of adding turns to an old saved thread; the existing conversation must remain untouched.
   if (provider === 'deepseek' && expectThreadUrl) {
+    return { response: '', title: '', threadUrl: null, threadLost: true };
+  }
+
+  // A signed-out Perplexity visitor gets only a few answers. Past them the follow-up is replayed
+  // from local history as a new conversation, which starts as a fresh visitor.
+  if (provider === 'perplexity' && expectThreadUrl && (await isPerplexityVisitorSpent(workerWin.webContents.session))) {
     return { response: '', title: '', threadUrl: null, threadLost: true };
   }
 

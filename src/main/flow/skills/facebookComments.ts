@@ -40,13 +40,50 @@ export function readBundleUrls(html: string): string[] {
   return [...new Set(urls)];
 }
 
-/** The comments query's id, if this bundle defines it. */
-export function readCommentsQueryId(js: string): string {
-  return QUERY_MODULE_RE.exec(js)?.[1] ?? '';
+/** The variables the query's own definition fills in itself (`providedVariables`). */
+const PROVIDED_RE = new RegExp(`name:"${COMMENTS_QUERY}",operationKind:"query",text:null,providedVariables:\\{([^}]*)\\}`);
+
+/**
+ * What the site's code gives each provided variable, as far as Yobi has read it. A variable the
+ * query lists that is not here is sent as `false`, a feature's usual off: the query refuses a
+ * request that leaves one out (`missing_required_variable_value`), so one new variable
+ * such as `CometUFICommentActionLinkStableIDs` would empty every comments read.
+ */
+const PROVIDER_VALUES: Readonly<Record<string, unknown>> = {
+  CometUFICommentAutoTranslationType: 'AUTO_TRANSLATE',
+  CometUFICommentAvatarStickerAnimatedImage: false,
+  CometUFICommentActionLinksRewriteEnabled: true,
+  CometUFICommentActionLinkStableIDs: false,
+  IsWorkUser: false,
+};
+
+export interface CommentsQuery {
+  id: string;
+  /** The provided variables' names, as the bundle lists them; empty when it does not. */
+  providers: readonly string[];
+}
+
+/** The comments query's id and its provided variables, if this bundle defines it. */
+export function readCommentsQuery(js: string): CommentsQuery | null {
+  const id = QUERY_MODULE_RE.exec(js)?.[1];
+  if (!id) return null;
+  const provided = PROVIDED_RE.exec(js)?.[1] ?? '';
+  const providers = [...provided.matchAll(/__relay_internal__pv__(\w+?)relayprovider:/g)].map((match) => match[1]);
+  return { id, providers };
+}
+
+/** The provided variables Yobi has no value of its own for: sent as `false`, and worth a line in the log. */
+export function unknownProviders(query: CommentsQuery): string[] {
+  return query.providers.filter((name) => !(name in PROVIDER_VALUES));
+}
+
+function providedVariables(providers: readonly string[]): Record<string, unknown> {
+  const names = providers.length ? providers : Object.keys(PROVIDER_VALUES);
+  return Object.fromEntries(names.map((name) => [`__relay_internal__pv__${name}relayprovider`, PROVIDER_VALUES[name] ?? false]));
 }
 
 export interface CommentsRequest {
-  queryId: string;
+  query: CommentsQuery;
   feedbackId: string;
   cursor: string;
   tokens: PageTokens;
@@ -70,10 +107,7 @@ export function commentsRequestBody(request: CommentsRequest): string {
     targetDialect: null,
     useDefaultActor: false,
     id: request.feedbackId,
-    __relay_internal__pv__CometUFICommentAutoTranslationTyperelayprovider: 'AUTO_TRANSLATE',
-    __relay_internal__pv__CometUFICommentAvatarStickerAnimatedImagerelayprovider: false,
-    __relay_internal__pv__CometUFICommentActionLinksRewriteEnabledrelayprovider: true,
-    __relay_internal__pv__IsWorkUserrelayprovider: false,
+    ...providedVariables(request.query.providers),
   };
   return new URLSearchParams({
     av: request.user,
@@ -85,7 +119,7 @@ export function commentsRequestBody(request: CommentsRequest): string {
     fb_api_req_friendly_name: COMMENTS_QUERY,
     server_timestamps: 'true',
     variables: JSON.stringify(variables),
-    doc_id: request.queryId,
+    doc_id: request.query.id,
   }).toString();
 }
 

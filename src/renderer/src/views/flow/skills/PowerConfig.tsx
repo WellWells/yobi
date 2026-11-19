@@ -21,8 +21,8 @@ export function powerActionChoices(saved: string, platform: string = hostPlatfor
 function Warning({ text }: { text: string }): React.ReactElement {
   return (
     <Group gap={6} align="flex-start" wrap="nowrap" data-power-notice="">
-      <TriangleExclamationPoint size={13} color="var(--mantine-color-error)" style={{ marginTop: 2, flexShrink: 0 }} />
-      <Text fz="xs" c="var(--mantine-color-error)">{text}</Text>
+      <TriangleExclamationPoint size={13} color="var(--error-text)" style={{ marginTop: 2, flexShrink: 0 }} />
+      <Text fz="xs" c="var(--error-text)">{text}</Text>
     </Group>
   );
 }

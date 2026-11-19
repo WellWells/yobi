@@ -1,11 +1,21 @@
-import { PPLX_INPUT_SELECTORS, PPLX_RESPONSE_SELECTOR, PPLX_STOP_ICON_ID } from './perplexityReadScript';
+import {
+  PPLX_COMPOSER_BOX_SELECTOR,
+  PPLX_INPUT_SELECTORS,
+  PPLX_RESPONSE_SELECTOR,
+  PPLX_STOP_ICON_ID,
+} from './perplexityReadScript';
 
 /** Icon ids of the send control. Matched whole: a substring match also hits autocomplete rows. */
 export const PPLX_SUBMIT_ICON_IDS = ['#pplx-icon-arrow-up', '#pplx-icon-arrow-right'];
 
 /**
- * Fills Perplexity's composer and sends. The send control is recognised only by its icon id on an
- * enabled button, and the send must be confirmed by the page or this throws.
+ * Fills Perplexity's composer and sends. The send control is recognised positively or not at all,
+ * and the send must be confirmed by the page or this throws.
+ *
+ * The page has drawn that control two ways. One wears an icon id. The other is a single button
+ * with its drawing inline and no id, which is the voice button while the box is empty and the
+ * send button once it holds text: it counts as send only after it has changed from what it was
+ * over the empty box (another label, or no longer disabled).
  */
 export const PPLX_SUBMIT_JS = `async function perplexitySubmit(promptText, opts) {
   opts = opts || {};
@@ -53,7 +63,43 @@ export const PPLX_SUBMIT_JS = `async function perplexitySubmit(promptText, opts)
   }
 
   function askContainer() {
-    return document.querySelector('[data-ask-input-container="true"]');
+    return document.querySelector(${JSON.stringify(PPLX_COMPOSER_BOX_SELECTOR)});
+  }
+
+  function isOff(button) {
+    return button.disabled || button.getAttribute('aria-disabled') === 'true';
+  }
+
+  /** The one button drawn inline; null when the box has none, or more than one to choose from. */
+  function inlineActionButton() {
+    var container = askContainer();
+    if (!container) return null;
+    var buttons = container.querySelectorAll('button');
+    var found = null;
+    for (var i = 0; i < buttons.length; i++) {
+      var button = buttons[i];
+      if (button.querySelector('use')) continue;
+      if (button.hasAttribute('aria-haspopup') || button.hasAttribute('aria-pressed')) continue;
+      if (found) return null;
+      found = button;
+    }
+    return found;
+  }
+
+  // What the inline button was over an empty box; see the note above the script.
+  var idleAction = null;
+  function noteIdleAction() {
+    // Once: right after a draft is cleared the button can still be showing its send state.
+    if (idleAction) return;
+    var button = inlineActionButton();
+    if (button) idleAction = { label: button.getAttribute('aria-label') || '', off: isOff(button) };
+  }
+
+  function inlineSubmitControl() {
+    var button = inlineActionButton();
+    if (!button || !idleAction || !composerText() || isOff(button)) return null;
+    var label = button.getAttribute('aria-label') || '';
+    return label !== idleAction.label || idleAction.off ? button : null;
   }
 
   /** Perplexity puts a stop control where the send button was for as long as it answers. */
@@ -79,11 +125,10 @@ export const PPLX_SUBMIT_JS = `async function perplexitySubmit(promptText, opts)
     for (var i = 0; i < buttons.length; i++) {
       var button = buttons[i];
       if (!buttonWearsIcon(button, SUBMIT_ICON_IDS)) continue;
-      if (button.disabled) continue;
-      if (button.getAttribute('aria-disabled') === 'true') continue;
+      if (isOff(button)) continue;
       return button;
     }
-    return null;
+    return inlineSubmitControl();
   }
 
   /** Lexical reverts direct \`textContent\` writes; delete over a full selection via \`beforeinput\`. */
@@ -119,6 +164,7 @@ export const PPLX_SUBMIT_JS = `async function perplexitySubmit(promptText, opts)
     if (!await emptyComposer()) return false;
     var el = getComposer();
     if (!el) return false;
+    noteIdleAction();
 
     el.focus();
     var dt = new DataTransfer();

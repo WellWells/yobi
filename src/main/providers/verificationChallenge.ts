@@ -1,4 +1,4 @@
-import { sendLog, sendWebNotification, setWorkerAttention } from '../helpers';
+import { sendActionNeededNotification, sendLog, setWorkerAttention } from '../helpers';
 import { getLangCache, t } from '../i18n';
 
 export const VERIFICATION_CHALLENGE_ERROR_NAME = 'VerificationChallengeError';
@@ -14,7 +14,7 @@ export interface VerificationChallengeKeys {
 export function raiseVerificationChallenge(keys: VerificationChallengeKeys): Error {
   const strings = getLangCache();
   setWorkerAttention('verification');
-  sendWebNotification(
+  sendActionNeededNotification(
     t(strings, keys.titleKey),
     t(strings, keys.bodyKey),
     'error',

@@ -10,6 +10,13 @@ export const OUTCOME_COLORS: Record<MetricOutcome, string> = {
   timeout: 'var(--mantine-color-warning)',
 };
 
+/** The same outcomes as text or a small icon: the readable tones, ≥ 4.5:1 on every surface. */
+export const OUTCOME_TEXT: Record<MetricOutcome, string> = {
+  success: 'var(--success-text)',
+  failure: 'var(--error-text)',
+  timeout: 'var(--warning-text)',
+};
+
 /**
  * The per-domain swatches in a breakdown legend: the brand accent, a lighter step of it, then the
  * muted tone — always beside the domain's name, so they only need to tell the rows apart.

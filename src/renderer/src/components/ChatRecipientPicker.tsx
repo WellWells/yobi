@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Group, Stack, Text } from '@mantine/core';
 import { Settings } from 'lucide-react';
 import { AppButton } from './AppButton';
+import { nameProps } from './a11y';
 import { LineSelfRecipientPicker } from './LineSelfRecipientPicker';
 import { RecipientNotes } from './RecipientNotes';
 import { MultiSelectDropdown } from './MultiSelectDropdown';
@@ -138,7 +139,7 @@ const PairedRecipientPicker: React.FC<ChatRecipientPickerProps> = ({
   return (
     <Stack gap={4}>
       <MultiSelectDropdown
-        label={label}
+        {...nameProps(label, t('flow.recipient.pick'))}
         options={withTypedRecipient(options, search, t)}
         value={tokens}
         onChange={(next) => onChange(next.join(','))}
@@ -164,7 +165,7 @@ const PairedRecipientPicker: React.FC<ChatRecipientPickerProps> = ({
           </AppButton>
         </Group>
       )}
-      {lostChannelPicked && <Text fz="xs" c="var(--mantine-color-warning)">{t('flow.recipient.channelLost')}</Text>}
+      {lostChannelPicked && <Text fz="xs" c="var(--warning-text)">{t('flow.recipient.channelLost')}</Text>}
       <RecipientNotes tokens={tokens} unlisted={unlisted} blankHint={blankHint} hint={hint} />
     </Stack>
   );

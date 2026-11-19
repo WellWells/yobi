@@ -14,7 +14,7 @@ import {
   unionBotRights,
 } from '../../shared/botPermissions';
 import type { BotGrant, BotGroupGrant, BotRights } from '../../shared/botPermissions';
-import { isBuiltinFlowId } from '../../shared/linkSites/registry';
+import { builtinFlowRight } from '../../shared/builtinFlowRight';
 import { BOT_BUILTIN_COMMAND_KEYS } from '../../shared/types';
 import type { BotBuiltinCommandKey, BotPlatform } from '../../shared/types';
 
@@ -120,8 +120,11 @@ export function computeBotRights(
       grants: getBotGrants(platform, id),
     })
     : { ...NO_BOT_RIGHTS };
-  // Rights follow the person on LINE PC; the admin grant stays where only admins read the answer.
-  const own = resolved.admin && !isAdminChat(platform, id, chat, isOwner) ? { ...resolved, admin: false } : resolved;
+  // Rights follow the person on LINE PC; the admin and manage grants, and the knowledge bases (an
+  // answer quotes the documents), stay where only they read the answer.
+  const own = (resolved.admin || resolved.manage || resolved.knowledge !== 'none') && !isAdminChat(platform, id, chat, isOwner)
+    ? { ...resolved, admin: false, manage: false, knowledge: 'none' as const }
+    : resolved;
   if (isPrivate || !chat) return own;
   return unionBotRights(own, resolveGroupRights(groupGrants));
 }
@@ -221,13 +224,21 @@ export async function botDownloadAllowed(platform: BotPlatform, userId: string, 
   return (await getBotRights(platform, userId, chatId)).download;
 }
 
+/** Whether the analysis buttons (a post's, a video's, a page's) work for this account here, read now. */
+export async function botAnalyzeAllowed(platform: BotPlatform, userId: string, chatId: string): Promise<boolean> {
+  return (await getBotRights(platform, userId, chatId)).analyze;
+}
+
 /**
- * Whether a bot may start this flow for this account. The downloader's built-in flows need the
- * download grant; a flow command of the owner's own is guarded by its allow list instead, which
- * the bot checks before it gets here. The last line of defence behind the chat handlers' check.
+ * Whether a bot may start this flow for this account. A built-in needs the right its line asks
+ * for (`builtinFlowRight`: the analysis grant to sum up, the download grant for everything else);
+ * a flow command of the owner's own is guarded by its allow list instead, which the bot checks
+ * before it gets here. The last line of defence behind the chat handlers' check.
  */
-export async function botFlowAllowed(platform: BotPlatform, flowId: string, userId: string, chatId: string): Promise<boolean> {
-  return !isBuiltinFlowId(flowId) || botDownloadAllowed(platform, userId, chatId);
+export async function botFlowAllowed(platform: BotPlatform, flowId: string, userId: string, chatId: string, input = ''): Promise<boolean> {
+  const right = builtinFlowRight(flowId, input);
+  if (right === null) return true;
+  return (await getBotRights(platform, userId, chatId))[right];
 }
 
 /** Whether an account may type a built-in command (e.g. `/search`) in this chat, read now. */

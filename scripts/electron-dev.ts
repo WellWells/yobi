@@ -3,6 +3,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as readline from 'node:readline';
+import { currentDevAccount, devAccountMessage, devAccountProblem } from './devAccount';
 import { isBuildCurrent, RESTART_SENTINEL } from './devRestart';
 
 const electronBin = require('electron') as string;
@@ -117,6 +118,13 @@ function startWatchBuild(configFile: string): Promise<void> {
 }
 
 async function main() {
+  const account = currentDevAccount();
+  const problem = devAccountProblem(account);
+  if (problem) {
+    console.error(devAccountMessage(problem, account));
+    process.exit(1);
+  }
+
   const server: ViteDevServer = await createServer({ configFile: 'vite.renderer.config.mts' });
   await server.listen();
   server.printUrls();

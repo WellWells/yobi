@@ -185,7 +185,7 @@ export const FlowSetupWizard: React.FC<FlowSetupWizardProps> = ({ template, t, o
 
         {missing.length > 0 && (
           <Group gap={6} align="center" wrap="nowrap">
-            <TriangleExclamationPoint size={13} color="var(--mantine-color-warning)" style={{ flexShrink: 0 }} />
+            <TriangleExclamationPoint size={13} color="var(--warning-text)" style={{ flexShrink: 0 }} />
             <Text fz="xs" c="var(--text-muted)">{t('flow.setup.missingPrefix')}{missingNames}</Text>
           </Group>
         )}

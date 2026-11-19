@@ -1,7 +1,7 @@
 import { BrowserWindow, session } from 'electron';
 import { Semaphore } from './flow/lanes';
 import { isBlockedHost } from './requestBlocklist';
-import { SILENT_WEB_PREFERENCES, muteWindow, parkWindowOffscreen } from './silentWindow';
+import { SILENT_WEB_PREFERENCES, muteWindow, hideBeforeMapping, parkWindowOffscreen } from './silentWindow';
 import { prepareSiteWindow } from './siteWindowIdentity';
 import { userAgentForUrl } from './userAgent';
 import { siteLabel } from '../shared/linkSites/rows';
@@ -311,7 +311,7 @@ async function openAndRead<T>(
     // Mapped, not merely created: a window that has never been shown stalls rendering, and with
     // it the page's own scripts (the check among them). Transparent before it is mapped: parking
     // moves it only once shown, so an opaque window would flash at its default spot first.
-    win.setOpacity(0);
+    hideBeforeMapping(win);
     const identity = (SITE_PAGES[site] as SitePageSpec).chromeIdentity === true;
     // A blank page first, BEFORE the window is shown: a window shown before it had a page keeps
     // every later page `document.hidden`, and the DevTools protocol needs a page before the

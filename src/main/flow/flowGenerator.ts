@@ -25,6 +25,7 @@ import { fitRepairExcerpt } from './flowBuildBudget';
 import type { RepairPromptBuilder } from './flowBuildBudget';
 import { flowRequestTooLong, revisionTooLong } from './flowBuildTooLong';
 import type { FlowExecutorDeps } from './types';
+import { carryRenamedOutputKeys } from '../../shared/flowOutputRename';
 
 const DEFAULT_GENERATION_TIMEOUT_MS = 120_000;
 
@@ -294,7 +295,9 @@ export async function reviseFlowDefinition(
             return typeof id === 'string' && id.trim() ? id.trim() : undefined;
           })
           : [];
-        return flow.variables?.length ? { ...inner, variables: flow.variables } : inner;
+        // A renamed outputKey takes its references along (the model often renames only the step).
+        const carried = Array.isArray(inner.steps) ? { ...inner, steps: carryRenamedOutputKeys(flow.steps, inner.steps) } : inner;
+        return flow.variables?.length ? { ...carried, variables: flow.variables } : carried;
       }),
     },
   );

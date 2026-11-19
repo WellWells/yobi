@@ -121,6 +121,8 @@ export function groupGrantItem(grant: BotGroupGrant, connectors: readonly BotCon
       return { grant, label: t('settings.bot.perm.grant.web'), description: t('settings.bot.group.grant.web.desc') };
     case 'download':
       return { grant, label: t('settings.bot.perm.grant.download'), description: t('settings.bot.perm.grant.download.desc') };
+    case 'analyze':
+      return { grant, label: t('settings.bot.perm.grant.analyze'), description: t('settings.bot.perm.grant.analyze.desc') };
     default: {
       const id = grant.slice(CONNECTOR_GRANT_PREFIX.length);
       const known = connectors.find((option) => option.id === id);

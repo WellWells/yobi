@@ -50,7 +50,7 @@ export const ComposerNotice: React.FC<ComposerNoticeProps> = ({
         type="button"
         onClick={onAction}
         fz="var(--font-size-sm)"
-        c="var(--mantine-color-accent)"
+        c="var(--mantine-color-accent-text)"
         style={{ flexShrink: 0 }}
       >
         {actionLabel}

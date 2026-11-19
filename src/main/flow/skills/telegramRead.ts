@@ -29,6 +29,15 @@ interface Section {
   dates: number[];
 }
 
+/**
+ * Where a supergroup's messages open, `https://t.me/c/<id without -100>/` + message id: the form
+ * Telegram gives every member, public group or private. A basic group has no message links ("").
+ */
+export function telegramMessageLinkPrefix(chatId: number): string {
+  const internal = /^-100(\d{5,})$/.exec(String(chatId))?.[1];
+  return internal ? `https://t.me/c/${internal}/` : '';
+}
+
 function pad(value: number): string {
   return String(value).padStart(2, '0');
 }
@@ -58,8 +67,11 @@ export function resolveTelegramRange(range: TelegramReadRange, now: Date): { sin
   }
 }
 
-/** One message per line under a date line, as `line_read` writes them: "HH:MM name：text". */
-function renderLines(messages: readonly LoggedMessage[]): { lines: string[]; dates: number[] } {
+/**
+ * One message per line under a date line, as `line_read` writes them: "HH:MM name：text", with
+ * "#<message id>" after the time when the group has message links, so a summary can point back.
+ */
+function renderLines(messages: readonly LoggedMessage[], linked: boolean): { lines: string[]; dates: number[] } {
   const lines: string[] = [];
   const dates: number[] = [];
   let currentDay = '';
@@ -67,7 +79,7 @@ function renderLines(messages: readonly LoggedMessage[]): { lines: string[]; dat
     const date = new Date(message.date * 1000);
     const day = dayOf(date);
     const flat = message.text.replace(/\s+/g, ' ').trim();
-    const line = `${pad(date.getHours())}:${pad(date.getMinutes())} ${message.from || '?'}：${flat}`;
+    const line = `${pad(date.getHours())}:${pad(date.getMinutes())} ${linked ? `#${message.id} ` : ''}${message.from || '?'}：${flat}`;
     // The date line rides with the first message of its day, so trimming drops them together.
     lines.push(day !== currentDay ? `${day}\n${line}` : line);
     dates.push(message.date);
@@ -138,7 +150,7 @@ export async function runTelegramRead(config: Record<string, string>, deps: Tele
   const { since, until } = resolveTelegramRange(range, deps.now());
 
   const sections: Section[] = groups
-    .map(({ id, title }) => ({ id, title: title || String(id), ...renderLines(deps.log.messagesBetween(id, since, until)) }))
+    .map(({ id, title }) => ({ id, title: title || String(id), ...renderLines(deps.log.messagesBetween(id, since, until), telegramMessageLinkPrefix(id) !== '') }))
     .filter((section) => section.lines.length > 0);
   const headings = groups.length > 1;
   const headingCost = (section: Section): number => (headings ? section.title.length + 5 : 0);
@@ -164,6 +176,12 @@ export async function runTelegramRead(config: Record<string, string>, deps: Tele
   const dates = shown.flatMap((section) => section.dates).sort((a, b) => a - b);
   deps.report?.(`💬 [Flow] telegram_read: ${count} message(s) from ${shown.length} group(s)${total > count ? ` (${total - count} dropped to fit)` : ''}`);
 
+  const messageLinks = shown
+    .map((section) => ({ title: section.title, prefix: telegramMessageLinkPrefix(section.id) }))
+    .filter((group) => group.prefix)
+    .map((group) => `${group.title}: ${group.prefix}`)
+    .join('\n');
+
   return envelope(text, {
     count: String(count),
     dropped: String(total - count),
@@ -171,6 +189,7 @@ export async function runTelegramRead(config: Record<string, string>, deps: Tele
     groupCount: String(shown.length),
     firstAt: dates.length > 0 ? stampOf(dates[0]) : '',
     lastAt: dates.length > 0 ? stampOf(dates[dates.length - 1]) : '',
+    messageLinks,
   });
 }
 

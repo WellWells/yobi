@@ -36,6 +36,7 @@ export const TokensCard: React.FC<Props> = ({ stats, t }) => {
           }
         />
         <TrendBarChart
+          title={t('settings.stats.tokens')}
           labels={stats.labels}
           height={148}
           totalLabel={t('settings.stats.tokens.total')}

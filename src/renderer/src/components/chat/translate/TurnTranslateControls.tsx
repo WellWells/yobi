@@ -7,6 +7,7 @@ import {
 import { useI18nStore } from '../../../store/i18nStore';
 import { useTranslateStore } from '../../../store/translateStore';
 import { AppButton } from '../../AppButton';
+import { TooltipTarget } from '../../TooltipTarget';
 import { LanguageMenuItems } from './LanguageMenuItems';
 import { convertTurnToTraditional, translateTurn } from './translateActions';
 import { useProviderLabel } from './useTurnTranslation';
@@ -68,7 +69,7 @@ export const TurnTranslateControls: React.FC<TurnTranslateControlsProps> = ({
         withInitialFocusPlaceholder={false}
       >
         <Menu.Target>
-          <Tooltip
+          <TooltipTarget
             label={busy ? t('chat.translate.busy') : t('chat.translate.action')}
             position="bottom"
             disabled={menuOpen}
@@ -82,7 +83,7 @@ export const TurnTranslateControls: React.FC<TurnTranslateControlsProps> = ({
             >
               <Languages size={14} />
             </ActionIcon>
-          </Tooltip>
+          </TooltipTarget>
         </Menu.Target>
         <Menu.Dropdown miw={200}>
           <LanguageMenuItems defaultTag={defaultTag} onPick={translate} t={t} />

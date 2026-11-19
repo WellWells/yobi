@@ -1,5 +1,6 @@
 import React from 'react';
-import { Box, Group, Stack, Text } from '@mantine/core';
+import { Group, Stack, Text } from '@mantine/core';
+import { SearchSection } from '../FreezeWhileHidden';
 import { ExternalLink, RotateCcw } from 'lucide-react';
 import { SectionCard, SectionTitle, SettingDivider } from '../components';
 import { AppButton } from '../../../components/AppButton';
@@ -90,7 +91,7 @@ export const ShortcutsSection: React.FC<Props> = ({
   };
 
   return (
-    <Box display={visible ? 'block' : 'none'}>
+    <SearchSection shown={visible}>
       <Text fz="var(--font-size-sm)" c="dimmed" mb={sectionGap}>
         {t('settings.shortcut.recordHint')}
       </Text>
@@ -158,6 +159,6 @@ export const ShortcutsSection: React.FC<Props> = ({
           {t('settings.shortcut.resetAll')}
         </AppButton>
       </Group>
-    </Box>
+    </SearchSection>
   );
 };

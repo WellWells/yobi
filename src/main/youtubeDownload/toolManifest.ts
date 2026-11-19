@@ -103,7 +103,4 @@ export function ytdlpReleaseUrl(nightly: boolean, version: string, file: string)
   return `https://github.com/${YTDLP_REPOS[nightly ? 'nightly' : 'stable']}/releases/download/${version}/${file}`;
 }
 
-/** `ffmpeg` → `ffmpeg.exe` on Windows. */
-export function executableName(base: string, platform: string = process.platform): string {
-  return platform === 'win32' ? `${base}.exe` : base;
-}
+export { executableName } from '../managedTools/paths';

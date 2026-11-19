@@ -195,6 +195,15 @@ export function answerHistorySection(history: string): string[] {
   ];
 }
 
+/**
+ * An agent's research hands over the person's own words, and those may ask for a file ("整理成文件
+ * docx"). A chat site's model can take that as its own job, run the site's code tool to
+ * build the .docx, hit the tool's quota and answer that the document cannot be made — and the
+ * agent, reading that as a fact, gives up with the office connector listed in its prompt. Writing the
+ * file belongs to the agent's later steps, so this step must neither make one nor rule on one.
+ */
+export const ANSWER_IN_TEXT_ONLY = '- Answer in text only: never make, attach or link a file, and never say whether one was or can be made — another step makes any file the question asks for.';
+
 export function buildCitedPrompt(opts: CitedPromptOptions): string {
   const { query, docs, locale, concise = false, lean = false, history = '', asker, uiLanguage = false, now = new Date() } = opts;
   const rules = lean ? LEAN_RULES : FULL_RULES;
@@ -240,6 +249,7 @@ export function buildCitedPrompt(opts: CitedPromptOptions): string {
     // them lost to them (Japanese keywords and pages yield a Japanese answer).
     'OUTPUT RULES (critical):',
     `- Write the whole answer in ${language}${unlessAsked}, even when the question or the sources are in another language.`,
+    ...(asker ? [ANSWER_IN_TEXT_ONLY] : []),
   ].join('\n');
 }
 

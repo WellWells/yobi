@@ -219,7 +219,7 @@ export const FlowPreviewConfirm: React.FC<FlowPreviewConfirmProps> = ({
         </ScrollArea.Autosize>
 
         {hasRisk && !scrolledToEnd && (
-          <Text fz="xs" c="var(--mantine-color-warning)">{t('flow.import.confirm.scrollHint')}</Text>
+          <Text fz="xs" c="var(--warning-text)">{t('flow.import.confirm.scrollHint')}</Text>
         )}
 
         <Group justify="flex-end">

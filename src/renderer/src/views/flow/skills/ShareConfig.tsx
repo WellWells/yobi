@@ -9,8 +9,7 @@ import { ToggleSwitch } from '../../../components/ToggleSwitch';
 import { ShareConsentPoints } from '../../../components/ShareConsentPoints';
 import { BackgroundStylePicker } from '../../../components/capture/PalettePicker';
 import { shareApi } from '../../../api/electronApi';
-import { DEFAULT_CAPTURE_BACKGROUND_STYLE, DEFAULT_CAPTURE_PALETTE } from '../../../../../shared/capturePalettes';
-import type { CaptureBackgroundStyle } from '../../../../../shared/capturePalettes';
+import { DEFAULT_CAPTURE_BACKGROUND_STYLE, DEFAULT_CAPTURE_PALETTE, captureBackgroundStyleOf } from '../../../../../shared/capturePalettes';
 import {
   SHARE_FORMATS, isShareFormatToken, isShareLinkFormat, parseShareFormat, withoutZipPrefix,
 } from '../../../../../shared/shareFormat';
@@ -84,12 +83,12 @@ export const ShareConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) =
         />
       </Input.Wrapper>
       {unknownFormat && (
-        <Text fz="xs" c="var(--mantine-color-warning)">
+        <Text fz="xs" c="var(--warning-text)">
           {fillTemplate(t('flow.skill.share.format.unknown'), { format: rawFormat })}
         </Text>
       )}
       {losingFile && (
-        <Text fz="xs" c="var(--mantine-color-warning)">
+        <Text fz="xs" c="var(--warning-text)">
           {fillTemplate(t('flow.skill.share.format.linkLosesFile'), { steps: losingFile })}
         </Text>
       )}
@@ -182,7 +181,7 @@ export const ShareConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) =
               size="sm"
             />
             <BackgroundStylePicker
-              value={(step.config.backgroundStyle || DEFAULT_CAPTURE_BACKGROUND_STYLE) as CaptureBackgroundStyle}
+              value={captureBackgroundStyleOf(step.config.backgroundStyle) ?? DEFAULT_CAPTURE_BACKGROUND_STYLE}
               onChange={(backgroundStyle) => onChange({ ...step.config, backgroundStyle })}
               t={t}
             />

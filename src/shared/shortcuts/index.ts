@@ -1,4 +1,5 @@
-export type { ComboRelation, KeyboardEventLike, ShortcutDef, ShortcutGroup } from './types';
+export type { ComboRelation, KeyboardEventLike, ShortcutDef, ShortcutFocusArea, ShortcutGroup } from './types';
+export { SHORTCUT_AREA_ATTR } from './types';
 
 export {
   canonicalise,

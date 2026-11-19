@@ -33,6 +33,7 @@ export const YoutubeInfoConfig: React.FC<SkillConfigProps> = ({ step, onChange, 
       hint={fillTemplate(t('flow.skill.youtube_info.emitFailFlag.hint'), { flag: `{{${step.outputKey}.isFailed}}` })}
       control={
         <ToggleSwitch
+          aria-label={t('flow.skill.browser.emitFailFlag')}
           checked={step.config.emitFailFlag === 'true'}
           onChange={(e) => onChange({ ...step.config, emitFailFlag: e.currentTarget.checked ? 'true' : 'false' })}
         />

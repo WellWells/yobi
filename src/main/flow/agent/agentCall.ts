@@ -3,17 +3,21 @@ import type { ResearchProgress } from '../../../shared/researchProgress';
 import type { FlowExecutorDeps } from '../types';
 import { executeSkill, execTrustedCalls } from '../skills';
 import { unwrapStepOutput } from '../executor';
+import { appStoreAgentRules } from '../skills/appStore';
 import { FlowAbortError, resolveStepTimeoutMs, withStepTimeout } from '../runtime';
 import { sendLog } from '../../helpers';
 import { SearchBlockedError } from '../../search/blocked';
 import type { SearchAsker } from '../../search/types';
 import type { McpRegistry } from '../../mcp';
+import { officeViaConnector, shellRunsOfficecli } from '../../office/officeCommand';
 import { denyReasonForFileTool, withAgentReadPath } from './agentSandbox';
 import { sensitiveCommandReason } from './sensitivePaths';
 import { isElevated } from './elevation';
 import { maskSecrets } from './secretMask';
 import { isBuiltinTool, runBuiltinTool } from './agentBuiltins';
-import { skillDirForShell } from './agentSkillTool';
+import { isAiUsageStatusCommand, runAiUsage } from './agentAiUsage';
+import { runUseSkill, skillDirForShell } from './agentSkillTool';
+import { PRICE_SKILL } from './agentPrice';
 import type { AgentBuiltinTool, BuiltinDeps, FlowSaveRequest, FlowWriteConfirmRequest } from './agentBuiltins';
 import { executeMcpProposal } from './mcpAction';
 import type { McpConfirmRequest } from './mcpAction';
@@ -21,7 +25,7 @@ import type { McpAction, McpRuntimeIndex } from './mcpTools';
 import type { AgentAction } from './agentTools';
 import type { EvidenceLedger } from './evidenceLedger';
 import type { GoalIntent } from './actionGate';
-import { chatQuestionRefusal, shellTextDenyReason } from './shellApproval';
+import { chatQuestionRefusal, shellTextDenyReason, shellWaitDenyReason } from './shellApproval';
 import type { ShellApprovalText } from './shellApproval';
 import { isTrustedBy, plainCommandFacts, shellTrustFor, splitPlainCommand } from './shellTrust';
 import type { PlainCommandFacts, ShellTrust, TrustKey } from './shellTrust';
@@ -93,6 +97,8 @@ export function notFoundHint(tool: SkillType, err: unknown): string {
 async function shellDenyReason(config: Record<string, string>): Promise<string | null> {
   const textReason = shellTextDenyReason(config, process.platform);
   if (textReason) return textReason;
+  const waitReason = shellWaitDenyReason(config.command ?? '');
+  if (waitReason) return waitReason;
   if (await isElevated()) {
     return 'refused: this app is running with administrator rights, and a command started from here would inherit them. The agent will not run shell commands as administrator. Do not retry it — tell the user to restart the app normally if they want you to run commands.';
   }
@@ -161,6 +167,8 @@ export interface CallContext {
   intent: () => GoalIntent | null;
   /** The user's answers to this run's questions, which may allow what the intent did not. */
   askAnswers: readonly string[];
+  /** The latest of those answers picked its question's first choice. */
+  askPickedFirst?: boolean;
   gate: { blocked: number; autoContext: number };
   unattended: boolean;
   askUser: (request: AgentConfirmRequest) => Promise<boolean>;
@@ -174,8 +182,8 @@ export interface CallContext {
    * run asks in its chat, and the person there is not the one who granted it.
    */
   trustedShell?: () => readonly TrustKey[];
-  /** Likewise for a connector change that needs confirming (the owner's own bot chat). */
-  deferChanges?: boolean;
+  /** Likewise for a connector change that needs confirming (the owner's own bot chat; a list: only those connectors). */
+  deferChanges?: boolean | readonly string[];
   /** Shared by every call of the run: `build_flow` reads the assessment `assess_flow` left there. */
   builtins: BuiltinDeps;
   fileRoots: string[];
@@ -184,6 +192,10 @@ export interface CallContext {
   remainingMs: () => number;
   /** Keeps pictures a built-in connector saved (the metro map) for the answer. */
   keepPictures?: (files: readonly string[]) => Promise<void>;
+  /** Keeps files a built-in connector's call wrote (an edited spreadsheet) for the answer. */
+  keepDocuments?: (files: readonly string[]) => Promise<void>;
+  /** The office connector's handle when it is in the run: officecli then never goes through shell. */
+  officeServer?: string;
   onTrace?: (event: AgentTraceEvent) => void;
   signal?: AbortSignal;
   /** The run's one numbering of research sources (see `agentCitations.ts`). */
@@ -258,6 +270,28 @@ function researchOutcome(output: string, subVars: Record<string, string>, pool: 
   };
 }
 
+const PRICE_GUIDE_HEADING = `HOW TO READ AND PRESENT THESE PRICES (the "${PRICE_SKILL}" skill, loaded now; follow it, above all its OUTPUT RULES: the offers without links, in the form for this answer's surface, then links under them for the lowest and the recommended offer only):`;
+
+/** The name a run's price search took for mistyped, kept for the run's later searches. */
+const mistypedNames = new WeakMap<BuiltinDeps, string>();
+
+/**
+ * The result that says a name looks mistyped is the first one; the model then searches the right
+ * name and answers from that second result, where nothing says so any more (a live run dropped
+ * the remark). So every later search of the run carries it again, beside the result it answers from.
+ */
+function withMistypedReminder(observation: string, query: string, run: BuiltinDeps): string {
+  const corrected = /^\{"typed":"((?:[^"\\]|\\.)+)","query":"((?:[^"\\]|\\.)+)"/.exec(observation);
+  if (corrected) {
+    mistypedNames.set(run, corrected[1]);
+    // Before the result, where it is read first: at the end of the notes it went unsaid.
+    return `MISTYPED NAME: the user typed "${corrected[1]}"; the shops spell it "${corrected[2]}", and these are the results for "${corrected[2]}". The answer must say so in one line right after the verdict (the name as typed, the name searched, and that typing the exact name finds more shops and more precise prices), and must write the product's name as the titles do.\n\n${observation}`;
+  }
+  const typed = mistypedNames.get(run);
+  if (!typed || typed === query) return observation;
+  return `${observation}\n\nREMINDER: the user typed "${typed}", which the shops read as a misspelling of the name searched here. The answer must say so in one line right after the verdict: the name as typed, the name searched for, and that typing the exact name finds more shops and more precise prices.`;
+}
+
 function outcome(observation: string, status: 'ok' | 'error', write = false, landed = false): CallOutcome {
   return { observation, status, write, landed, transientBlock: false };
 }
@@ -285,12 +319,14 @@ export async function runCall(
       runId: ctx.runId,
       intent: ctx.intent(),
       answers: ctx.askAnswers,
+      ...(ctx.askPickedFirst ? { latestPickedFirst: true } : {}),
       gate: ctx.gate,
       unattended: ctx.unattended,
       confirm: (request: McpConfirmRequest) => ctx.askUser(request),
-      ...(ctx.deferChanges ? { deferChanges: true } : {}),
+      ...(ctx.deferChanges ? { deferChanges: ctx.deferChanges } : {}),
       onStage: (label) => stage(label),
       ...(ctx.keepPictures ? { keepPictures: ctx.keepPictures } : {}),
+      ...(ctx.keepDocuments ? { keepDocuments: ctx.keepDocuments } : {}),
       log: sendLog,
       ...(ctx.signal ? { signal: ctx.signal } : {}),
     }, action, step, signature);
@@ -306,6 +342,18 @@ export async function runCall(
   }
 
   const toolName = action.tool ?? '';
+  // A remembered status alias still uses the sealed operation, including resumed bot approvals.
+  // namedTools is host-owned and only includes ai_usage when local + shell rights are present.
+  // Refused before its confirmation: the connector runs the same program inside the output folder.
+  if (toolName === 'shell' && ctx.officeServer && shellRunsOfficecli(recordConfig.command)) {
+    sendLog('↪️ [Agent] shell officecli refused — the office connector runs it');
+    return outcome(`ERROR: ${officeViaConnector(ctx.officeServer)}`, 'error');
+  }
+  if (toolName === 'shell' && ctx.builtins.skills?.namedTools?.ai_usage && isAiUsageStatusCommand(recordConfig)) {
+    const result = await runAiUsage({}, ctx.builtins);
+    sendLog('🔎 [Agent] fixed AI status query: using the background usage operation');
+    return outcome(result.observation, result.status);
+  }
   if (isBuiltinTool(toolName)) {
     const result = await runBuiltinTool(toolName as AgentBuiltinTool, recordConfig, ctx.builtins, step);
     if (result.deferred) return { ...outcome('', 'ok'), deferred: result.deferred };
@@ -315,7 +363,16 @@ export async function runCall(
       const { text, cited } = ctx.citations.absorb(result.observation, result.sources);
       return outcome([text, sourcesLine(cited)].filter(Boolean).join('\n'), result.status);
     }
-    return outcome(result.observation, result.status);
+    // The model went straight to the tool: its guide (how to narrow, what to show, which links)
+    // comes with the first result, so the answer follows it without a turn spent loading it.
+    const skills = ctx.builtins.skills;
+    const priced = toolName === 'price_search' && result.status === 'ok';
+    const observation = priced ? withMistypedReminder(result.observation, recordConfig.query ?? '', ctx.builtins) : result.observation;
+    if (priced && skills && skills.entries.some((entry) => entry.name === PRICE_SKILL) && !skills.loaded.includes(PRICE_SKILL)) {
+      const guide = await runUseSkill({ skill: PRICE_SKILL }, skills, ctx.signal);
+      if (guide.status === 'ok') return outcome(`${observation}\n\n${PRICE_GUIDE_HEADING}\n${guide.observation}`, 'ok');
+    }
+    return outcome(observation, result.status);
   }
 
   const tool = toolName as SkillType;
@@ -415,7 +472,9 @@ export async function runCall(
       ctx.ledger.addObservation(researched.observation);
       return withResearch(researched);
     }
-    const observation = maskSecrets(buildObservation(unwrapped.output, unwrapped.subVars), LOCAL_SOURCE_TOOLS.has(tool));
+    const rules = tool === 'app_store' ? appStoreAgentRules(unwrapped.subVars) : '';
+    const built = buildObservation(unwrapped.output, unwrapped.subVars);
+    const observation = maskSecrets(rules ? `${built}\n${rules}` : built, LOCAL_SOURCE_TOOLS.has(tool));
     ctx.ledger.addObservation(observation);
     return withResearch(outcome(observation, 'ok', isWrite, isWrite));
   } catch (err) {

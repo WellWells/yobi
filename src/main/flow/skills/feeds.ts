@@ -1,12 +1,13 @@
 import { load } from 'cheerio';
 import { fetchAndParse, fetchRawText, parseRssFeed, type RssFeedItem } from '../../urlParser';
+import { feedItemKey } from '../../feedParse';
 import { feedItemTitle, readFeed, RSS_BURST_CAP } from './rssRead';
 import { pageFetchLane, Semaphore } from '../lanes';
 import { extractYoutubeVideoId, youtubeThumbnailUrl } from '../../youtubeTranscript';
 import { sendLog } from '../../helpers';
 import { FlowUserError } from '../userError';
 import { makeCheckpointStore } from '../checkpoint';
-import { cacheWindowMs, readSeenEntries, reconcileSeenCache, type SeenCheckpoint } from '../seenCache';
+import { cacheWindowMs, openSeenCache, readSeenEntries, type SeenCheckpoint } from '../seenCache';
 import { YOUTUBE_SUBS_MAX_PER_RUN } from '../../../shared/flowFeedCaps';
 
 export { buildYoutubeEnvelope, execYoutube } from './youtube';
@@ -76,47 +77,60 @@ export async function execRss(
     return '[]';
   }
 
-  const byLink = new Map(allItems.map((item) => [item.link.trim(), item]));
-  const links = [...byLink.keys()].filter(Boolean);
+  // An article is its feed id (<guid>, <id>), else its link, as feed readers key it: a feed that
+  // rewrites its links (tracking parameters, a new host) does not re-send what it already sent.
+  const byKey = new Map<string, RssFeedItem>();
+  for (const item of allItems) {
+    const key = feedItemKey(item);
+    if (key && !byKey.has(key)) byKey.set(key, item);
+  }
+  const keys = [...byKey.keys()];
   // The address is a seen key of its own (as ptt_board's query): another feed in the same step
   // seeds like a first run instead of handing on five of its old articles. A record from before
-  // the address was kept, already holding this feed's links, is the same feed.
+  // the address was kept, already holding this feed's articles, is the same feed.
   const feedKey = `rss-feed:${url}`;
-  const { fresh, isFirstRun, lapsed } = await reconcileSeenCache(rssCheckpoints, stepId, [feedKey, ...links], undefined);
-  const freshSet = new Set(fresh);
+  const cache = await openSeenCache(rssCheckpoints, stepId);
+  // A record from before ids were kept holds links: an article seen there by its link is seen.
+  const isFresh = (key: string): boolean => !cache.isKnown(key) && !cache.isKnown(byKey.get(key)?.link ?? key);
+  const freshSet = new Set(keys.filter(isFresh));
   // A record that only expired (a weekly schedule, the app closed for a week) is the same feed:
   // its recent articles are new, and the window check below drops the older ones.
-  const newFeed = !lapsed && freshSet.has(feedKey) && links.every((link) => freshSet.has(link));
+  const newFeed = !cache.lapsed && !cache.isKnown(feedKey) && keys.every((key) => freshSet.has(key));
 
-  let newLinks = links.filter((link) => freshSet.has(link));
-  if (isFirstRun || newFeed) {
-    sendLog(`📡 [Flow] RSS: ${isFirstRun ? 'first run' : 'new feed address'} — seeding the checkpoint, returning the latest ${FIRST_RUN_COUNT} item`);
-    newLinks = links.slice(0, FIRST_RUN_COUNT);
+  let newKeys = keys.filter((key) => freshSet.has(key));
+  // Over the burst cap: left new, so the next run hands them on instead of losing them.
+  let deferred: string[] = [];
+  if (cache.isFirstRun || newFeed) {
+    sendLog(`📡 [Flow] RSS: ${cache.isFirstRun ? 'first run' : 'new feed address'} — seeding the checkpoint, returning the latest ${FIRST_RUN_COUNT} item`);
+    newKeys = keys.slice(0, FIRST_RUN_COUNT);
   } else {
     // An article published before the seen window may be unseen only because its entry expired
     // (a weekly schedule): it is not new.
     const oldest = Date.now() - cacheWindowMs(undefined);
-    const recent = newLinks.filter((link) => {
-      const published = Date.parse(byLink.get(link)?.pubDate ?? '');
+    const recent = newKeys.filter((key) => {
+      const published = Date.parse(byKey.get(key)?.pubDate ?? '');
       return !Number.isFinite(published) || published >= oldest;
     });
-    if (recent.length < newLinks.length) {
-      sendLog(`📡 [Flow] RSS: ${newLinks.length - recent.length} unseen item(s) published before the seen window — dropped`);
+    if (recent.length < newKeys.length) {
+      sendLog(`📡 [Flow] RSS: ${newKeys.length - recent.length} unseen item(s) published before the seen window — dropped`);
     }
-    newLinks = recent;
-    if (newLinks.length > BURST_CAP) {
-      sendLog(`📡 [Flow] RSS: burst of ${newLinks.length} — returning the first ${BURST_CAP} unseen in feed order`);
-      newLinks = newLinks.slice(0, BURST_CAP);
+    newKeys = recent;
+    if (newKeys.length > BURST_CAP) {
+      sendLog(`📡 [Flow] RSS: burst of ${newKeys.length} — returning the first ${BURST_CAP} unseen in feed order, the rest next run`);
+      deferred = newKeys.slice(BURST_CAP);
+      newKeys = newKeys.slice(0, BURST_CAP);
     } else {
-      sendLog(`📡 [Flow] RSS: found ${newLinks.length} new items since checkpoint`);
+      sendLog(`📡 [Flow] RSS: found ${newKeys.length} new items since checkpoint`);
     }
   }
+  const linkOf = new Map(newKeys.map((key) => [key, byKey.get(key)?.link ?? key]));
+  await cache.commit({ observed: [feedKey, ...keys], handed: newKeys, deferred, linkOf });
 
-  if (newLinks.length === 0) return '[]';
+  if (newKeys.length === 0) return '[]';
 
-  const items = newLinks.map((link) => {
-    const item = byLink.get(link);
-    return { title: item ? feedItemTitle(item) : link, link };
+  const items = newKeys.map((key) => {
+    const item = byKey.get(key);
+    return { title: item ? feedItemTitle(item) : key, link: item?.link.trim() ?? key };
   });
   return JSON.stringify(items);
 }
@@ -243,20 +257,19 @@ export async function execScraper(
   }
 
   const seenAsLegacy = await legacySeenLinks(stepId, legacy.byLink);
-  const { fresh, isFirstRun } = await reconcileSeenCache(
-    scraperCheckpoints,
-    stepId,
-    items.map((item) => item.link),
-    undefined,
-  );
-  const freshSet = new Set(fresh.filter((link) => !seenAsLegacy.has(link)));
+  const cache = await openSeenCache(scraperCheckpoints, stepId);
+  const pageLinks = items.map((item) => item.link);
+  const freshSet = new Set(cache.freshOf(pageLinks).filter((link) => !seenAsLegacy.has(link)));
   const newItems = items.filter((item) => freshSet.has(item.link.trim()));
 
   const parsedMax = parseInt(config.maxItems ?? '', 10);
   const INITIAL_FETCH_COUNT = Number.isFinite(parsedMax) && parsedMax > 0 ? parsedMax : 5;
   const itemsToReturn = newItems.slice(0, INITIAL_FETCH_COUNT);
+  // A first run seeds the page: what it does not return is old. Later, over maxItems waits for the next run.
+  const deferred = cache.isFirstRun ? [] : newItems.slice(INITIAL_FETCH_COUNT).map((item) => item.link);
+  await cache.commit({ observed: pageLinks, handed: itemsToReturn.map((item) => item.link), deferred });
 
-  if (isFirstRun) {
+  if (cache.isFirstRun) {
     sendLog(`🔍 [Flow] Scraper: First run — returning ${itemsToReturn.length} latest items`);
   } else {
     sendLog(`🔍 [Flow] Scraper: Found ${itemsToReturn.length} new items out of ${newItems.length} total unseen items`);
@@ -434,12 +447,7 @@ export async function execYoutubeSubs(
   const now = Date.parse(nowIso);
   const windowMs = cacheWindowMs(undefined);
   const windowDays = Math.round(windowMs / DAY_MS);
-  const checkpoint = await ytSubsCheckpoints.load(stepId);
-  const seen = new Set(
-    readSeenEntries(checkpoint, nowIso)
-      .filter((entry) => now - Date.parse(entry.seenAt) <= windowMs)
-      .map((entry) => entry.link),
-  );
+  const cache = await openSeenCache(ytSubsCheckpoints, stepId);
 
   const emitted: RssFeedItem[] = [];
   const allKeys: string[] = [];
@@ -482,7 +490,7 @@ export async function execYoutubeSubs(
 
     allKeys.push(feedUrl, ...latest.map((v) => v.link));
 
-    if (!seen.has(feedUrl)) {
+    if (!cache.isKnown(feedUrl)) {
       if (isFresh(latest[0])) {
         sendLog(`📺 [Flow] YT Subs: ${entry} — new channel, seeding latest 1: ${describeVideo(latest[0], now)}`);
         emitted.push(latest[0]);
@@ -490,7 +498,7 @@ export async function execYoutubeSubs(
         sendLog(`📺 [Flow] YT Subs: ${entry} — new channel, latest upload ${describeVideo(latest[0], now)} is older than ${windowDays} days — seeding none`);
       }
     } else {
-      const unseen = latest.filter((v) => !seen.has(v.link.trim()));
+      const unseen = latest.filter((v) => !cache.isKnown(v.link));
       const fresh = unseen.filter(isFresh);
       sendLog(`📺 [Flow] YT Subs: ${entry} — ${fresh.length} new video(s)`);
       for (const v of fresh) sendLog(`📺 [Flow] YT Subs: ${entry} — new: ${describeVideo(v, now)}`);
@@ -502,24 +510,26 @@ export async function execYoutubeSubs(
     }
   }
 
-  if (allKeys.length > 0) {
-    await reconcileSeenCache(ytSubsCheckpoints, stepId, allKeys, undefined);
-  }
-
-  if (emitted.length === 0) {
-    sendLog('📺 [Flow] YT Subs: no new videos since last run');
-    return '[]';
-  }
-
   const byLink = new Map<string, RssFeedItem>();
   for (const v of sortByPubDateDesc(emitted)) {
     if (!byLink.has(v.link)) byLink.set(v.link, v);
   }
   let out = [...byLink.values()];
+  // Over the cap: left new, so the next run hands them on.
+  let deferred: RssFeedItem[] = [];
   if (out.length > MAX_NEW_PER_RUN) {
     sendLog(`📺 [Flow] YT Subs: capping to the latest ${MAX_NEW_PER_RUN} new video(s)`);
-    for (const v of out.slice(MAX_NEW_PER_RUN)) sendLog(`📺 [Flow] YT Subs: dropped by the cap: ${describeVideo(v, now)}`);
+    deferred = out.slice(MAX_NEW_PER_RUN);
+    for (const v of deferred) sendLog(`📺 [Flow] YT Subs: held for the next run by the cap: ${describeVideo(v, now)}`);
     out = out.slice(0, MAX_NEW_PER_RUN);
+  }
+  if (allKeys.length > 0) {
+    await cache.commit({ observed: allKeys, handed: out.map((v) => v.link), deferred: deferred.map((v) => v.link) });
+  }
+
+  if (out.length === 0) {
+    sendLog('📺 [Flow] YT Subs: no new videos since last run');
+    return '[]';
   }
   sendLog(`📺 [Flow] YT Subs: returning ${out.length} video(s)`);
 

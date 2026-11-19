@@ -17,7 +17,7 @@ import { SidebarRail } from './SidebarRail';
 import { EmptyState } from './EmptyState';
 import { WebDialog } from './WebDialog';
 import { GroupHeader } from './GroupHeader';
-import { Download, FolderPlus, MessageSquare, PanelLeftClose, SquarePen } from 'lucide-react';
+import { Download, FolderPlus, MessageSquare, PanelLeftClose, Plus, SquarePen } from 'lucide-react';
 import { BatchExportStrip } from './sidebar/BatchExportStrip';
 import { useBatchExport } from './sidebar/useBatchExport';
 import { fileApi } from '../api/electronApi';
@@ -36,7 +36,9 @@ import { SidebarFilterMenu } from './sidebar/SidebarFilterMenu';
 import { FolderRow } from './sidebar/FolderRow';
 import { SectionRow } from './sidebar/SectionRow';
 import { SectionActionButton } from './sidebar/SectionActionButton';
-import { FolderContextMenu } from './sidebar/FolderMenus';
+import { FolderContextMenu, KnowledgeContextMenu } from './sidebar/FolderMenus';
+import { KnowledgeRow } from './sidebar/KnowledgeRow';
+import { useSidebarKnowledge } from './sidebar/useSidebarKnowledge';
 import { SidebarSelectionBar, SelectionContextMenu } from './sidebar/SidebarSelection';
 import { folderLabel } from './sidebar/folderActions';
 import { useConversationFolders } from './sidebar/useConversationFolders';
@@ -51,7 +53,11 @@ import { movedPathFor } from '../../../shared/conversationMove';
 import { useReloadOpenConversation } from '../hooks/useReloadOpenConversation';
 import { useFormatTime } from '../hooks/useFormatTime';
 import { useScrollEdgeFade } from '../hooks/useScrollEdgeFade';
-import { buildSidebarRows, focusableRowKeys, sectionOfFile, sidebarRowKey } from '../utils/timeGroups';
+import {
+  buildSidebarRows, focusableRowKeys, knowledgeOfRowKey, knowledgeRowKey, sectionOfFile, sectionRowKey, sidebarRowKey,
+} from '../utils/timeGroups';
+import { focusRowWhenDrawn, useRovingRow } from './sidebar/useRovingRow';
+import { menuAnchorUnderRow } from '../utils/rowSwipe';
 import type { SidebarSectionKey } from '../utils/timeGroups';
 import { folderRowKey } from '../utils/sidebarOrder';
 import { useSidebarLayoutStore } from '../store/sidebarLayoutStore';
@@ -90,7 +96,12 @@ const HEADER_INSET = 18;
 // `.fileItem` left padding).
 const FOLDER_CHILD_INSET = 31;
 
-export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearch, onOpenedByClick }) => {
+/**
+ * Memoised: it reads its own stores, and its parent (ChatView) draws again several times while a
+ * conversation opens (the selection, then the content, then the effects that follow it), each of
+ * which redrew the whole list. Its props are stable callbacks.
+ */
+export const Sidebar = React.memo<SidebarProps>(({ onNewConversation, onOpenSearch, onOpenedByClick }) => {
   const { files, selectedFile, selectFile, setFileContent, setFiles, unreadFilePaths, byokModels, byokGroupModels } = useAppStore(
     useShallow((s) => ({
       files: s.files,
@@ -175,10 +186,11 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
   // Pinned first (latest activity), then the folders, then the top-level conversations in the
   // chosen order (one model's, when filtered); a closed folder's or section's conversations are not
   // drawn. Keys, ↑↓ and Shift ranges walk the same drawn order.
+  const knowledge = useSidebarKnowledge(t);
   const { rows, rowIndexByFileIndex, visibleFiles, providers, providerFilter } = useMemo(() => buildSidebarRows(files, new Date(), {
     folders, expanded: openFolders, view, compareTitles, folderLabel: (folder) => folderLabel(folder.name, t),
-    collapsed: collapsedSections, provider: chosenProvider,
-  }), [files, folders, openFolders, view, compareTitles, t, collapsedSections, chosenProvider]);
+    collapsed: collapsedSections, provider: chosenProvider, knowledge: knowledge.rows,
+  }), [files, folders, openFolders, view, compareTitles, t, collapsedSections, chosenProvider, knowledge.rows]);
 
   // The open conversation is never hidden in a closed section: opening it — or pinning it, filing
   // it in a folder — opens the section it is drawn in. Closing the section afterwards is left alone.
@@ -207,6 +219,15 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
   }, [byokModels, byokGroupModels, flowLabel]);
   const selectableIds = useMemo(() => visibleFiles.map((f) => f.path), [visibleFiles]);
   const navKeys = useMemo(() => focusableRowKeys(rows), [rows]);
+  // The tree is one Tab stop (WCAG 2.4.3): the row last focused, else the open item, else the first.
+  const rowKeyOf = useCallback((node: Element): string | null => {
+    const item = node.closest('[role="treeitem"]');
+    for (const [key, el] of fileItemRefs.current.entries()) if (el === item) return key;
+    return null;
+  }, []);
+  const roving = useRovingRow(navKeys, knowledge.openId ? knowledgeRowKey(knowledge.openId) : selectedFile?.path ?? null, rowKeyOf);
+  // While selecting, every row stays a stop (the list's keys are off then; Space ticks the box).
+  const isTabStop = (key: string): boolean => selection.selectMode || roving.tabKey === key;
 
   const rowVirtualizer = useVirtualizer({
     count: rows.length,
@@ -215,7 +236,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
       const kind = rows[index]?.kind;
       if (kind === 'header') return HEADER_ROW_HEIGHT;
       if (kind === 'section') return SECTION_ROW_HEIGHT + (index > 0 ? SECTION_GAP : 0);
-      return kind === 'folder' ? FOLDER_ROW_HEIGHT : FILE_ROW_HEIGHT;
+      return kind === 'folder' || kind === 'knowledge' ? FOLDER_ROW_HEIGHT : FILE_ROW_HEIGHT;
     },
     getItemKey: (index) => {
       const row = rows[index];
@@ -456,18 +477,32 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
     setOpen: folderState.setFolderOpen, renameFolder: folderState.startRename, deleteFolder: folderState.deleteFolder,
   }), [rows, openFolders, folderState.setFolderOpen, folderState.startRename, folderState.deleteFolder]);
   // The folders heading drawn before the first folder has nothing to fold; its keys do nothing.
-  const foldersEmpty = rows.some((row) => row.kind === 'section' && row.key === 'folders' && row.empty);
+  // Likewise the knowledge heading before the first base.
+  const emptySections = useMemo(
+    () => new Set(rows.flatMap((row) => (row.kind === 'section' && row.empty ? [row.key] : []))),
+    [rows],
+  );
   const sectionKeys = useMemo(() => ({
     isCollapsed: (section: SidebarSectionKey) => collapsedSections.has(section),
     setCollapsed: (section: SidebarSectionKey, collapsed: boolean) => {
-      if (section === 'folders' && foldersEmpty) return;
+      if (emptySections.has(section)) return;
       setSectionCollapsed(section, collapsed);
     },
-  }), [collapsedSections, setSectionCollapsed, foldersEmpty]);
+  }), [collapsedSections, setSectionCollapsed, emptySections]);
   const newFolderLabel = t('sidebar.folder.new');
+  const newKnowledgeLabel = t('sidebar.knowledge.add');
   const startNewFolder = useCallback(() => { void folderState.createFolder(); }, [folderState.createFolder]);
-  // What each heading carries at its right end: a new folder, the conversations' filter.
+  const addKnowledge = useCallback(() => { void knowledge.add(); }, [knowledge.add]);
+  const knowledgeKeys = useMemo(() => {
+    const byId = (id: string) => knowledge.rows.find((base) => base.id === id);
+    return {
+      open: (id: string) => { const base = byId(id); if (base) knowledge.open(base); },
+      rename: (id: string) => { const base = byId(id); if (base) knowledge.startRename(base); },
+    };
+  }, [knowledge.rows, knowledge.open, knowledge.startRename]);
+  // What each heading carries at its right end: a new knowledge base, a new folder, the conversations' filter.
   const sectionActions = (key: SidebarSectionKey): React.ReactNode => {
+    if (key === 'knowledge') return <SectionActionButton icon={Plus} label={newKnowledgeLabel} onClick={addKnowledge} />;
     if (key === 'folders') return <SectionActionButton icon={FolderPlus} label={newFolderLabel} onClick={startNewFolder} />;
     if (key !== 'conversations') return null;
     return (
@@ -497,7 +532,35 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
     onCloseContextMenu: closeContextMenu,
     folders: folderKeys,
     sections: sectionKeys,
+    knowledge: knowledgeKeys,
+    onRowMenu: (key, row) => {
+      const at = menuAnchorUnderRow(row.getBoundingClientRect());
+      const kbId = knowledgeOfRowKey(key);
+      const base = kbId ? knowledge.rows.find((b) => b.id === kbId) : undefined;
+      if (base) { knowledge.openMenuAt(base, at); return; }
+      const folder = folderKeys.folderFor(key);
+      if (folder) { folderState.openFolderMenuAt(folder, at); return; }
+      const file = visibleFiles.find((f) => f.path === key);
+      if (file) handleOpenMenuAt(file, at);
+    },
   });
+  // The Tab stop's row may be scrolled out of the virtual list: the tree itself takes the stop
+  // then and hands focus to that row once it is drawn.
+  const drawnKeys = new Set(rowVirtualizer.getVirtualItems().map((item) => {
+    const row = rows[item.index];
+    return row ? sidebarRowKey(row) : '';
+  }));
+  const treeTakesTab = !selection.selectMode && roving.tabKey !== null && !drawnKeys.has(roving.tabKey);
+  const handleTreeFocus = (e: React.FocusEvent<HTMLElement>): void => {
+    if (e.target !== e.currentTarget) {
+      roving.onFocus(e);
+      return;
+    }
+    const key = roving.tabKey;
+    if (!key) return;
+    scrollToKey(key);
+    focusRowWhenDrawn((k) => fileItemRefs.current.get(k), key);
+  };
 
   const sidebarStyle = { borderRight: '1px solid var(--mantine-color-default-border)', overflow: 'hidden', position: 'relative' } as const;
 
@@ -529,7 +592,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
         title={t('sidebar.import.dropTitle')}
         detail={t('sidebar.import.dropDetail')}
       >
-        <SidebarRail expandLabel={withCombo(t('sidebar.expand'))} onExpand={toggleSidebar} otherView="flow" extra={dialogs}>
+        <SidebarRail expandLabel={withCombo(t('sidebar.expand'))} navLabel={t('a11y.c.chatSidebar')} onExpand={toggleSidebar} otherView="flow" extra={dialogs}>
           <ToolbarIconButton
             icon={SquarePen}
             label={newChatCombo ? `${t('chat.new')} (${comboLabel(newChatCombo, isMac)})` : t('chat.new')}
@@ -549,11 +612,16 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
       detail={t('sidebar.import.dropDetail')}
     >
     <Stack
+      // A navigation landmark and an F6 region (WCAG 1.3.1, 2.4.1); F6 lands on the list's current row.
+      component="nav"
+      aria-label={t('a11y.c.chatSidebar')}
+      data-region="sidebar"
+      data-region-focus={'[role="tree"] [tabindex="0"], [role="tree"][tabindex="0"]'}
       gap={0}
       w={240}
       miw={180}
       maw={300}
-      bg="var(--mantine-color-default)"
+      bg="var(--panel-bg)"
       style={sidebarStyle}
     >
       <SidebarTop
@@ -580,10 +648,16 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
         onKeyDown={selection.selectMode ? undefined : handleListKeyDown}
         {...drop.listDropProps}
       >
-        {rows.length === 0 ? (
-          <EmptyState icon={MessageSquare} label={t('sidebar.empty')} busy={!filesLoaded} />
-        ) : (
-          <Box style={{ height: `${rowVirtualizer.getTotalSize()}px`, position: 'relative' }}>
+        {/* The knowledge heading is drawn even before any conversation; the empty state goes under it. */}
+        {rows.length > 0 && (
+          <Box
+            role="tree"
+            aria-label={t('a11y.c.chatList')}
+            aria-multiselectable={selection.selectMode || undefined}
+            tabIndex={treeTakesTab ? 0 : undefined}
+            onFocus={handleTreeFocus}
+            style={{ height: `${rowVirtualizer.getTotalSize()}px`, position: 'relative', outline: 'none' }}
+          >
             {rowVirtualizer.getVirtualItems().map((virtualRow) => {
               const row = rows[virtualRow.index];
               if (!row) return null;
@@ -632,6 +706,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
                       providerIcon={providerIcon(row.file.provider)}
                       detail={rowDetail(row.file, row.time)}
                       registerItemRef={registerItemRef}
+                      tabbable={isTabStop(row.file.path)}
+                      level={row.inFolder ? 3 : 2}
                     />
                   )}
                   {row.kind === 'section' && (
@@ -644,6 +720,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
                       actions={sectionActions(row.key)}
                       onToggle={toggleSection}
                       registerItemRef={registerItemRef}
+                      tabbable={isTabStop(sectionRowKey(row.key))}
                     />
                   )}
                   {row.kind === 'folder' && (
@@ -665,6 +742,27 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
                       onOpenMenu={folderState.openFolderMenu}
                       onOpenMenuAt={folderState.openFolderMenuAt}
                       registerItemRef={registerItemRef}
+                      tabbable={isTabStop(folderRowKey(row.folder.name))}
+                    />
+                  )}
+                  {row.kind === 'knowledge' && (
+                    <KnowledgeRow
+                      base={row.base}
+                      isRenaming={knowledge.renaming === row.base.id}
+                      renameText={knowledge.renameText}
+                      setRenameText={knowledge.setRenameText}
+                      onCommitRename={knowledge.commitRename}
+                      onCancelRename={knowledge.cancelRename}
+                      menuOpen={knowledge.menu?.base.id === row.base.id}
+                      moreLabel={moreLabel}
+                      warningFor={knowledge.warningFor}
+                      selected={knowledge.openId === row.base.id}
+                      onDropFiles={knowledge.importFiles}
+                      onOpen={knowledge.open}
+                      onOpenMenu={knowledge.openMenu}
+                      onOpenMenuAt={knowledge.openMenuAt}
+                      registerItemRef={registerItemRef}
+                      tabbable={isTabStop(knowledgeRowKey(row.base.id))}
                     />
                   )}
                   {row.kind === 'header' && <GroupHeader variant="sub" label={t(`sidebar.group.${row.key}`)} />}
@@ -673,6 +771,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
             })}
           </Box>
         )}
+        {files.length === 0 && <EmptyState icon={MessageSquare} label={t('sidebar.empty')} busy={!filesLoaded} />}
         {trash.count > 0 && (
           <Box px={ROW_INSET} pt={6}>
             <RecentlyDeletedRow count={trash.count} label={t('trash.title')} onOpen={trash.openDialog} />
@@ -719,8 +818,19 @@ export const Sidebar: React.FC<SidebarProps> = ({ onNewConversation, onOpenSearc
         t={t}
       />
 
+      <KnowledgeContextMenu
+        menu={knowledge.menu}
+        onClose={knowledge.closeMenu}
+        onRename={knowledge.startRename}
+        onSync={knowledge.sync}
+        onOpenFolder={knowledge.openFolder}
+        onRemove={knowledge.remove}
+        t={t}
+      />
+
       {dialogs}
     </Stack>
     </FileDropZone>
   );
-};
+});
+Sidebar.displayName = 'Sidebar';

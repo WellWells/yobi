@@ -1,8 +1,9 @@
 import { BrowserWindow, session } from 'electron';
 import { userAgentForUrl } from './userAgent';
 import { YOUTUBE_PARTITION, youtubeLane } from './flow/lanes';
-import { SILENT_WEB_PREFERENCES, muteWindow, parkWindowOffscreen } from './silentWindow';
+import { SILENT_WEB_PREFERENCES, muteWindow, hideBeforeMapping, parkWindowOffscreen } from './silentWindow';
 import { withTimeout } from './promiseRace';
+import { carryYoutubeClearance } from './youtubeClearance';
 import { extractYoutubeVideoId } from '../shared/youtubeUrl';
 
 const LOAD_TIMEOUT_MS = 25_000;
@@ -81,7 +82,7 @@ function fetchYoutubeVideoExclusive(
       // Mapped, not merely created: a never-shown window stalls rendering, and the watch page then
       // never builds its description or transcript panel. Transparent before it is mapped, so it
       // never flashes before parking.
-      win.setOpacity(0);
+      hideBeforeMapping(win);
       win.showInactive();
       parkWindowOffscreen(win);
     }
@@ -150,6 +151,8 @@ function fetchYoutubeVideoExclusive(
     };
 
     const run = async (): Promise<void> => {
+      // Google's pass for this address, if a person answered its check (`youtubeClearance.ts`).
+      await carryYoutubeClearance(session.fromPartition(YOUTUBE_PARTITION));
       win.loadURL(watchUrl).catch(() => {});
       const first = await attempt();
       if (settled) return;
@@ -161,6 +164,8 @@ function fetchYoutubeVideoExclusive(
       } catch {}
       if (settled) return;
 
+      // The wipe took the pass with it.
+      await carryYoutubeClearance(session.fromPartition(YOUTUBE_PARTITION));
       win.loadURL(watchUrl).catch(() => {});
       finish(await attempt());
     };
@@ -195,7 +200,6 @@ function safeDestroy(win: BrowserWindow): void {
 
 export const EXTRACTION_SCRIPT = `(async () => {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  const TRANSCRIPT_RE = /transcript|顯示轉錄|轉錄稿|逐字稿|文字稿|字幕記錄|文字起こし|スクリプト|대본|스크립트|자막 기록|transcripci|transcription|transkript|trascrizione|расшифровка|стенограмма/i;
   try {
     const count = (s) => document.querySelectorAll(s).length;
     const pr = window.ytInitialPlayerResponse;
@@ -232,6 +236,8 @@ export const EXTRACTION_SCRIPT = `(async () => {
       return parts.join(' ').replace(/\\s+/g, ' ').trim();
     };
 
+    // The button is found by where it sits (the description's transcript section), never by its
+    // label: the label follows the viewer's language, and a list of translations misses the rest.
     const openTranscript = () => {
       ['#description #expand', 'ytd-text-inline-expander #expand', 'tp-yt-paper-button#expand', '#expand'].forEach((sel) => {
         const e = document.querySelector(sel);
@@ -242,10 +248,6 @@ export const EXTRACTION_SCRIPT = `(async () => {
         + 'ytd-video-description-transcript-section-renderer yt-button-shape button'
       );
       if (sectionBtn) { try { sectionBtn.click(); } catch (x) {} }
-      document.querySelectorAll('button, tp-yt-paper-button, ytd-button-renderer, yt-button-shape, a').forEach((b) => {
-        const label = ((b.getAttribute && b.getAttribute('aria-label')) || '') + ' | ' + (b.textContent || '').trim();
-        if (TRANSCRIPT_RE.test(label)) { try { b.click(); } catch (x) {} }
-      });
     };
 
     for (let i = 0; i < 24 && !count('ytd-watch-metadata'); i++) await sleep(500);

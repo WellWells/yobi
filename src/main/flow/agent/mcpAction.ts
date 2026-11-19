@@ -43,9 +43,10 @@ export interface McpStepContext {
   intent: GoalIntent | null;
   /**
    * The user's answers to this run's questions: an explicit "yes, delete it" widens the boundary, and
-   * so does any agreeing answer to a draft or an edit this run was already held back for.
+   * so does picking the first choice when this run was already held back for it (`latestPickedFirst`).
    */
   answers?: readonly string[];
+  latestPickedFirst?: boolean;
   gate: { blocked: number; autoContext: number };
   /** No one can review a window this run opens, so nothing that changes things skips confirmation. */
   unattended?: boolean;
@@ -53,11 +54,15 @@ export interface McpStepContext {
   /**
    * A change that needs confirming is not confirmed here but handed back as `deferred`: the run
    * pauses with it as a question in the chat, and the approved answer runs it (the owner's bot chat).
+   * A list defers only those connectors' changes (the Yobi connector for a `manage` holder); any
+   * other change goes to `confirm`, which a bot run answers no.
    */
-  deferChanges?: boolean;
+  deferChanges?: boolean | readonly string[];
   onStage?: (stage: McpStage) => void;
   /** Keeps the pictures a built-in connector's read saved (the metro map) for the answer. */
   keepPictures?: (files: readonly string[]) => Promise<void>;
+  /** Keeps the files a built-in connector's call wrote (an edited spreadsheet) for the answer. */
+  keepDocuments?: (files: readonly string[]) => Promise<void>;
   log: (line: string) => void;
   signal?: AbortSignal;
 }
@@ -144,6 +149,7 @@ async function runRead(ctx: McpStepContext, serverId: string, tool: McpTool, con
       // The arguments go in too: an id a read accepted is an id the server itself vouched for.
       ctx.ledger.addObservation(`${JSON.stringify(args)}\n${result.text}`);
       if (result.pictures?.length) await ctx.keepPictures?.(result.pictures);
+      if (result.documents?.length) await ctx.keepDocuments?.(result.documents);
     }
     return { observation: observationOf(result.text, result.isError, interpreted, tool), status: failed ? 'error' : 'ok', write: false, landed: false, transientBlock: false };
   } catch (err) {
@@ -188,6 +194,10 @@ export async function executeMcpProposal(
   if (!argCheck.ok) {
     return { observation: `ERROR: ${argCheck.error}${schemaHint(tool)}`, status: 'error', write, landed: false, transientBlock: false };
   }
+  const refused = write ? await contract.precheck?.(args) : null;
+  if (refused) {
+    return { observation: `ERROR: ${refused}`, status: 'error', write, landed: false, transientBlock: false };
+  }
   if (!write) return runRead(ctx, serverId, tool, contract, args);
 
   const read = readerFor(ctx, serverId);
@@ -195,6 +205,7 @@ export async function executeMcpProposal(
     serverId, tool, args, contract, ledger: ctx.ledger, intent: ctx.intent, blockedSoFar: ctx.gate.blocked, signature,
     runId: ctx.runId,
     ...(ctx.answers ? { answers: ctx.answers } : {}),
+    ...(ctx.latestPickedFirst ? { latestPickedFirst: true } : {}),
   });
   let decision = decide();
   while (decision.verdict === 'needs' && ctx.gate.autoContext < MAX_AUTO_CONTEXT) {
@@ -266,7 +277,7 @@ export async function executeMcpProposal(
       forceAsk: policy === 'always',
     };
     // Recorded nowhere: nothing happened yet, and approving it later runs it through this gate again.
-    if (ctx.deferChanges) {
+    if (ctx.deferChanges === true || (Array.isArray(ctx.deferChanges) && ctx.deferChanges.includes(serverId))) {
       return { observation: '', status: 'ok', write: true, landed: false, transientBlock: false, deferred: request };
     }
     confirmed = await ctx.confirm(request) ? 'approved' : 'denied';
@@ -287,6 +298,7 @@ export async function executeMcpProposal(
     const result = await ctx.registry.callTool(serverId, tool.name, args, ctx.signal);
     text = result.text;
     isError = result.isError;
+    if (!isError && result.documents?.length) await ctx.keepDocuments?.(result.documents);
   } catch (err) {
     if (err instanceof FlowAbortError) throw err;
     text = errorText(err);

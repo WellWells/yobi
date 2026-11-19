@@ -1,3 +1,4 @@
+import { dropTrackingParams } from '../../shared/trackingParams';
 import type { SerpHit } from './types';
 
 /** The standard reciprocal-rank-fusion constant: rank 1 and rank 10 differ, but no single list dominates. */
@@ -17,9 +18,7 @@ const WIKIPEDIA_VARIANT_PATH = /^\/[a-z]{2,3}(?:-[a-z]+)+\//;
 export function hitKey(url: string): string {
   try {
     const u = new URL(url);
-    for (const name of [...u.searchParams.keys()]) {
-      if (/^(utm_|fbclid$|gclid$|msclkid$)/i.test(name)) u.searchParams.delete(name);
-    }
+    dropTrackingParams(u);
     let host = u.hostname.toLowerCase().replace(/^www\./, '');
     let path = u.pathname.replace(/\/+$/, '');
     const wiki = WIKIPEDIA_HOST.exec(host);

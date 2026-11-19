@@ -1,3 +1,5 @@
+import { parseKbCitationUrl } from './knowledgeBase';
+
 export interface CitationSource {
   id: number;
   title: string;
@@ -82,7 +84,15 @@ export function formatSourcesSection(sources: readonly CitationSource[], heading
   return `---\n\n**${heading}**\n\n${list.join('\n')}`;
 }
 
+/** A knowledge-base citation's file name (`yobi-kb://<id>/<dir>/<file>`); null for any other link. */
+function kbFileName(url: string): string | null {
+  const parsed = parseKbCitationUrl(url);
+  return parsed ? parsed.rel.slice(parsed.rel.lastIndexOf('/') + 1) : null;
+}
+
 export function citationHost(url: string): string {
+  const file = kbFileName(url);
+  if (file) return file;
   try {
     return new URL(url).hostname.replace(/^www\./, '');
   } catch {
@@ -98,6 +108,8 @@ const SECOND_LEVEL_SUFFIX = /^(?:com|co|org|net|gov|edu|ac|ne|or|go|gr|ed|lg|mil
  * subdomains or the public suffix (`redlib.ssps.io` → `ssps`, `app.cohorted.co.uk` → `cohorted`).
  */
 export function citationSite(url: string): string {
+  const file = kbFileName(url);
+  if (file) return file;
   let host: string;
   try {
     host = new URL(url).hostname.toLowerCase();

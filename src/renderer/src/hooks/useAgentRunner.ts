@@ -4,6 +4,7 @@ import { useAppStore } from '../store/appStore';
 import { agentApi, fileApi } from '../api/electronApi';
 import { answeringRun, choiceAnswer, pendingQuestionFrom, useAgentRunStore } from '../store/useAgentRunStore';
 import type { AgentChoicePick } from '../store/useAgentRunStore';
+import type { KnowledgeFileScope } from '../../../shared/knowledgeBase';
 import { useCommandTurn } from './useCommandTurn';
 
 /** Selects a resumed run's conversation; one that has since been deleted leaves the view as it is. */
@@ -73,6 +74,10 @@ export function useAgentRunner(
     mcpServerIds: readonly string[] = [],
     // true on, false switched off by the user, undefined the default — where the agent may go online.
     web?: boolean,
+    // Answers from the attached knowledge bases alone; main ignores it without one.
+    knowledgeOnly = false,
+    // Within it, the documents it is limited to (`KnowledgeFileScope`); main reads it only with `knowledgeOnly`.
+    knowledgeFiles?: KnowledgeFileScope,
   ): Promise<void> => {
     const conversationPath = useAppStore.getState().selectedFile?.path;
     // The pending question is matched on its disclosed set too, so an answer typed while Notion
@@ -90,7 +95,7 @@ export function useAgentRunner(
     const scope = mcpServerIds.length > 0 ? [...mcpServerIds] : undefined;
     return track(goal, runId, sending, () => (answering
       ? agentApi.resume(runId, goal, targetUrl)
-      : agentApi.run(goal, targetUrl, runId, conversationPath, sending, scope, web)), mcpServerIds);
+      : agentApi.run(goal, targetUrl, runId, conversationPath, sending, scope, web, knowledgeOnly || undefined, knowledgeOnly ? knowledgeFiles : undefined)), mcpServerIds);
   }, [track]);
 
   /**

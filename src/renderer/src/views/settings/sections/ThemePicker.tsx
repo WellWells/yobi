@@ -60,7 +60,7 @@ const ThemeOption: React.FC<ThemeOptionProps> = ({ label, background, accent, bo
       root: {
         padding: '5px 8px',
         borderRadius: 'var(--radius)',
-        color: selected ? 'var(--mantine-color-accent)' : 'var(--mantine-color-default-color)',
+        color: selected ? 'var(--mantine-color-accent-text)' : 'var(--mantine-color-default-color)',
         background: selected ? 'var(--mantine-color-accent-dim)' : undefined,
       },
       section: { marginInlineEnd: 8 },
@@ -94,8 +94,7 @@ export const ThemePicker: React.FC<Props> = ({ preference, onPick, onPreview, t 
     />
     <Box>
       <GroupHeader label={t('settings.theme.more')} />
-      <SimpleGrid
-        cols={THEME_COLUMNS}
+      <SimpleGrid type="container" cols={{ base: 1, '24rem': 2, '36rem': THEME_COLUMNS }}
         spacing={4}
         verticalSpacing={2}
         onMouseLeave={() => onPreview(null)}

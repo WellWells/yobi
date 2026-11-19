@@ -25,6 +25,8 @@ const WALL_MARKS: readonly RegExp[] = [
   /\bid=["']?__waf_verification_challenge\b/,
   // ByteDance's firewall (juejin): a proof-of-work script, 2.4 KB and no text.
   /\b_wafchallengeid\b/,
+  // Amazon's "continue shopping" check (amazon.com): 3.7 KB, one button posting here.
+  /\baction=["']?\/errors(?:_page)?\/validateCaptcha\b/,
 ];
 
 /** A wall's own text is a sentence or two; a real page past one this short is rare. */

@@ -11,7 +11,7 @@ import type { AgentSkillView, SkillOrigin, SkillSaveResult } from '../../shared/
 import { SKILL_STATE_FILE, skillsRoot } from './skillPaths';
 import { copySkillFiles, findSkillFile, readSkillFolder } from './skillFiles';
 import type { SkillFileScan } from './skillFiles';
-import { bundledSkillStatuses, ensureBundledSkills, hiddenBundledSkills, isBundledSkill } from './bundledSkills';
+import { bundledSkillStatuses, defaultDisabledBundledSkills, ensureBundledSkills, hiddenBundledSkills, isBundledSkill } from './bundledSkills';
 
 export interface SkillState {
   enabled: boolean;
@@ -102,16 +102,16 @@ export async function listSkills(): Promise<AgentSkillView[]> {
     const read = await readSkillFolder(path.join(skillsRoot(), folder), folder).catch(() => null);
     if (!read) continue;
     const entry = state[folder];
-    const bundled = bundles.find(({ bundle }) => bundle.name === folder)?.view;
+    const bundle = bundles.find(({ bundle }) => bundle.name === folder);
     views.push({
       ...read.view,
       // The folder is the identity: it is what `use_skill` and the state file are keyed by.
       name: folder,
-      enabled: entry?.enabled !== false,
+      enabled: entry?.enabled ?? bundle?.bundle.defaultEnabled ?? true,
       source: entry?.source ?? '',
       installedAt: entry?.installedAt ?? '',
       ...(entry?.origin && entry.tree && entry.latest && entry.tree !== entry.latest ? { update: skillOriginUrl(entry.origin) } : {}),
-      ...(bundled ? { bundled } : {}),
+      ...(bundle ? { bundled: bundle.view } : {}),
     });
   }
   for (const { bundle, view } of bundles) {
@@ -134,8 +134,10 @@ export async function listAgentSkills(): Promise<AgentSkillEntry[]> {
   const state = await readState();
   const entries: AgentSkillEntry[] = [];
   const hidden = await hiddenBundledSkills();
+  const defaultDisabled = await defaultDisabledBundledSkills();
   for (const folder of await skillFolders()) {
-    if (state[folder]?.enabled === false || hidden.has(folder)) continue;
+    const enabled = state[folder]?.enabled ?? !defaultDisabled.has(folder);
+    if (!enabled || hidden.has(folder)) continue;
     const file = await findSkillFile(path.join(skillsRoot(), folder));
     if (!file) continue;
     try {
@@ -188,9 +190,10 @@ export async function saveSkillDoc(name: string, text: string): Promise<SkillSav
   if (file && path.basename(file) !== SKILL_FILE) await fs.rename(file, path.join(dir, SKILL_FILE));
   await writeFileAtomic(path.join(dir, SKILL_FILE), next);
   if (target !== name) await fs.rename(dir, path.join(skillsRoot(), target));
+  const enabled = !(await defaultDisabledBundledSkills()).has(name);
   await updateState((state) => {
     // Edited here, it is the user's own version now: an update from its source would undo the edit.
-    const { origin: _origin, tree: _tree, latest: _latest, ...kept } = state[name] ?? { enabled: true };
+    const { origin: _origin, tree: _tree, latest: _latest, ...kept } = state[name] ?? { enabled };
     delete state[name];
     state[target] = kept;
   });
@@ -199,9 +202,10 @@ export async function saveSkillDoc(name: string, text: string): Promise<SkillSav
 }
 
 /** A file of the skill changed here: it is the user's own version now, so its source no longer updates it. */
-export function markSkillEdited(name: string): Promise<void> {
+export async function markSkillEdited(name: string): Promise<void> {
+  const enabled = !(await defaultDisabledBundledSkills()).has(name);
   return updateState((state) => {
-    const { origin: _origin, tree: _tree, latest: _latest, ...kept } = state[name] ?? { enabled: true };
+    const { origin: _origin, tree: _tree, latest: _latest, ...kept } = state[name] ?? { enabled };
     state[name] = kept;
   });
 }

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Menu } from '@mantine/core';
 import type { FloatingPosition } from '@mantine/core';
 import { writingToolsApi } from '../api/electronApi';
-import { PROVIDER_DROPDOWN_MAX_HEIGHT } from '../config/models';
+import { MODEL_MENU_MIDDLEWARES } from '../config/modelMenuSizing';
 import { Z_POPOVER } from '../config/zLayers';
 import { ModelMenuItems } from './chat/ModelMenuItems';
 import { AI_MODEL_MENU_ATTR } from './renameKeys';
@@ -72,6 +72,7 @@ export const AiModelMenu: React.FC<AiModelMenuProps> = ({
       position={position}
       offset={4}
       withinPortal
+      middlewares={MODEL_MENU_MIDDLEWARES}
       zIndex={zIndex}
       returnFocus={false}
       styles={{
@@ -79,7 +80,6 @@ export const AiModelMenu: React.FC<AiModelMenuProps> = ({
           background: 'var(--mantine-color-default)',
           borderColor: 'var(--mantine-color-default-border)',
           minWidth: 180,
-          maxHeight: PROVIDER_DROPDOWN_MAX_HEIGHT,
           overflowY: 'auto',
         },
         item: { fontSize: 'var(--font-size-md)' },

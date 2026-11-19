@@ -16,7 +16,7 @@ function isFileProducer(step: SkillInstance): boolean {
   return step.type === 'llm' && parseLlmExportFormats(step.config.exportFormat).length > 0;
 }
 
-function triggerInputVariables(triggers: TriggerConfig[]): string[] {
+export function triggerInputVariables(triggers: TriggerConfig[]): string[] {
   const vars: string[] = [];
   for (const trigger of triggers) {
     if (trigger.type === 'bot') vars.push(trigger.botInputVariable?.trim() || 'input');

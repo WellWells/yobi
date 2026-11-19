@@ -5,7 +5,7 @@ import { config, getHiddenSources, saveConfig, normalizeShareSettings } from './
 import { CaptureTooTallError, captureMarkdownDocument } from './capture';
 import { writeCaptureToClipboard, zipSingleFile } from './captureClipboard';
 import type { ClipboardCopyOutcome } from './captureClipboard';
-import { instanceHost, runWithExportPrompt } from './exportPrompt';
+import { instanceHost, runWithExportPrompt, tooTallTemplates } from './exportPrompt';
 import type { ExportNamer, ExportPanel } from './exportPrompt';
 import { buildSafeFileNameFromTitle, buildSnapshotFileName, getOutputDir, getUniquePath } from './files';
 import { sendLog, sendWebNotification } from './helpers';
@@ -14,12 +14,11 @@ import { normalizeCaptureSettings, normalizeQuickExport } from './configNormaliz
 import { ShareError, createPaste, revokePaste } from './share/privatebin';
 import { oneShotIo, quickActionModelUrl, rememberQuickActionModel } from './chat/oneShotRequest';
 import { nameMaterial, suggestExportName } from './quickExportName';
-import { extractMarkdownTitle, splitLeadingTitle } from '../shared/markdownTitle';
+import { extractMarkdownTitle } from '../shared/markdownTitle';
 import { stripConversationMarkers } from '../shared/conversationDoc';
-import { captureBackgroundCss, paletteCardTheme } from '../shared/capturePalettes';
-import type { CaptureDirection } from '../shared/capturePalettes';
+import { documentCardPayload, documentCardRequest } from '../shared/captureCard';
 import {
-  PROVIDERS, PROVIDER_LABELS, PROVIDER_URLS, buildByokGroupUrl, buildByokUrl, isModelUrlHidden,
+  PROVIDERS, PROVIDER_LABELS, PROVIDER_URLS, buildByokGroupUrl, buildByokUrl, captureTooTallNotice, isModelUrlHidden,
 } from '../shared/types';
 import type {
   CaptureExportChoice, ExportNameModel, ExportNaming, MarkdownCaptureRequest, ShareExportChoice, ShareResultState,
@@ -33,54 +32,21 @@ type LangStrings = ReturnType<typeof getLangCache>;
  * this notice again rather than losing anything.
  */
 function tooTallNotice(err: CaptureTooTallError, strings: LangStrings): string {
-  const over = t(strings, 'quickExport.tooTall.over', {
-    format: err.format.toUpperCase(),
-    limit: String(err.verdict.limit),
-    height: String(err.verdict.encodedHeight),
-  });
-  // Only ever suggest what this panel can actually change: the width picker, or PDF.
-  const hint = err.verdict.suggestedWidth === null
-    ? t(strings, 'quickExport.tooTall.switch')
-    : t(strings, 'quickExport.tooTall.widen', { width: String(err.verdict.suggestedWidth) });
-  // CJK sentences already close with a full-width stop, which supplies its own spacing.
-  return over + (/[。！？]$/.test(over) ? '' : ' ') + hint;
+  return captureTooTallNotice(err.verdict, err.format, tooTallTemplates(strings));
 }
 
 export function buildQuickExportRequest(markdown: string, choice: CaptureExportChoice): MarkdownCaptureRequest {
   const settings = config.captureSettings;
-  const { title, body } = splitLeadingTitle(markdown);
-  return {
-    payload: {
-      title,
-      prompt: '',
-      content: body,
-      summary: '',
-      provider: '',
-      timestamp: '',
-      turns: [{ prompt: '', response: body, provider: '', timestamp: '' }],
-    },
-    options: {
-      mode: choice.action === 'save' ? 'save' : 'copy',
+  return documentCardRequest(
+    documentCardPayload(markdown),
+    { ...choice, direction: settings.direction, pixelRatio: settings.pixelRatio },
+    {
       format: choice.format,
-      fileName: buildSafeFileNameFromTitle(choice.fileName) || buildSnapshotFileName(),
-      showPrompt: false,
-      showContent: true,
-      showProvider: false,
-      showTimestamp: false,
-      showTokens: false,
-      cardLayout: 'document',
-      width: choice.width,
-      margin: choice.margin,
-      background: captureBackgroundCss(
-        choice.palette,
-        choice.backgroundStyle,
-        settings.direction as CaptureDirection,
-      ),
-      cardTheme: paletteCardTheme(choice.palette),
-      pixelRatio: settings.pixelRatio,
       zip: choice.zip,
+      action: choice.action,
+      fileName: buildSafeFileNameFromTitle(choice.fileName) || buildSnapshotFileName(),
     },
-  };
+  );
 }
 
 export function defaultExportName(markdown: string): string {
@@ -148,7 +114,7 @@ export function quickExportNamer(markdown: string): ExportNamer {
       const material = nameMaterial(markdown);
       sendLog(
         `🏷️ Quick export: asking ${model.label} for a file name `
-        + `(${material.headings.length + material.opening.length} chars of outline)`,
+        + `(${material.headings.length + material.excerpts.length} chars of naming material)`,
       );
       const outcome = await suggestExportName(material, providerUrl, oneShotIo(signal, () => undefined), emptyReply, config.locale);
       if (outcome && 'error' in outcome) sendLog(`⚠️ Quick export: no file name from ${model.label} — ${outcome.error}`);
@@ -162,6 +128,7 @@ export function rememberCaptureChoice(choice: CaptureExportChoice): void {
   if (
     choice.width !== capture.width
     || choice.margin !== capture.margin
+    || choice.cardOpacity !== capture.cardOpacity
     || choice.palette !== capture.palette
     || choice.backgroundStyle !== capture.backgroundStyle
   ) {
@@ -169,6 +136,7 @@ export function rememberCaptureChoice(choice: CaptureExportChoice): void {
       ...capture,
       width: choice.width,
       margin: choice.margin,
+      cardOpacity: choice.cardOpacity,
       palette: choice.palette,
       backgroundStyle: choice.backgroundStyle,
     });
@@ -299,6 +267,8 @@ export async function runQuickExport(): Promise<void> {
         zip: config.quickExport.zip,
         width: config.captureSettings.width,
         margin: config.captureSettings.margin,
+        cardOpacity: config.captureSettings.cardOpacity,
+        preview: documentCardPayload(markdown),
       },
       async (chosen, panel) => {
         if (chosen.kind === 'share') {

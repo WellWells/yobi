@@ -1,6 +1,7 @@
 import React, { Fragment, useState } from 'react';
-import { ActionIcon, Menu, Tooltip } from '@mantine/core';
+import { ActionIcon, Menu } from '@mantine/core';
 import { Check, Sparkles } from 'lucide-react';
+import { TooltipTarget } from '../TooltipTarget';
 import { getByokTypeIcon, getModelIconByUrl } from '../../config/models';
 import type { ExportNameModel, ExportNaming } from '../../../../shared/types';
 
@@ -43,11 +44,11 @@ export const ExportNameButton: React.FC<Props> = ({ naming, label, menuLabel, bu
       middlewares={{ flip: { fallbackStrategy: 'bestFit' }, size: { padding: MENU_EDGE_GAP } }}
     >
       <Menu.Target>
-        <Tooltip label={label} disabled={busy || opened}>
+        <TooltipTarget label={label} disabled={busy || opened}>
           <ActionIcon variant="default" size="input-sm" aria-label={label} loading={busy}>
             <Sparkles size={16} />
           </ActionIcon>
-        </Tooltip>
+        </TooltipTarget>
       </Menu.Target>
 
       <Menu.Dropdown
@@ -67,7 +68,7 @@ export const ExportNameButton: React.FC<Props> = ({ naming, label, menuLabel, bu
                 <Menu.Item
                   key={model.url}
                   leftSection={<Icon size={15} />}
-                  rightSection={selected ? <Check size={13} color="var(--mantine-color-accent)" /> : null}
+                  rightSection={selected ? <Check size={13} color="var(--mantine-color-accent-text)" /> : null}
                   onClick={() => onPick(model.url)}
                 >
                   {model.label}

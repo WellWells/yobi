@@ -78,6 +78,7 @@ export function useSettingsNav() {
   const q = resultsQuery.trim().toLowerCase();
   const isSearching = q.length > 0;
 
+
   const sectionVisible = (tags: readonly string[]): boolean => haystacks.get(tags)?.includes(q) ?? false;
 
   const showSection = (tags: readonly string[], category: Category): boolean =>

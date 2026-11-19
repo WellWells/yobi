@@ -17,6 +17,8 @@ import { SITE_PARTITIONS } from '../siteAccounts';
 /** Whose cookies yt-dlp gets: a partition a hidden window reads in (whatever cookies it holds). */
 export interface CookieSource {
   partition: string;
+  /** Only these cookies go (YouTube hands over Google's pass alone); absent = every one for the link. */
+  names?: readonly string[];
 }
 
 /** One Netscape line; null for a cookie the format cannot carry. */
@@ -53,7 +55,8 @@ export function netscapeCookies(cookies: readonly Electron.Cookie[], url: string
  */
 export async function writeCookieFile(source: CookieSource, url: string, dir: string): Promise<string | null> {
   if (SITE_PARTITIONS.includes(source.partition)) throw new Error('a sign-in\'s cookies never go to yt-dlp');
-  const cookies = await session.fromPartition(source.partition).cookies.get({ url });
+  const all = await session.fromPartition(source.partition).cookies.get({ url });
+  const cookies = source.names ? all.filter((cookie) => source.names?.includes(cookie.name)) : all;
   if (cookies.length === 0) return null;
   const file = path.join(dir, `cookies-${randomUUID()}.txt`);
   await fs.writeFile(file, netscapeCookies(cookies, url), { mode: 0o600, flag: 'wx' });

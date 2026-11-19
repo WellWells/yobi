@@ -7,14 +7,24 @@ import { meterReported, meterText } from '../tokenMeter';
 import { meterLlmRequest, noteKeyCooldown, noteKeyResult } from '../llmMeter';
 import { classifyFailure } from '../metricsNormalize';
 import { estimateTokens } from '../../shared/tokenEstimate';
-import { compactPreview } from '../../shared/textBudget';
 import { Semaphore } from '../flow/lanes';
+import {
+  BYOK_REQUEST_FAILED_PREFIX, ByokFailure, ByokRefusal, byokMessages, extractApiErrorDetail, refusalOf,
+} from './byokCore';
+import type { ByokChatStream, ByokPrompt, ByokStreamResult, ByokUsage } from './byokCore';
+import { isAnthropicApiUrl, listAnthropicModels, streamAnthropicChat } from './byokAnthropic';
+import { cacheHintsFor, hasCacheHints } from './byokCacheHints';
+import type { CacheHintOptions } from './byokCacheHints';
+
+export {
+  BYOK_REFUSED_PREFIX, BYOK_REQUEST_FAILED_PREFIX, ByokFailure, ByokRefusal, refusalOf,
+} from './byokCore';
+export type { ByokChatMessage, ByokImage, ByokPrompt, ByokUsage } from './byokCore';
 
 export const BYOK_INSTANCE_MISSING_ERROR = 'BYOK provider not found — the instance may have been deleted';
 export const BYOK_GROUP_MISSING_ERROR = 'BYOK group not found — it may have been deleted';
 export const BYOK_GROUP_EMPTY_ERROR = 'BYOK group has no usable keys — add at least one key to the group';
 export const BYOK_CONFIG_INCOMPLETE_PREFIX = 'BYOK configuration incomplete: ';
-export const BYOK_REQUEST_FAILED_PREFIX = 'BYOK request failed: ';
 
 const COOLDOWN_STATUSES = new Set([429, 503]);
 
@@ -25,40 +35,6 @@ const PERMANENT_SERVER_STATUSES = new Set([501, 505]);
 const MIN_COOLDOWN_MS = 1_000;
 const MAX_COOLDOWN_MS = 5 * 60_000;
 const DEFAULT_COOLDOWN_MS = 60_000;
-
-export class ByokFailure extends Error {
-  readonly status?: number;
-  readonly retryAfterMs?: number;
-
-  constructor(message: string, options: { status?: number; retryAfterMs?: number } = {}) {
-    super(message);
-    this.name = 'ByokFailure';
-    this.status = options.status;
-    this.retryAfterMs = options.retryAfterMs;
-  }
-}
-
-export const BYOK_REFUSED_PREFIX = 'BYOK refused: ';
-
-/**
- * The model or its provider's safety filter declined the request (`finish_reason` content_filter,
- * refusal or safety, or a `refusal` text). Never retried: the same request is refused again.
- */
-export class ByokRefusal extends ByokFailure {
-  constructor(detail: string) {
-    super(`${BYOK_REFUSED_PREFIX}${detail}`);
-    this.name = 'ByokRefusal';
-  }
-}
-
-const REFUSAL_FINISH_REASONS = new Set(['content_filter', 'refusal', 'safety']);
-
-/** The refusal a finished reply carries, or null: its refusal text, else the finish reason. */
-export function refusalOf(finishReason: string, refusalText: string): ByokRefusal | null {
-  const text = refusalText.trim();
-  if (text) return new ByokRefusal(text);
-  return REFUSAL_FINISH_REASONS.has(finishReason) ? new ByokRefusal(finishReason) : null;
-}
 
 export function isByokRetryable(err: unknown): boolean {
   if (err instanceof ByokRefusal) return false;
@@ -87,37 +63,10 @@ export interface ByokEndpoint {
   takesImages?: true;
 }
 
-export interface ByokUsage {
-  input: number;
-  output: number;
-  cachedInput?: number;
-}
-
-/** A picture ready to send: base64 bytes in one of the formats every image-taking preset reads. */
-export interface ByokImage {
-  mimeType: string;
-  data: string;
-}
-
-/** One turn of a multi-turn request: what `/agent` sends once a BYOK run has a conversation. */
-export interface ByokChatMessage {
-  role: 'user' | 'assistant';
-  content: string;
-  /** Pictures sent with a user message; only a key that takes them is ever given one. */
-  images?: readonly ByokImage[];
-}
-
-/** A single prompt, or a whole conversation ending in the user's latest message. */
-export type ByokPrompt = string | readonly ByokChatMessage[];
-
 /** A rough per-picture input cost, for the estimate of an endpoint that reports no usage. */
 const IMAGE_TOKEN_ESTIMATE = 1_500;
 
 export const BYOK_NO_IMAGE_KEY_ERROR = 'BYOK group has no key that takes images';
-
-function byokMessages(prompt: ByokPrompt): readonly ByokChatMessage[] {
-  return typeof prompt === 'string' ? [{ role: 'user', content: prompt }] : prompt;
-}
 
 type WireContent = string | ({ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } })[];
 
@@ -275,7 +224,12 @@ export function orderGroupMembers(groupId: string, members: ByokInstance[]): Byo
   return [...ready, ...cooling];
 }
 
-function resolveByokTryList(url: string): ByokEndpoint[] {
+/**
+ * The keys a BYOK URL stands for, in config order and without touching the group rotation: one
+ * instance for `byok://`, the group's existing members for `byokgroup://`. Throws like a request
+ * would when the instance or group is gone or the group has no keys left.
+ */
+export function byokInstancesForUrl(url: string): ByokInstance[] {
   if (isByokGroupUrl(url)) {
     const group = findByokGroupByUrl(url);
     if (!group) throw new Error(BYOK_GROUP_MISSING_ERROR);
@@ -283,11 +237,17 @@ function resolveByokTryList(url: string): ByokEndpoint[] {
       .map((memberId) => config.byokInstances.find((instance) => instance.id === memberId))
       .filter((instance): instance is ByokInstance => Boolean(instance));
     if (members.length === 0) throw new Error(BYOK_GROUP_EMPTY_ERROR);
-    return orderGroupMembers(group.id, members).map(endpointForInstance);
+    return members;
   }
   const instance = findByokInstanceByUrl(url);
   if (!instance) throw new Error(BYOK_INSTANCE_MISSING_ERROR);
-  return [endpointForInstance(instance)];
+  return [instance];
+}
+
+function resolveByokTryList(url: string): ByokEndpoint[] {
+  const instances = byokInstancesForUrl(url);
+  const groupId = isByokGroupUrl(url) ? byokGroupIdFromUrl(url) : null;
+  return (groupId ? orderGroupMembers(groupId, instances) : instances).map(endpointForInstance);
 }
 
 function buildCompletionsUrl(baseUrl: string): string {
@@ -300,37 +260,11 @@ function buildModelsUrl(baseUrl: string): string {
   return `${baseUrl.trim().replace(/\/+$/, '')}/models`;
 }
 
-function isAnthropicHost(url: string): boolean {
-  try {
-    return new URL(url).hostname.toLowerCase() === 'api.anthropic.com';
-  } catch {
-    return false;
-  }
-}
-
-function modelsAuthHeaders(url: string, apiKey: string): Record<string, string> {
-  if (isAnthropicHost(url)) {
-    return { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' };
-  }
-  return { 'Authorization': `Bearer ${apiKey}` };
-}
-
 function assertEndpoint(cfg: ByokEndpoint, needModel: boolean): void {
   const suffix = cfg.label?.trim() ? ` for "${cfg.label.trim()}"` : '';
   if (!cfg.apiKey) throw new Error(`${BYOK_CONFIG_INCOMPLETE_PREFIX}API key is not set${suffix}`);
   if (!cfg.baseUrl) throw new Error(`${BYOK_CONFIG_INCOMPLETE_PREFIX}base URL is not set${suffix}`);
   if (needModel && !cfg.model) throw new Error(`${BYOK_CONFIG_INCOMPLETE_PREFIX}model is not set${suffix}`);
-}
-
-function extractApiErrorDetail(bodyText: string): string {
-  try {
-    const parsed = JSON.parse(bodyText) as { error?: { message?: unknown } };
-    if (typeof parsed?.error?.message === 'string' && parsed.error.message.trim()) {
-      return parsed.error.message.trim();
-    }
-  } catch {
-  }
-  return compactPreview(bodyText, 200);
 }
 
 /** The refusal in a whole (non-streamed) completion body, or null. */
@@ -355,14 +289,27 @@ function extractCompletionContent(bodyText: string): string | null {
   return null;
 }
 
-function readCachedInput(usage: Record<string, unknown>, input: number): number | undefined {
-  const details = usage.prompt_tokens_details;
-  const nested = details && typeof details === 'object'
-    ? (details as Record<string, unknown>).cached_tokens
-    : undefined;
-  const value = nested ?? usage.cached_tokens;
+function tokenCount(value: unknown, input: number): number | undefined {
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return undefined;
   return Math.min(input, Math.round(value));
+}
+
+function promptDetails(usage: Record<string, unknown>): Record<string, unknown> {
+  const details = usage.prompt_tokens_details;
+  return details && typeof details === 'object' ? details as Record<string, unknown> : {};
+}
+
+function readCachedInput(usage: Record<string, unknown>, input: number): number | undefined {
+  return tokenCount(promptDetails(usage).cached_tokens ?? usage.cached_tokens, input);
+}
+
+/**
+ * Tokens written to the cache: OpenAI (GPT-5.6+) and OpenRouter report `cache_write_tokens`,
+ * Qwen's explicit cache `cache_creation_input_tokens`, both inside `prompt_tokens_details`.
+ */
+function readCacheWriteInput(usage: Record<string, unknown>, input: number): number | undefined {
+  const details = promptDetails(usage);
+  return tokenCount(details.cache_write_tokens ?? details.cache_creation_input_tokens, input);
 }
 
 export function parseByokUsage(raw: unknown): ByokUsage | null {
@@ -373,10 +320,12 @@ export function parseByokUsage(raw: unknown): ByokUsage | null {
   if (!Number.isFinite(input) || !Number.isFinite(output) || input < 0 || output < 0) return null;
   const rounded = Math.round(input);
   const cachedInput = readCachedInput(usage, rounded);
+  const cacheWriteInput = readCacheWriteInput(usage, rounded);
   return {
     input: rounded,
     output: Math.round(output),
     ...(cachedInput === undefined ? {} : { cachedInput }),
+    ...(cacheWriteInput ? { cacheWriteInput } : {}),
   };
 }
 
@@ -463,12 +412,109 @@ export async function fetchWithByokTimeout(
 
 const STREAM_TOTAL_TIMEOUT_FACTOR = 3;
 
+/**
+ * An error some OpenAI-compatible endpoints (Gemini's) write into a stream after it began: a bare
+ * JSON object or one-element array with `error`, not on a `data:` line. Read as the HTTP error it
+ * stands for, so an overloaded model cools its key down like a 503 response would.
+ */
+export function trailingStreamError(rawBody: string): ByokFailure | null {
+  const rest = rawBody
+    .split(/\r?\n/)
+    .filter((line) => !/^\s*(data:|:|event:|id:|retry:)/.test(line))
+    .join('\n')
+    .trim();
+  if (!rest.startsWith('{') && !rest.startsWith('[')) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rest);
+  } catch {
+    return null;
+  }
+  const body = (Array.isArray(parsed) ? parsed[0] : parsed) as { error?: { code?: unknown; message?: unknown } } | undefined;
+  const error = body?.error;
+  if (!error) return null;
+  const status = typeof error.code === 'number' ? error.code : undefined;
+  const message = typeof error.message === 'string' && error.message.trim() ? error.message.trim() : extractApiErrorDetail(rest);
+  return new ByokFailure(
+    `${BYOK_REQUEST_FAILED_PREFIX}${status ? `HTTP ${status} — ` : ''}${message}`,
+    status ? { status } : {},
+  );
+}
+
+/** Reads an OpenAI-compatible `chat/completions` stream (`data:` chunks ending in `[DONE]`). */
+function openAiStream(): ByokChatStream {
+  let content = '';
+  let finishReason = '';
+  let refusalText = '';
+  let usage: ByokUsage | null = null;
+  let sawDone = false;
+  return {
+    consumeLine(rawLine) {
+      const line = rawLine.trim();
+      if (!line || line.startsWith(':')) return undefined;
+      if (!line.startsWith('data:')) return undefined;
+      const data = line.slice(5).trim();
+      if (data === '[DONE]') {
+        sawDone = true;
+        return 'done';
+      }
+      let parsed: {
+        choices?: { delta?: { content?: unknown; refusal?: unknown }; finish_reason?: unknown }[];
+        error?: { message?: unknown };
+        usage?: unknown;
+      };
+      try {
+        parsed = JSON.parse(data);
+      } catch {
+        return undefined;
+      }
+      if (parsed.error) throw new Error(`${BYOK_REQUEST_FAILED_PREFIX}${extractApiErrorDetail(data)}`);
+      usage = parseByokUsage(parsed.usage) ?? usage;
+      const choice = parsed.choices?.[0];
+      const piece = choice?.delta?.content;
+      if (typeof piece === 'string') content += piece;
+      if (typeof choice?.delta?.refusal === 'string') refusalText += choice.delta.refusal;
+      if (typeof choice?.finish_reason === 'string') finishReason = choice.finish_reason;
+      return undefined;
+    },
+    // A refusal wins over whatever text came first: a filter that stops a reply mid-stream leaves
+    // a fragment that must not be handed on as the answer.
+    finish(rawBody) {
+      const refused = refusalOf(finishReason, refusalText) ?? (content.trim() ? null : refusalInBody(rawBody));
+      if (refused) throw refused;
+      // A stream that stopped without saying it was finished. Taken as the whole reply it is a
+      // fragment that can still parse (a tool call with half an argument).
+      if (!sawDone && !finishReason) {
+        const trailing = trailingStreamError(rawBody);
+        if (trailing) throw trailing;
+      }
+      if (content.trim() && !sawDone && !finishReason) {
+        sendLog(`⚠️ BYOK stream stopped mid-reply after ${content.length} characters; tail: ${rawBody.slice(-200).replace(/\s+/g, ' ')}`);
+        throw new ByokFailure(`${BYOK_REQUEST_FAILED_PREFIX}the reply stopped before it finished`);
+      }
+      return {
+        content: content.trim() || (extractCompletionContent(rawBody) ?? ''),
+        usage: usage ?? extractCompletionUsage(rawBody),
+      };
+    },
+    partial() {
+      return { content: content.trim(), usage };
+    },
+    whole(bodyText) {
+      const refused = refusalInBody(bodyText);
+      if (refused) throw refused;
+      return { content: extractCompletionContent(bodyText) ?? '', usage: extractCompletionUsage(bodyText) };
+    },
+  };
+}
+
 async function streamByokChat(
   url: string,
   init: RequestInit,
   idleTimeoutMs: number,
+  stream: ByokChatStream,
   signal?: AbortSignal,
-): Promise<{ content: string; usage: ByokUsage | null }> {
+): Promise<ByokStreamResult> {
   const controller = new AbortController();
   let abortedByIdle = false;
   let abortedByDeadline = false;
@@ -526,74 +572,23 @@ async function streamByokChat(
       } catch (err: unknown) {
         throw mapTransportError(err);
       }
-      const refused = refusalInBody(bodyText);
-      if (refused) throw refused;
-      const whole = extractCompletionContent(bodyText);
-      if (!whole) throw new Error(`${BYOK_REQUEST_FAILED_PREFIX}empty or malformed completion response`);
-      return { content: whole, usage: extractCompletionUsage(bodyText) };
+      const whole = stream.whole(bodyText);
+      if (!whole.content) throw new Error(`${BYOK_REQUEST_FAILED_PREFIX}empty or malformed completion response`);
+      return whole;
     }
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
     let rawBody = '';
-    let content = '';
-    let finishReason = '';
-    let refusalText = '';
-    let usage: ByokUsage | null = null;
-    let sawDone = false;
-    // A refusal wins over whatever text came first: a filter that stops a reply mid-stream leaves
-    // a fragment that must not be handed on as the answer.
-    const finalize = (): { content: string; usage: ByokUsage | null } => {
-      const refused = refusalOf(finishReason, refusalText) ?? (content.trim() ? null : refusalInBody(rawBody));
-      if (refused) throw refused;
-      // A stream that stopped without saying it was finished. Taken as the whole reply it is a
-      // fragment that can still parse (a tool call with half an argument).
-      if (content.trim() && !sawDone && !finishReason) {
-        sendLog(`⚠️ BYOK stream stopped mid-reply after ${content.length} characters; tail: ${rawBody.slice(-200).replace(/s+/g, ' ')}`);
-        throw new ByokFailure(`${BYOK_REQUEST_FAILED_PREFIX}the reply stopped before it finished`);
-      }
-      return {
-        content: content.trim() || (extractCompletionContent(rawBody) ?? ''),
-        usage: usage ?? extractCompletionUsage(rawBody),
-      };
-    };
-    const consumeLine = (rawLine: string): 'done' | undefined => {
-      const line = rawLine.trim();
-      if (!line || line.startsWith(':')) return;
-      if (!line.startsWith('data:')) return;
-      const data = line.slice(5).trim();
-      if (data === '[DONE]') {
-        sawDone = true;
-        return 'done';
-      }
-      let parsed: {
-        choices?: { delta?: { content?: unknown; refusal?: unknown }; finish_reason?: unknown }[];
-        error?: { message?: unknown };
-        usage?: unknown;
-      };
-      try {
-        parsed = JSON.parse(data);
-      } catch {
-        return;
-      }
-      if (parsed.error) throw new Error(`${BYOK_REQUEST_FAILED_PREFIX}${extractApiErrorDetail(data)}`);
-      usage = parseByokUsage(parsed.usage) ?? usage;
-      const choice = parsed.choices?.[0];
-      const piece = choice?.delta?.content;
-      if (typeof piece === 'string') content += piece;
-      if (typeof choice?.delta?.refusal === 'string') refusalText += choice.delta.refusal;
-      if (typeof choice?.finish_reason === 'string') finishReason = choice.finish_reason;
-    };
 
     for (;;) {
       let result: ReadableStreamReadResult<Uint8Array>;
       try {
         result = await reader.read();
       } catch (err: unknown) {
-        if ((abortedByIdle || abortedByDeadline) && content.trim()) {
-          return { content: content.trim(), usage };
-        }
+        const sofar = stream.partial();
+        if ((abortedByIdle || abortedByDeadline) && sofar.content) return sofar;
         throw mapTransportError(err);
       }
       if (result.done) break;
@@ -606,11 +601,11 @@ async function streamByokChat(
       while ((nlIndex = buffer.indexOf('\n')) >= 0) {
         const line = buffer.slice(0, nlIndex);
         buffer = buffer.slice(nlIndex + 1);
-        if (consumeLine(line) === 'done') return finalize();
+        if (stream.consumeLine(line) === 'done') return stream.finish(rawBody);
       }
     }
-    if (buffer.trim()) consumeLine(buffer);
-    return finalize();
+    if (buffer.trim()) stream.consumeLine(buffer);
+    return stream.finish(rawBody);
   } finally {
     if (idleTimer) clearTimeout(idleTimer);
     clearTimeout(deadlineTimer);
@@ -625,20 +620,60 @@ function isBadRequestError(err: unknown): boolean {
 }
 
 function logCacheHit(usage: ByokUsage): void {
-  if (usage.cachedInput === undefined || usage.cachedInput <= 0 || usage.input <= 0) return;
-  const share = Math.round((usage.cachedInput / usage.input) * 100);
-  sendLog(`💾 BYOK prompt cache: ${usage.cachedInput} of ${usage.input} input tokens reused (${share}%)`);
+  if (usage.input <= 0) return;
+  const read = usage.cachedInput ?? 0;
+  const written = usage.cacheWriteInput ?? 0;
+  if (read <= 0 && written <= 0) return;
+  const share = Math.round((read / usage.input) * 100);
+  const write = written > 0 ? `, ${written} written` : '';
+  sendLog(`💾 BYOK prompt cache: ${read} of ${usage.input} input tokens reused (${share}%)${write}`);
 }
 
-export async function callByokChat(
+/**
+ * `cachePrefix`: the prompt opens a conversation whose next request resends it (an `/agent`
+ * transcript), so ask the provider to cache it. `conversationId`: that conversation's random id,
+ * the cache-routing key some providers take (`byokCacheHints.ts`).
+ */
+export type ByokCallOptions = CacheHintOptions;
+
+/**
+ * Endpoints that answered 400 to a request carrying cache hints but took it without them: the
+ * hints are dropped for that URL from then on. A proxy behind a known host may not pass them on.
+ */
+const cacheHintsUnsupported = new Set<string>();
+
+/** One request to the native Messages API through the official SDK (`byokAnthropic.ts`). */
+function sendAnthropicChat(
   cfg: ByokEndpoint,
   prompt: ByokPrompt,
   idleTimeoutMs: number,
+  options: ByokCallOptions,
   signal?: AbortSignal,
-): Promise<{ response: string; title: string; usage: ByokUsage | null }> {
-  assertEndpoint(cfg, true);
+): Promise<ByokStreamResult> {
+  return streamAnthropicChat({
+    apiKey: cfg.apiKey,
+    baseUrl: cfg.baseUrl,
+    model: cfg.model ?? '',
+    prompt,
+    cachePrefix: options.cachePrefix === true,
+    idleTimeoutMs,
+    totalTimeoutMs: idleTimeoutMs * STREAM_TOTAL_TIMEOUT_FACTOR,
+    signal,
+    retryAfter: parseRetryAfter,
+  });
+}
+
+/** One request to an OpenAI-compatible `chat/completions` endpoint. */
+async function sendOpenAiChat(
+  cfg: ByokEndpoint,
+  prompt: ByokPrompt,
+  idleTimeoutMs: number,
+  options: ByokCallOptions,
+  signal?: AbortSignal,
+): Promise<ByokStreamResult> {
   const url = buildCompletionsUrl(cfg.baseUrl);
-  const send = async (includeUsage: boolean): Promise<{ content: string; usage: ByokUsage | null }> =>
+  const hints = cacheHintsFor(cfg.baseUrl, cfg.model, options);
+  const send = async (includeUsage: boolean, includeHints: boolean): Promise<ByokStreamResult> =>
     streamByokChat(
       url,
       {
@@ -646,32 +681,64 @@ export async function callByokChat(
         headers: {
           'Authorization': `Bearer ${cfg.apiKey}`,
           'Content-Type': 'application/json',
+          ...(includeHints ? hints.headers : {}),
         },
         body: JSON.stringify({
           model: cfg.model,
           messages: wireMessages(prompt),
           stream: true,
           ...(includeUsage ? { stream_options: { include_usage: true } } : {}),
+          ...(includeHints ? hints.body : {}),
         }),
       },
       idleTimeoutMs,
+      openAiStream(),
       signal,
     );
 
+  // A 400 may be an optional field the endpoint does not know: drop the cache hints first, then
+  // `stream_options`, and remember which one it was. Any other failure, or a 400 that stays, is
+  // the original error.
   const wantUsage = !streamOptionsUnsupported.has(url);
-  let result: { content: string; usage: ByokUsage | null };
+  const wantHints = hasCacheHints(hints) && !cacheHintsUnsupported.has(url);
   try {
-    result = await send(wantUsage);
+    return await send(wantUsage, wantHints);
   } catch (err: unknown) {
-    if (!wantUsage || signal?.aborted || !isBadRequestError(err)) throw err;
+    if (signal?.aborted || !isBadRequestError(err)) throw err;
+    if (wantHints) {
+      try {
+        const result = await send(wantUsage, false);
+        cacheHintsUnsupported.add(url);
+        sendLog('⚠️ BYOK endpoint rejected the prompt-cache hints — sending without them');
+        return result;
+      } catch (retryErr: unknown) {
+        if (signal?.aborted || !isBadRequestError(retryErr)) throw err;
+      }
+    }
+    if (!wantUsage) throw err;
+    let result: ByokStreamResult;
     try {
-      result = await send(false);
+      result = await send(false, false);
     } catch {
       throw err;
     }
     streamOptionsUnsupported.add(url);
     sendLog('⚠️ BYOK endpoint rejected stream_options — token counts will be estimated for it');
+    return result;
   }
+}
+
+export async function callByokChat(
+  cfg: ByokEndpoint,
+  prompt: ByokPrompt,
+  idleTimeoutMs: number,
+  signal?: AbortSignal,
+  options: ByokCallOptions = {},
+): Promise<{ response: string; title: string; usage: ByokUsage | null }> {
+  assertEndpoint(cfg, true);
+  const result = isAnthropicApiUrl(cfg.baseUrl)
+    ? await sendAnthropicChat(cfg, prompt, idleTimeoutMs, options, signal)
+    : await sendOpenAiChat(cfg, prompt, idleTimeoutMs, options, signal);
 
   if (!result.content) {
     throw new Error(`${BYOK_REQUEST_FAILED_PREFIX}empty or malformed completion response`);
@@ -687,13 +754,12 @@ export async function callByokChat(
 
 export async function listByokModels(cfg: ByokEndpoint, timeoutMs: number): Promise<string[]> {
   assertEndpoint(cfg, false);
-  let url = buildModelsUrl(cfg.baseUrl);
-  if (isAnthropicHost(url)) url += '?limit=1000';
+  if (isAnthropicApiUrl(cfg.baseUrl)) return listAnthropicModels(cfg.apiKey, cfg.baseUrl, timeoutMs);
   const bodyText = await fetchWithByokTimeout(
-    url,
+    buildModelsUrl(cfg.baseUrl),
     {
       method: 'GET',
-      headers: modelsAuthHeaders(url, cfg.apiKey),
+      headers: { 'Authorization': `Bearer ${cfg.apiKey}` },
     },
     timeoutMs,
   );
@@ -761,9 +827,10 @@ export async function runByokCompletion(
   prompt: ByokPrompt,
   timeoutMs: number,
   signal?: AbortSignal,
+  options: ByokCallOptions = {},
 ): Promise<{ response: string; title: string; usage: ByokUsage | null }> {
   const imageCount = byokPromptImageCount(prompt);
-  return runOnByokKeys(targetUrl, (endpoint) => callByokChat(endpoint, prompt, timeoutMs, signal), {
+  return runOnByokKeys(targetUrl, (endpoint) => callByokChat(endpoint, prompt, timeoutMs, signal, options), {
     signal,
     estimate: (result) => ({
       input: estimateTokens(byokPromptText(prompt)) + imageCount * IMAGE_TOKEN_ESTIMATE,

@@ -4,9 +4,11 @@ import { RotateCcw } from 'lucide-react';
 import { AppButton } from '../AppButton';
 import { AppTextInput } from '../AppTextInput';
 import { ShortcutHint } from '../ShortcutHint';
+import { MIN_TARGET_PX } from '../a11y';
 import { useComboRecorder } from '../../shortcuts/useComboRecorder';
 import type { ComboRecorder } from '../../shortcuts/useComboRecorder';
 import { comboRelation } from '../../../../shared/shortcuts';
+import { fillTemplate } from '../../../../shared/fillTemplate';
 import type { ShortcutDef } from '../../../../shared/shortcuts';
 
 export const CAPSULE_MIN_WIDTH = 132;
@@ -88,12 +90,17 @@ export const ShortcutRecorderControl: React.FC<ControlProps> = ({
   def, label, combos, modified, recorder, t, onStartRecording, onReset,
 }) => {
   const resetLabel = t('settings.shortcut.resetRow');
+  // The capsule's name starts with what it shows (the keys, or "Not set"), then says what the row
+  // is and that a click records: its own content first, then a hidden sentence (WCAG 2.5.3 Label
+  // in Name: the action alone, with no keys in it, would not match what is shown).
+  const capsuleId = React.useId();
+  const actionId = React.useId();
   return (
     <Group gap={8} wrap="nowrap" style={{ flexShrink: 0 }}>
       <Box w={RESET_WIDTH} style={{ flexShrink: 0, display: 'flex', justifyContent: 'center' }}>
         {modified && onReset && !recorder.recording && (
           <Tooltip label={resetLabel} position="top" withArrow>
-            <ActionIcon variant="subtle" size={22} onClick={onReset} aria-label={resetLabel}>
+            <ActionIcon variant="subtle" size={MIN_TARGET_PX} onClick={onReset} aria-label={resetLabel}>
               <RotateCcw size={12} />
             </ActionIcon>
           </Tooltip>
@@ -113,14 +120,17 @@ export const ShortcutRecorderControl: React.FC<ControlProps> = ({
             onBlur={recorder.stop}
           />
         ) : (
+          <>
+          <Text component="span" id={actionId} hidden>{fillTemplate(t('a11y.e.shortcut.record'), { action: label })}</Text>
           <AppButton
+            id={capsuleId}
             variant="subtle"
             size="xs"
             fullWidth
             justify="flex-end"
             px={CAPSULE_PAD}
             onClick={() => { onStartRecording?.(); recorder.start(); }}
-            aria-label={label}
+            aria-labelledby={`${capsuleId} ${actionId}`}
           >
             {combos.length > 0 ? (
               <Group gap={6} wrap="nowrap" justify="flex-end">
@@ -130,6 +140,7 @@ export const ShortcutRecorderControl: React.FC<ControlProps> = ({
               <Text fz="var(--font-size-xs)" c="dimmed">{t('settings.shortcut.unbound')}</Text>
             )}
           </AppButton>
+          </>
         )}
       </Box>
     </Group>
@@ -137,8 +148,8 @@ export const ShortcutRecorderControl: React.FC<ControlProps> = ({
 };
 
 const NOTE_COLOR: Record<ShortcutNote['level'], string> = {
-  refuse: 'var(--error)',
-  warn: 'var(--warning)',
+  refuse: 'var(--error-text)',
+  warn: 'var(--warning-text)',
   info: 'var(--text-muted)',
 };
 

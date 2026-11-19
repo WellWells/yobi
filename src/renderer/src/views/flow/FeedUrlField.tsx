@@ -106,13 +106,13 @@ export const FeedUrlField: React.FC<FeedUrlFieldProps> = ({
       )}
 
       {status === 'found' && (
-        <Text fz="xs" c="var(--mantine-color-success)">{t('flow.skill.rss.discover.found')}</Text>
+        <Text fz="xs" c="var(--success-text)">{t('flow.skill.rss.discover.found')}</Text>
       )}
       {status === 'notfound' && (
-        <Text fz="xs" c="var(--mantine-color-warning)">{t('flow.skill.rss.discover.notFound')}</Text>
+        <Text fz="xs" c="var(--warning-text)">{t('flow.skill.rss.discover.notFound')}</Text>
       )}
       {status === 'error' && (
-        <Text fz="xs" c="var(--mantine-color-error)">
+        <Text fz="xs" c="var(--error-text)">
           {fillTemplate(t('flow.skill.rss.discover.error'), { error: discoverError })}
         </Text>
       )}

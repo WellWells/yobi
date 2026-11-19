@@ -2,12 +2,19 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useAppStore } from '../store/appStore';
 import { useMcpStore } from '../store/useMcpStore';
+import { useKnowledgeStore } from '../store/useKnowledgeStore';
+import { KB_CONNECTOR_PREFIX, kbConnectorId, readKnowledgeFileScope } from '../../../shared/knowledgeBase';
+import type { KnowledgeFileScope } from '../../../shared/knowledgeBase';
 import { agentApi } from '../api/electronApi';
 import type { KeywordCandidate } from '../../../shared/connectorKeywords';
 import { reachableOnSend } from '../../../shared/mcpConnectOnUse';
 
-function scopeKey(ids: readonly string[], web: boolean, webOff: boolean, agent: boolean): string {
-  return `${agent ? 'a' : '-'}${web ? 'w' : webOff ? 'x' : '-'}:${[...ids].sort().join(',')}`;
+function scopeKey(ids: readonly string[], web: boolean, webOff: boolean, agent: boolean, knowledgeOnly = false, files?: KnowledgeFileScope): string {
+  return `${agent ? 'a' : '-'}${knowledgeOnly ? 'k' : '-'}${web ? 'w' : webOff ? 'x' : '-'}:${[...ids].sort().join(',')}:${files ? JSON.stringify(files) : ''}`;
+}
+
+function isKnowledgeId(id: string): boolean {
+  return id.startsWith(KB_CONNECTOR_PREFIX);
 }
 
 /** What an agent run is told about the web: on, switched off by the user, or the default (undefined). */
@@ -45,6 +52,21 @@ export interface ConversationConnectors {
   agent: boolean;
   setAgent: (next: boolean) => void;
   /**
+   * "Knowledge base only": the agent answers from the attached knowledge bases alone (`kb_search`
+   * is its one tool). Only true while one is attached; turning the web on or picking a connector
+   * turns it off — the user's latest choice wins. Stored as `kbOnly` in the marker.
+   */
+  knowledgeOnly: boolean;
+  setKnowledgeOnly: (next: boolean) => void;
+  /**
+   * Within "knowledge base only", the documents of each attached base the answers are limited to
+   * (picked on the base's page); undefined = the whole bases. Only while `knowledgeOnly` holds:
+   * widening the run drops it. Stored as `kbFiles` in the marker.
+   */
+  knowledgeFiles: KnowledgeFileScope | undefined;
+  /** Limits "knowledge base only" to these documents (and switches it on); undefined = whole bases again. */
+  setKnowledgeFiles: (next: KnowledgeFileScope | undefined) => void;
+  /**
    * Adds whichever of these are not disclosed yet; returns the resulting set either way. Takes
    * a list rather than one id because each call computes its result from the set it closed
    * over, so two calls in one tick would leave only the second connector behind.
@@ -54,6 +76,7 @@ export interface ConversationConnectors {
   /** Drops several at once, for the same reason `discloseAll` exists. */
   remove: (ids: readonly string[]) => readonly string[];
   clear: () => void;
+  replace: (ids: readonly string[]) => void;
 }
 
 /**
@@ -83,24 +106,35 @@ export function useConversationConnectors(
       : s.selectedFile?.path ?? ''
   ));
   const threadConnectors = useAppStore((s) => s.conversation?.thread.mcp);
+  const threadKnowledge = useAppStore((s) => s.conversation?.thread.kb);
   const threadWeb = useAppStore((s) => s.conversation?.thread.web);
   const threadAgent = useAppStore((s) => s.conversation?.thread.agent);
+  const threadKnowledgeOnly = useAppStore((s) => s.conversation?.thread.kbOnly);
+  const threadKnowledgeFiles = useAppStore((s) => s.conversation?.thread.kbFiles);
   const conversationLoaded = useAppStore((s) => s.conversation !== null);
   const [activeIds, setActiveIds] = useState<readonly string[]>([]);
   const [web, setWebState] = useState(false);
   const [webOff, setWebOff] = useState(false);
   const [agent, setAgent] = useState(false);
+  const [onlyChosen, setOnlyChosen] = useState(false);
+  const [chosenFiles, setChosenFiles] = useState<KnowledgeFileScope | undefined>(undefined);
 
+  const bases = useKnowledgeStore(useShallow((s) => s.bases));
+  // The knowledge bases ride in the same set as `kb:<id>`: main splits them off before any server
+  // lookup and keeps them in the marker's own `kb` field.
   const connectors = useMemo<KeywordCandidate[]>(
-    () => servers
-      .filter((server) => server.agentEnabled !== false)
-      .map((server) => ({
-        id: server.id,
-        name: server.name,
-        url: server.url,
-        connected: reachableOnSend(server),
-      })),
-    [servers],
+    () => [
+      ...servers
+        .filter((server) => server.agentEnabled !== false)
+        .map((server) => ({
+          id: server.id,
+          name: server.name,
+          url: server.url,
+          connected: reachableOnSend(server),
+        })),
+      ...bases.map((kb) => ({ id: kbConnectorId(kb.id), name: kb.name, url: '', connected: true, knowledge: true, aliases: kb.aliases })),
+    ],
+    [servers, bases],
   );
   const knownIds = useMemo(() => new Set(connectors.map((c) => c.id)), [connectors]);
 
@@ -128,32 +162,46 @@ export function useConversationConnectors(
     }
     if (!selectedPath || restoredFor.current === selectedPath || !conversationLoaded) return;
     restoredFor.current = selectedPath;
-    const stored = threadConnectors ?? [];
+    const stored = [...(threadConnectors ?? []), ...(threadKnowledge ?? []).map(kbConnectorId)];
     // Seeded with what was on disk, not with what survived the filter, so a marker naming a
     // connector that no longer exists gets rewritten instead of being read again every open.
     const storedWeb = threadWeb === true;
     const storedWebOff = threadWeb === false;
     const storedAgent = threadAgent === true;
-    persisted.current = { path: selectedPath, key: scopeKey(stored, storedWeb, storedWebOff, storedAgent) };
+    const storedOnly = threadKnowledgeOnly === true;
+    const storedFiles = storedOnly ? readKnowledgeFileScope(threadKnowledgeFiles, threadKnowledge ?? []) : undefined;
+    persisted.current = { path: selectedPath, key: scopeKey(stored, storedWeb, storedWebOff, storedAgent, storedOnly, storedFiles) };
     const restored = stored.filter((id) => knownIds.has(id));
     setActiveIds(restored);
     setWebState(storedWeb);
     setWebOff(storedWebOff);
     setAgent(storedAgent);
+    setOnlyChosen(storedOnly);
+    setChosenFiles(storedFiles);
     if (restored.length > 0) onRestored(restored);
-  }, [selectedPath, conversationLoaded, threadConnectors, threadWeb, threadAgent, knownIds, onRestored]);
+  }, [selectedPath, conversationLoaded, threadConnectors, threadKnowledge, threadKnowledgeFiles, threadWeb, threadAgent, threadKnowledgeOnly, knownIds, onRestored]);
+
+  // Only with a base attached: with none it would be an agent with no tool at all.
+  const knowledgeOnly = onlyChosen && activeIds.some(isKnowledgeId);
+  // Only inside "knowledge base only", and only for bases still attached.
+  const knowledgeFiles = useMemo(
+    () => (knowledgeOnly ? readKnowledgeFileScope(chosenFiles, activeIds.filter(isKnowledgeId).map((id) => id.slice(KB_CONNECTOR_PREFIX.length))) : undefined),
+    [knowledgeOnly, chosenFiles, activeIds],
+  );
 
   useEffect(() => {
     if (!selectedPath) return;
-    const key = scopeKey(activeIds, web, webOff, agent);
+    const key = scopeKey(activeIds, web, webOff, agent, knowledgeOnly, knowledgeFiles);
     if (persisted.current.path === selectedPath && persisted.current.key === key) return;
     persisted.current = { path: selectedPath, key };
-    void agentApi.setConversationConnectors(selectedPath, [...activeIds], webForRun(web, webOff), agent);
-  }, [selectedPath, activeIds, web, webOff, agent]);
+    void agentApi.setConversationConnectors(selectedPath, [...activeIds], webForRun(web, webOff), agent, knowledgeOnly, knowledgeFiles);
+  }, [selectedPath, activeIds, web, webOff, agent, knowledgeOnly, knowledgeFiles]);
 
   const discloseAll = useCallback((ids: readonly string[]): readonly string[] => {
     const additions = [...new Set(ids)].filter((id) => knownIds.has(id) && !activeIds.includes(id));
     if (additions.length === 0) return activeIds;
+    // A connector asked for by name is a wider run than "knowledge base only": the latest choice wins.
+    if (additions.some((id) => !isKnowledgeId(id))) { setOnlyChosen(false); setChosenFiles(undefined); }
     const next = [...activeIds, ...additions];
     setActiveIds(next);
     return next;
@@ -171,12 +219,31 @@ export function useConversationConnectors(
     ? remove([id])
     : discloseAll([id])), [activeIds, remove, discloseAll]);
 
-  const clear = useCallback((): void => setActiveIds([]), []);
+  const clear = useCallback((): void => {
+    setActiveIds([]);
+    setOnlyChosen(false);
+    setChosenFiles(undefined);
+  }, []);
+  /** Exactly these, whatever was on before (a new chat started with a knowledge base). */
+  const replace = useCallback((ids: readonly string[]): void => setActiveIds(ids.filter((id) => knownIds.has(id))), [knownIds]);
 
   const toggleWeb = useCallback((): void => {
+    if (!web) { setOnlyChosen(false); setChosenFiles(undefined); }
     setWebState(!web);
     setWebOff(web);
   }, [web]);
+  const setKnowledgeOnly = useCallback((next: boolean): void => {
+    setOnlyChosen(next);
+    if (!next) setChosenFiles(undefined);
+    // Answering from the documents alone means not going online: the web switch shows it.
+    if (next) setWebState(false);
+  }, []);
+  const setKnowledgeFiles = useCallback((next: KnowledgeFileScope | undefined): void => {
+    setChosenFiles(next);
+    if (!next) return;
+    setOnlyChosen(true);
+    setWebState(false);
+  }, []);
   // Turning it on clears an earlier "no"; the app switching it off (a new chat, `/chat`) is not the
   // user saying no, so it returns to the default rather than remembering a refusal.
   const setWeb = useCallback((next: boolean): void => {
@@ -188,5 +255,9 @@ export function useConversationConnectors(
     setWebOff(true);
   }, []);
 
-  return { connectors, activeIds, web, webOff, toggleWeb, setWeb, optOutWeb, agent, setAgent, discloseAll, toggle, remove, clear };
+  return {
+    connectors, activeIds, web, webOff, toggleWeb, setWeb, optOutWeb, agent, setAgent, knowledgeOnly, setKnowledgeOnly,
+    knowledgeFiles, setKnowledgeFiles,
+    discloseAll, toggle, remove, clear, replace,
+  };
 }

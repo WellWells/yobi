@@ -61,6 +61,25 @@ export async function perplexityCookies(ses: Session): Promise<Cookie[]> {
   return (await ses.cookies.get({})).filter((cookie) => isPerplexityHost(cookie.domain ?? ''));
 }
 
+/** How many questions Perplexity answers a visitor before it demands a sign-in. */
+export const PERPLEXITY_VISITOR_QUESTIONS = 2;
+
+/**
+ * Whether the signed-out visitor has used its questions, read from the site's own counter. A
+ * counter that is missing or unreadable is not taken as spent.
+ */
+export async function isPerplexityVisitorSpent(ses: Session): Promise<boolean> {
+  if (await isPerplexitySignedIn(ses)) return false;
+  const meta = (await perplexityCookies(ses)).find((cookie) => cookie.name === 'pplx.metadata')?.value;
+  if (!meta) return false;
+  try {
+    const asked: unknown = (JSON.parse(decodeURIComponent(meta)) as { qc?: unknown }).qc;
+    return typeof asked === 'number' && asked >= PERPLEXITY_VISITOR_QUESTIONS;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Forgets the anonymous visitor. A page still open on the site would write its ids straight back
  * from memory, so it is blanked first. Resolves whether there was a visitor to forget; a signed-in

@@ -173,7 +173,7 @@ export const DirectionGrid: React.FC<DirectionGridProps> = ({ value, onChange, t
             variant={value === key ? 'light' : 'default'}
             radius="sm"
             size={32}
-            style={{ color: value === key ? 'var(--accent)' : 'var(--text-secondary)' }}
+            style={{ color: value === key ? 'var(--accent-text)' : 'var(--text-secondary)' }}
           >
             <Icon size={14} />
           </ActionIcon>

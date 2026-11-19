@@ -102,6 +102,8 @@ export const DEFAULT_SKILL_CONFIG: Record<SkillType, Record<string, string>> = {
   },
   almanac: { date: '', lunar: 'false', leap: 'false', time: '', days: '1', activity: '', zodiac: '', weekends: 'false' },
   tw_invoice: { numbers: '', period: '' },
+  app_store: { query: '', store: '', country: '' },
+  price_search: { query: '', exclude: '', minPrice: '', maxPrice: '', stores: '', sort: '', limit: '', track: 'false' },
   random: { min: '1', max: '100', count: '1', unique: 'false' },
 };
 
@@ -241,7 +243,7 @@ export const SKILL_SPECS: SkillSpec[] = [
   },
   {
     type: 'clipboard',
-    brief: "Read or write the system clipboard. Use to pick up what the user copied, or leave a result to paste.",
+    brief: "Read or write the system clipboard: what the user copied, or a result to paste.",
     summary: 'Read from or write to the system clipboard.',
     fields: [
       { key: 'action', desc: '"read"|"write"', required: true },
@@ -280,7 +282,7 @@ export const SKILL_SPECS: SkillSpec[] = [
   {
     type: 'research',
     brief: "Research a question end-to-end and return a written, cited answer. Use when you want conclusions, not links.",
-    summary: 'Research a QUESTION on the web end-to-end in ONE step and return a written, cited answer: it plans several query angles, reads the top pages, ranks them by relevance and synthesizes the result. Give "urls" instead to skip searching and read exactly those pages — that is how you summarize several long articles at once, because it reads each one in full rather than cramming them all into a single prompt. Exposes {{<outputKey>}} = the written answer with [n] citation markers, {{<outputKey>.sources}} = a JSON array of the {title, link} pages it read, and {{<outputKey>.count}} = how many. Use this when you want conclusions; use search when you only need a ranked link list to loop over.',
+    summary: 'Research a QUESTION on the web end-to-end in ONE step and return a written, cited answer: it plans several query angles, reads the top pages, ranks them by relevance and synthesizes the result. Give "urls" instead to skip searching and read exactly those pages — the way to summarize several long articles at once, as each is read in full rather than crammed into one prompt. Exposes {{<outputKey>}} = the written answer with [n] citation markers, {{<outputKey>.sources}} = a JSON array of the {title, link} pages it read, and {{<outputKey>.count}} = how many. Use this when you want conclusions; use search when you only need a ranked link list to loop over.',
     deliverable: true,
     fields: [
       { key: 'query', desc: 'the question to research (a question, not keywords); may embed {{variables}}', required: true },
@@ -292,8 +294,8 @@ export const SKILL_SPECS: SkillSpec[] = [
   },
   {
     type: 'gmap_reviews',
-    brief: "Fetch Google Maps reviews plus the place's rating. Use to judge a shop, restaurant, hotel or clinic.",
-    summary: 'Fetch Google Maps reviews for one place as a JSON array of {author, rating, date, text, reply} records ("[]" on failure — failures are logged and never abort the flow), PLUS the place-level aggregate on sub-variables: {{<outputKey>.rating}} (overall stars), {{<outputKey>.total}} (total review count), {{<outputKey>.distribution}} (star breakdown). Accepts share links (maps.app.goo.gl) and full place URLs. sort "mixed" (default) samples newest 50% + lowest 25% + highest 25% and dedups, so both positive and negative reviews are always represented; single sorts are also available. Snapshot query — no cross-run dedup; feed the array plus the aggregate into an llm step for analysis, or loop over the array.',
+    brief: "Google Maps reviews + rating, to judge a shop, restaurant, hotel or clinic.",
+    summary: 'Fetch Google Maps reviews for one place as a JSON array of {author, rating, date, text, reply} records ("[]" on failure — failures are logged and never abort the flow), PLUS the place-level aggregate (overall stars, review count, star breakdown) on sub-variables, listed under OUTPUT. Accepts share links (maps.app.goo.gl) and full place URLs. sort "mixed" (default) samples newest 50% + lowest 25% + highest 25% and dedups, so both positive and negative reviews are always represented; single sorts are also available. Snapshot query — no cross-run dedup; feed the array plus the aggregate into an llm step for analysis, or loop over the array.',
     fields: [
       { key: 'url', desc: 'Google Maps place URL or share link; may embed {{variables}}', required: true },
       { key: 'sort', desc: '"mixed" (default; balanced good+bad sample), "relevant", "newest", "highest", or "lowest"' },
@@ -302,7 +304,7 @@ export const SKILL_SPECS: SkillSpec[] = [
   },
   {
     type: 'youtube',
-    brief: "Fetch a YouTube video's transcript and title. Use to summarize or search what was said in a video.",
+    brief: "A YouTube video's transcript and title, to summarize or search what was said.",
     summary: "Fetch a YouTube video's transcript AND title. Exposes {{<outputKey>}} = transcript (empty if no captions), {{<outputKey>.title}} = video title, {{<outputKey>.image}} = thumbnail URL, and {{<outputKey>.isFailed}} = \"0\" on success / \"1\" on failure (no captions / invalid URL). Follow with an if on {{<outputKey>.isFailed}} to branch on success/failure, then an llm step referencing {{<outputKey>}} and {{<outputKey>.title}} to summarize it.",
     fields: [
       { key: 'url', desc: 'the YouTube video URL (watch / youtu.be / shorts); may embed {{variables}}', required: true },
@@ -437,7 +439,7 @@ export const SKILL_SPECS: SkillSpec[] = [
   },
   {
     type: 'notify',
-    brief: "Show a desktop notification. Use to tell the user something on this computer.",
+    brief: "Show a desktop notification on this computer.",
     summary: 'Show a desktop notification (system toast); also recorded in the flow run log.',
     fields: [
       { key: 'title', desc: 'notification title' },
@@ -465,7 +467,7 @@ export const SKILL_SPECS: SkillSpec[] = [
       { key: 'title', desc: 'files only: document heading; blank = the heading the content opens with' },
       { key: 'filename', desc: 'files only: file name stem; supports {date}/{time}/{datetime}/{rand}; blank = auto' },
       { key: 'palette', desc: `files only: colour scheme, e.g. "linen" (light document) or "aurora" (dark card); blank = ${DEFAULT_CAPTURE_PALETTE}` },
-      { key: 'backgroundStyle', desc: 'files only: "solid"|"gradient"|"mesh"; blank = gradient' },
+      { key: 'backgroundStyle', desc: 'files only: "solid"|"gradient"|"silk"; blank = gradient' },
       { key: 'expire', desc: 'format "text" only: link lifetime — "5min"|"10min"|"1hour"|"1day"|"1week"|"1month"|"1year"|"never"; blank = the user\'s share setting' },
       { key: 'burnAfterReading', desc: 'format "text" only: "true"|"false" — destroy the paste after it is opened once' },
       { key: 'emitFailFlag', desc: '"true"|"false" — on failure set {{<outputKey>.isFailed}}=1 and continue instead of aborting' },
@@ -633,7 +635,7 @@ export const SKILL_SPECS: SkillSpec[] = [
   },
   {
     type: 'air_quality',
-    brief: "Get the current air quality (AQI) and pollutants for a place. Taiwan places in Chinese, others in English.",
+    brief: "Current air quality (AQI) and pollutants for a place. Taiwan places in Chinese, others English.",
     summary: 'Get the current air quality for a place NAME — AQI plus the pollutant concentrations behind it. Worldwide via Open-Meteo with no API key; a location in Taiwan additionally reads the nearest Ministry of Environment ground station when the user has saved a (free) MOENV key. Keep a Taiwan place in Chinese as given (e.g. "高雄鳳山"); name other places in English.',
     fields: [
       { key: 'location', desc: 'place name, e.g. "高雄鳳山" or "Delhi, India"', required: true },
@@ -695,6 +697,31 @@ export const SKILL_SPECS: SkillSpec[] = [
     ],
   },
   {
+    type: 'app_store',
+    brief: "Use for a phone app's store price and in-app purchases (App Store or Google Play), from its name or link.",
+    summary: "One app's store card in one country, with its link: name, developer, download price and currency, rating, the store's facts and the start of the description. App Store lists each in-app purchase with its price; Google Play shows only their price range, plus ads and installs. A name is looked up with the store's own search and the best match is read; the other matches are listed, and when the found name does not hold the asked words the text opens by asking to check it. Prices differ by country.",
+    fields: [
+      { key: 'query', desc: 'the app name ("Surge 5") or its link (apps.apple.com/…/id<number>, play.google.com/store/apps/details?id=…); may embed {{variables}}', required: true },
+      { key: 'store', desc: '"appstore" (default, iPhone/iPad) | "googleplay" (Android); a link picks its own store' },
+      { key: 'country', desc: 'two-letter storefront, e.g. "tw", "us", "jp"; blank = the link\'s, else the user\'s region' },
+    ],
+  },
+  {
+    type: 'price_search',
+    brief: 'Use to compare a product\'s prices across Taiwan online shops, find the cheapest shop or the usual price, or watch a product for a price drop.',
+    summary: 'One product\'s prices across Taiwan online shops, read now in code (no API key): PChome, momo, Yahoo, Ruten, Rakuten, Costco, hypermarket, drugstore and home chains, plus Shopee Mall / Coupang / friDay via a comparison site. A shop that refuses or is down is skipped and named. Gives the offers, lowest / median / average and a unit price when titles state a size. A broad name also returns accessories: narrow with exclude and minPrice. Never estimate a price.',
+    fields: [
+      { key: 'query', desc: 'brand and model as shops write it ("AirTag", "UCC 咖啡豆"), 1-3 words; may embed {{variables}}', required: true },
+      { key: 'exclude', desc: 'comma-separated words; titles holding any are dropped ("保護套,殼,二手")' },
+      { key: 'minPrice', desc: 'drop offers below this TWD price' },
+      { key: 'maxPrice', desc: 'drop offers above this TWD price' },
+      { key: 'stores', desc: 'blank = all | some of: pchome, momo, yahoo, ruten, rakuten, costco, daybuy (Costco warehouse), wanjiafu, watsons, cosmed, poya, senao, trplus, hola, feebee' },
+      { key: 'sort', desc: '"price" (default) | "unit" (per 100 g / 100 ml / piece) | "relevance"' },
+      { key: 'limit', desc: 'offers listed (default "20", max "60"); statistics cover every match' },
+      { key: 'track', desc: '"true" = remember the lowest price between runs (a scheduled price watch); default "false"' },
+    ],
+  },
+  {
     type: 'file_download',
     brief: "Download a file from an https URL to disk. Use to fetch an image or document; the path lands in {{file}}.",
     summary: 'Download a file from an https URL to disk (binary-safe) — a terminal sink with no outputKey. The saved path is exposed as {{file}} for a later bot/email/file_delete step. The extension is derived from the response Content-Type so a Telegram bot step routes images as photos. Programs, installers, runnable scripts, archives and disk images are refused (by name and by content): the step fails rather than save one.',
@@ -707,7 +734,7 @@ export const SKILL_SPECS: SkillSpec[] = [
   },
   {
     type: 'random',
-    brief: "Generate random whole numbers in an inclusive range, several at once and optionally unique. Use for dice, lottery picks or jitter.",
+    brief: "Random whole numbers in an inclusive range, several at once, optionally unique: dice, lottery picks.",
     summary: "Generate random WHOLE numbers within an exact inclusive range (both min and max can occur) — for dice, lottery numbers, picking an item index, or jitter. The output shape depends on count: a single number is a bare value, several numbers are a JSON array you loop over (see OUTPUT).",
     fields: [
       { key: 'min', desc: 'the lowest value that may be produced (inclusive; may be negative); may embed {{variables}}', required: true },
@@ -733,7 +760,7 @@ export const SKILL_SPECS: SkillSpec[] = [
   {
     type: 'telegram_read',
     brief: 'Use for a daily or periodic summary of the Telegram groups your bot is in: reads what was said there.',
-    summary: 'Read the Telegram group messages the user\'s bot heard. The bot keeps the last 3 days of every group it is allowed in, and only what it heard live: nothing from before it joined or while the app was closed, and only every message when it is a group admin or its privacy mode is off. {{<outputKey>}} = a plain-text transcript, OLDEST first, one line per message ("HH:MM name：text") under a date line; pictures and files appear as "[photo]" / "[file]". Several groups each get a "## <group name>" section; one group has no heading. A group with nothing in the window is left out, so "" means every selected group was quiet. Sub-vars {{<outputKey>.count/.dropped/.groupNames/.groupCount/.firstAt/.lastAt}}. The transcript is trimmed to fit the AI provider\'s input limit by dropping the OLDEST messages, shared evenly between the groups. A group name that matches no group the bot knows ABORTS the run. Typical shape: telegram_read -> stop -> llm -> bot.',
+    summary: 'Read the Telegram group messages the user\'s bot heard. The bot keeps the last 3 days of every group it is allowed in, and only what it heard live: nothing from before it joined or while the app was closed, and only every message when it is a group admin or its privacy mode is off. {{<outputKey>}} = a plain-text transcript, OLDEST first, one line per message ("HH:MM name：text"; supergroups add "#<id>" after the time) under a date line; pictures and files appear as "[photo]" / "[file]". Several groups each get a "## <group name>" section; one group has no heading. A group with nothing in the window is left out, so "" means every selected group was quiet. Sub-vars {{<outputKey>.count/.dropped/.groupNames/.groupCount/.firstAt/.lastAt/.messageLinks}}. The transcript is trimmed to fit the AI provider\'s input limit by dropping the OLDEST messages, shared evenly between the groups. A group name that matches no group the bot knows ABORTS the run. Typical shape: telegram_read -> stop -> llm -> bot.',
     fields: [
       { key: 'chat', desc: 'the groups to read, SEPARATED BY COMMAS: group names as shown in Telegram, or chat ids (they start with "-"). Leave BLANK to read every group the bot kept messages from' },
       { key: 'range', desc: '"last24h" (default) | "today" | "yesterday" | "last3d" — the window to read, on this computer\'s clock. "last24h" suits a daily schedule at any hour; "yesterday" suits one that runs in the morning' },
@@ -783,9 +810,9 @@ export const SKILL_OUTPUT: Record<SkillType, string> = {
   scraper: '{{<outputKey>}} = a JSON array of {title, link} ("[]" if none); loop over it and use {{item.title}} / {{item.link}}.',
   research: '{{<outputKey>}} = the written, cited answer (prose with [n] markers — NOT a list, do not loop over it); {{<outputKey>.sources}} = a JSON array of the {title, link} pages that were read (loop over THIS to walk the sources, using {{item.title}} / {{item.link}}); {{<outputKey>.count}} = how many were read. With emitFailFlag="true", a failure sets {{<outputKey>}}="" and {{<outputKey>.isFailed}} = "0"/"1" instead of aborting the flow.',
   search: '{{<outputKey>}} = a JSON array of {title, link, snippet} ranked by relevance ("[]" when nothing matched or on an ordinary, logged failure; a fully blocked search fails the step); loop over it and use {{item.title}} / {{item.link}} / {{item.snippet}} (snippet = the result-page summary, may be "").',
-  gmap_reviews: '{{<outputKey>}} = a JSON array of {author, rating, date, text, reply} sorted newest-first ("[]" when the place has no reviews OR the fetch failed — failures are logged and never abort the flow); {{<outputKey>.place}} = the place name; {{<outputKey>.rating}} = the place\'s overall Google star rating (e.g. "4.2"), {{<outputKey>.total}} = its total review count (e.g. "2953"), {{<outputKey>.distribution}} = the star breakdown "5★=… 4★=… … 1★=…", {{<outputKey>.positive}} = the positive share as a whole percent (4-5★ over total, e.g. "91"), {{<outputKey>.verdict}} = a Steam-style overall verdict label computed deterministically from the rating + count (e.g. "Very Positive" / "極度好評", localized), {{<outputKey>.tier}} = its tier number "0"–"9" (9 best, 0 = not enough reviews). These are read from the rendered place page (verdict derived from them) and are "" if it could not be read. Loop over the array with {{item.author}} / {{item.rating}} / {{item.date}} / {{item.text}} / {{item.reply}}, or interpolate the whole thing plus {{<outputKey>.rating}}/.total/.distribution into an llm prompt.',
+  gmap_reviews: '{{<outputKey>}} = a JSON array of {author, rating, date, text, reply} sorted newest-first ("[]" when the place has no reviews OR the fetch failed — failures are logged and never abort the flow); {{<outputKey>.place}} = the place name; {{<outputKey>.rating}} = the place\'s overall Google star rating (e.g. "4.2"), {{<outputKey>.total}} = its total review count (e.g. "2953"), {{<outputKey>.distribution}} = the star breakdown "5★=… 4★=… … 1★=…", {{<outputKey>.positive}} = the positive share as a whole percent (4-5★ over total, e.g. "91"), {{<outputKey>.verdict}} = a Steam-style overall verdict label computed deterministically from the rating + count (e.g. "Very Positive" / "極度好評", localized), {{<outputKey>.tier}} = its tier number "0"–"9" (9 best, 0 = not enough reviews). These are read from the rendered place page (verdict derived from them) and are "" if it could not be read. Loop items: {{item.author}} / .rating / .date / .text / .reply.',
   line_read: '{{<outputKey>}} = the transcript text, one "## <chat name>" section per chat when several were picked and no heading at all when one was ("" when nothing matched, or when sinceLastRun found no new messages in ANY of them — follow with a stop step to halt the flow); {{<outputKey>.count}} = how many messages the transcript holds in total, {{<outputKey>.dropped}} = how many were cut to fit the provider input limit (oldest first; with sinceLastRun the newest wait for the next run; "0" when nothing was cut), {{<outputKey>.chatName}} = the resolved chat name, or the names that actually had something to show, comma-separated ("" in a whole-account search), {{<outputKey>.chatCount}} = how many chats contributed, {{<outputKey>.firstAt}} / {{<outputKey>.lastAt}} = the timestamps the transcript spans, {{<outputKey>.isFirstRun}} = "1" when sinceLastRun had no memory yet. There is no failure flag: an unreadable chat or an impossible date range aborts the run instead, so an empty output unambiguously means there were no messages.',
-  telegram_read: '{{<outputKey>}} = the transcript text, one "## <group name>" section per group when several were picked and no heading when one was ("" when every group was quiet in the window — follow with a stop step to halt the flow); {{<outputKey>.count}} = how many messages it holds, {{<outputKey>.dropped}} = how many were cut to fit the provider input limit (oldest first; "0" when none), {{<outputKey>.groupNames}} = the groups that had something, comma-separated, {{<outputKey>.groupCount}} = how many, {{<outputKey>.firstAt}} / {{<outputKey>.lastAt}} = "YYYY-MM-DD HH:MM" of the first and last message shown.',
+  telegram_read: '{{<outputKey>}} = the transcript text ("" when every group was quiet in the window — follow with a stop step to halt the flow); {{<outputKey>.count}} = how many messages it holds, {{<outputKey>.dropped}} = how many were cut to fit the provider input limit (oldest first; "0" when none), {{<outputKey>.groupNames}} = the groups that had something, comma-separated, {{<outputKey>.groupCount}} = how many, {{<outputKey>.firstAt}} / {{<outputKey>.lastAt}} = "YYYY-MM-DD HH:MM" of the first and last message shown, {{<outputKey>.messageLinks}} = "<group name>: <link prefix>" per supergroup (prefix + id = that message).',
   mcp: '{{<outputKey>}} = the tool\'s text result (a structured result as JSON text), cut at 30000 characters with a closing note; {{<outputKey>.truncated}} = "1" when cut, else "0". A tool error fails the step; with emitFailFlag="true", {{<outputKey>.isFailed}} = "0"/"1" and the flow goes on.',
   loop: 'Inside the block each iteration sets {{<loopVar>}} (the string item, or the item JSON for an object item) and {{<loopVar>.<field>}} for EVERY field of an object item (e.g. {{item.title}} / {{item.link}}); inside the block the loop step\'s own {{<outputKey>}}/{{<outputKey>.<field>}} are re-bound to the current item as well.',
   end_loop: '',
@@ -822,6 +849,8 @@ export const SKILL_OUTPUT: Record<SkillType, string> = {
   mail_fetch: '{{<outputKey>}} = a JSON array of {id, from, subject, date, body, attachments}, newest first ("[]" when nothing matched); date is local "YYYY-MM-DDTHH:MM:SS+08:00"; body only when withBody is on; attachments = their names, comma-separated, or absent. {{<outputKey>.text}} = the messages as blocks of "From: / Subject: / Date:" then the body, separated by "---" ("" when none), {{<outputKey>.count}} = how many.',
   calendar: '{{<outputKey>}} = a JSON array of {title, link, start, end, allDay, location, calendar} sorted by start ("[]" when nothing is scheduled); start/end are local "YYYY-MM-DD HH:MM", or "YYYY-MM-DD" for an all-day event (end = its last day); allDay = "1"/"0"; link = the event\'s URL or "". {{<outputKey>.text}} = one line per event ("09:00–10:00 Title @ Place"; "" when none), {{<outputKey>.count}} = how many, {{<outputKey>.calendar}} = the calendar\'s name (comma-separated names when several were read), {{<outputKey>.from}} / {{<outputKey>.to}} = the first and last day read.',
   almanac: 'One day: {{<outputKey>}} = a JSON object {date,weekday,lunar,lunarYear,zodiac,monthPillar,dayPillar,dayType,dutyGod,yi,ji,goodHours,clash,evilDirection,officer,mansion,joyGod,wealthGod,nayin,luckyGods,unluckyGods,pengzu,fetusGod,solarTerm,solarTermDay,festival} (lists are arrays; lunar like "九月十三"), plus hour {time,name,pillar,luck,dutyGod,yi,ji,eightChar} with a time. Several days: a JSON array of {date,weekday,lunar,dayType,dutyGod,yi,ji,clash,solarTerm,solarTermDay,festival}; with a filter only the matching days as {date,weekday,lunar,dayType,clash,festival} ("[]" if none). {{<outputKey>.text}} = ready lines for a message or llm prompt; .date, .lunar (first day), .count; one day also .yi, .ji ("、"-joined), .dayType, .eightChar.',
+  app_store: '{{<outputKey>}} = a check-this-app note when the found name differs from the query, the app card (name, developer, price, in-app purchases, rating), the link, the store facts, the start of the description and any other matches; {{<outputKey>.text}} = the card only; .store ("appstore"/"googleplay"), .name, .developer, .price, .inAppPurchases ("1"/"0"), .purchases (App Store: one "- name：price" per line; Google Play: the price range), .version / .whatsNew (latest version and its notes), .storefront, .link, .icon, .matched ("1"/"0": the name holds the query, or a link was given), .matches (JSON array of other {name, developer, link}).',
   tw_invoice: 'No numbers: {{<outputKey>}} = a JSON object {period,label,months,drawnAt,claimFrom,claimUntil,claimable,special,grand,first,extraSixth,link} (an array of them for "all"). With numbers: {checked,results:[{number,partial,matches:[{period,label,status,prize,name,amount,matched,atLeast,claimUntil,claimable}]}],notes} — status "won", or "maybe" for a last-3 that only the full number can settle; matches [] = no prize. {{<outputKey>.text}} = ready lines for a message (the winning numbers, or one line per number). Sub-vars .period (e.g. "11507"), .label, .drawnAt, .claimUntil, .special, .grand, .first ("、"-joined), .won ("1"/"0"), .count (winning numbers; periods when listing), .newThisMonth (the latest period when it was drawn this calendar month, else "" — gate a monthly schedule with on_change on it).',
+  price_search: '{{<outputKey>}} = a JSON object {query,checkedAt,stats:{count,lowest,highest,average,median},bands,unitStats,stores:[{store,status,count,lowest}],offers:[{store,title,price,listPrice,inStock,per,unitPrice,url}],notes} — pass it whole to an llm step. {{<outputKey>.text}} = message-ready lines (price｜shop｜title, the 10 cheapest, no links: .lowestUrl links the lowest offer, the rest are in offers[].url). Sub-vars .count, .lowest, .highest, .average, .median, .lowestStore, .lowestTitle, .lowestUrl, .unit, .unitLowest, .unitAverage, .checkedAt, .failedStores, .query, .typed (the name as typed, when a typo was corrected). With track="true": .news ("first" on the first run, "drop" when the lowest fell since the last run, else "": a stop on it notifies only then), .dropped ("1"/"0"), .previousLowest, .change, .isRecordLow, .recordLow, .recordLowAt, .isFirstRun. Fails only when no shop could be read.',
   random: 'count="1" (or blank): {{<outputKey>}} = a single whole number as a string (e.g. "42") — embed it directly. count>1: {{<outputKey>}} = a JSON array of whole numbers (e.g. [42,7,91]) — loop over it and use {{item}} (a plain value, NOT {{item.field}}). No sub-variables.',
 };

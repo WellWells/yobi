@@ -28,6 +28,12 @@ function emptyForm(): ByokFormState {
 
 export type ByokTestStatus = 'idle' | 'testing' | 'ok' | 'error';
 
+/** The last "Test all" result of one saved key; kept only while the page is open. */
+export interface ByokKeyTestState {
+  status: Exclude<ByokTestStatus, 'idle'>;
+  message: string;
+}
+
 export function useByokSettings() {
   const [snapshot, setSnapshot] = useState<ByokSettingsSnapshot | null>(null);
   const [form, setForm] = useState<ByokFormState | null>(null);
@@ -37,6 +43,8 @@ export function useByokSettings() {
   const [modelsError, setModelsError] = useState<string | null>(null);
   const [testStatus, setTestStatus] = useState<ByokTestStatus>('idle');
   const [testMessage, setTestMessage] = useState('');
+  const [keyTests, setKeyTests] = useState<Record<string, ByokKeyTestState>>({});
+  const [testingAll, setTestingAll] = useState(false);
 
   const syncPickerModels = useCallback((next: ByokSettingsSnapshot) => {
     const store = useAppStore.getState();
@@ -159,6 +167,26 @@ export function useByokSettings() {
     }
   }, [buildProbe]);
 
+  const testAllKeys = useCallback(async () => {
+    const ids = (snapshot?.instances ?? []).map((instance) => instance.id);
+    if (ids.length === 0) return;
+    setTestingAll(true);
+    setKeyTests(Object.fromEntries(ids.map((id) => [id, { status: 'testing', message: '' }])));
+    try {
+      const results = await byokApi.testKeys(ids);
+      setKeyTests(Object.fromEntries(results.map((result) => [
+        result.id,
+        result.ok
+          ? { status: 'ok', message: result.reply ?? '' }
+          : { status: 'error', message: result.message ?? '' },
+      ])));
+    } catch {
+      setKeyTests({});
+    } finally {
+      setTestingAll(false);
+    }
+  }, [snapshot]);
+
   const formValid = form !== null
     && form.name.trim().length > 0
     && form.model.trim().length > 0
@@ -178,7 +206,14 @@ export function useByokSettings() {
         apiKey: form.apiKey,
       });
       applySnapshot(result.snapshot);
-      if (result.ok) setForm(null);
+      if (result.ok) {
+        // A changed key or model makes its last test result stale.
+        const savedId = form.id;
+        if (savedId) {
+          setKeyTests((prev) => Object.fromEntries(Object.entries(prev).filter(([id]) => id !== savedId)));
+        }
+        setForm(null);
+      }
     } finally {
       setBusy(false);
     }
@@ -210,6 +245,9 @@ export function useByokSettings() {
     modelsError,
     testStatus,
     testMessage,
+    keyTests,
+    testingAll,
+    testAllKeys,
     reload,
     openAdd,
     openEdit,

@@ -14,9 +14,9 @@ interface BatchExportStripProps {
 }
 
 const LEVEL_COLOR = {
-  success: 'var(--mantine-color-success)',
-  warning: 'var(--mantine-color-warning)',
-  error: 'var(--mantine-color-error)',
+  success: 'var(--success-text)',
+  warning: 'var(--warning-text)',
+  error: 'var(--error-text)',
 } as const;
 
 const MAX_LISTED = 3;

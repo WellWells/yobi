@@ -123,6 +123,7 @@ export const SkillImportModal: React.FC<Props> = ({ start, onClose, t }) => {
           <Stack gap={8}>
             <Text fz="var(--font-size-sm)" c="var(--text-primary)" lh={1.6}>{t('settings.skills.import.url.hint')}</Text>
             <AppTextInput
+              aria-label={t('settings.skills.import.url')}
               value={url}
               onChange={(event) => setUrl(event.currentTarget.value)}
               placeholder="https://github.com/anthropics/skills/tree/main/skills/pdf"

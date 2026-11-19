@@ -37,14 +37,14 @@ function StatusText({ exitCode, stopped, running, t }: Pick<ShellBubbleProps, 'e
     );
   }
   if (stopped) {
-    return <Text component="span" fz="var(--font-size-xs)" c="var(--mantine-color-warning)" style={{ flexShrink: 0 }}>{t('chat.shell.stopped')}</Text>;
+    return <Text component="span" fz="var(--font-size-xs)" c="var(--warning-text)" style={{ flexShrink: 0 }}>{t('chat.shell.stopped')}</Text>;
   }
   if (exitCode === undefined || exitCode === null) return null;
   return (
     <Text
       component="span"
       fz="var(--font-size-xs)"
-      c={exitCode === 0 ? 'var(--text-muted)' : 'var(--mantine-color-error)'}
+      c={exitCode === 0 ? 'var(--text-muted)' : 'var(--error-text)'}
       style={{ flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}
     >
       {fillTemplate(t('chat.shell.exitCode'), { code: String(exitCode) })}

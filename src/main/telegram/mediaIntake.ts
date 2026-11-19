@@ -2,6 +2,7 @@ import type { Message, PhotoSize } from 'grammy/types';
 import { t } from '../i18n';
 import { inlineBudgetFor, truncateByMeasure } from '../chat/conversationContext';
 import {
+  asksForAFile,
   providerAttachmentCapacity,
   resolveAttachmentPlan,
   uploadTargetFor,
@@ -10,7 +11,7 @@ import {
   type TelegramMediaKind,
 } from './attachmentPlan';
 import { deleteTempAttachments, downloadTelegramFile, readTextAttachment } from './fileDownload';
-import { admitPaced, extractBotMention, telegramSent, type TelegramCommandOptions, type TelegramContext } from './commandHandlers';
+import { admitPaced, extractBotMention, runAgentOnMedia, telegramSent, type TelegramCommandOptions, type TelegramContext } from './commandHandlers';
 import { getErrorMessage } from './errors';
 import { readReplyContext } from './replyContext';
 import { fenceUntrusted } from '../../shared/promptFencing';
@@ -30,10 +31,25 @@ interface MediaItem {
 const REJECT_KEYS: Record<AttachmentRejectReason, string> = {
   'too-large': 'telegram.media.reject.tooLarge',
   'audio-unsupported': 'telegram.media.reject.audio',
+  'video-unsupported': 'telegram.media.reject.video',
   'format-unsupported': 'telegram.media.reject.format',
   'provider-cannot-upload': 'telegram.media.reject.providerCannotUpload',
   'context-full': 'telegram.media.reject.contextFull',
 };
+
+/** Office and older document formats: the agent reads them with its own tools (OfficeCLI), or says it cannot. */
+const AGENT_DOCUMENT_EXT = /\.(?:docx|xlsx|pptx|doc|xls|ppt|odt|ods|odp|rtf)$/i;
+
+/**
+ * Whether a picture or a file goes to an agent run instead of the single question: the caption
+ * asks for a file (only a run has `export_file` and the file tools), or a document is an Office
+ * file (the run reads it through OfficeCLI whatever the model can upload). A shortcut, not the only
+ * way: a later message in the chat reaches the same tools.
+ */
+export function mediaGoesToAgent(caption: string, items: readonly { kind: TelegramMediaKind; fileName?: string }[]): boolean {
+  if (asksForAFile(caption)) return true;
+  return items.some((item) => item.kind === 'document' && AGENT_DOCUMENT_EXT.test(item.fileName ?? ''));
+}
 
 export function largestPhoto(sizes: readonly PhotoSize[]): PhotoSize | null {
   let best: PhotoSize | null = null;
@@ -48,6 +64,17 @@ export function extractMediaItem(msg: Message): MediaItem | null {
     const best = largestPhoto(msg.photo);
     if (!best) return null;
     return { kind: 'photo', fileId: best.file_id, mimeType: 'image/jpeg', sizeBytes: best.file_size };
+  }
+  // A video (or a round video message) is fetched only for a conversion; the plan decides.
+  const video = msg.video ?? msg.video_note;
+  if (video) {
+    return {
+      kind: 'video',
+      fileId: video.file_id,
+      mimeType: 'mime_type' in video ? video.mime_type : 'video/mp4',
+      ...('file_name' in video && video.file_name ? { fileName: video.file_name } : {}),
+      sizeBytes: video.file_size,
+    };
   }
   if (msg.voice) {
     return {
@@ -95,9 +122,29 @@ const DOCUMENT_EXT_BY_MIME: Readonly<Record<string, string>> = {
   'application/pdf': 'pdf',
 };
 
+const MEDIA_EXT_BY_MIME: Readonly<Record<string, string>> = {
+  'video/mp4': 'mp4',
+  'video/quicktime': 'mov',
+  'video/webm': 'webm',
+  'video/x-matroska': 'mkv',
+  'audio/mpeg': 'mp3',
+  'audio/mp4': 'm4a',
+  'audio/x-m4a': 'm4a',
+  'audio/aac': 'aac',
+  'audio/ogg': 'ogg',
+  'audio/wav': 'wav',
+  'audio/x-wav': 'wav',
+  'audio/flac': 'flac',
+};
+
 /** The extension the scratch copy gets when the sender's own is not one `safeLocalFileName` keeps. */
-function fallbackExtFor(item: MediaItem, route: 'upload' | 'inline'): string {
+export function fallbackExtFor(item: Pick<MediaItem, 'kind' | 'mimeType'>, route: 'upload' | 'inline' | 'tools'): string {
   if (route === 'inline') return 'txt';
+  if (route === 'tools') {
+    // FFmpeg reads the container by its extension's family; a voice note is Ogg Opus.
+    if (item.kind === 'voice') return 'ogg';
+    return MEDIA_EXT_BY_MIME[(item.mimeType ?? '').toLowerCase()] ?? (item.kind === 'video' ? 'mp4' : 'm4a');
+  }
   if (item.kind === 'photo') return 'jpg';
   return DOCUMENT_EXT_BY_MIME[(item.mimeType ?? '').toLowerCase()] ?? 'bin';
 }
@@ -169,6 +216,7 @@ async function prepareItems(
   ctx: TelegramContext,
   options: TelegramCommandOptions,
   targetUrl: string,
+  forTools = false,
 ): Promise<PreparedBatch> {
   const out: PreparedBatch = {
     attachments: [], inlineBlocks: [], rejections: [], failures: 0, truncated: 0,
@@ -177,18 +225,20 @@ async function prepareItems(
   const { budget, measure } = inlineBudgetFor(targetUrl, options.getByokContextBudgetChars?.() ?? 32_000);
   let remaining = budget;
   const uploadCapacity = providerAttachmentCapacity(targetUrl);
+  let uploads = 0;
 
   for (const item of items) {
     const plan: AttachmentPlan = resolveAttachmentPlan(
       { kind: item.kind, mimeType: item.mimeType, fileName: item.fileName, sizeBytes: item.sizeBytes },
       targetUrl,
+      { forTools },
     );
     if (plan.route === 'reject') {
       out.rejections.push(plan.reason);
       continue;
     }
     // Fewer slots than an album has items (a BYOK key): the rest are counted as skipped.
-    if (plan.route === 'upload' && out.attachments.length >= uploadCapacity) {
+    if (plan.route === 'upload' && uploads >= uploadCapacity) {
       out.failures += 1;
       continue;
     }
@@ -205,7 +255,7 @@ async function prepareItems(
         token,
         filePath: file.file_path,
         // Text is only ever read, so its copy is a .txt whatever the sender named it (.bat, .ps1…).
-        ...(plan.route === 'upload' && item.fileName ? { originalName: item.fileName } : {}),
+        ...(plan.route !== 'inline' && item.fileName ? { originalName: item.fileName } : {}),
         fallbackExt: fallbackExtFor(item, plan.route),
       });
     } catch (err: unknown) {
@@ -219,7 +269,9 @@ async function prepareItems(
       continue;
     }
 
-    if (plan.route === 'upload') {
+    if (plan.route === 'upload' || plan.route === 'tools') {
+      // A tools-only file rides with the run's attachments; the run never uploads it (`modelUploads`).
+      if (plan.route === 'upload') uploads += 1;
       out.attachments.push(localPath);
       continue;
     }
@@ -288,7 +340,9 @@ async function processBatch(
   const planTarget = uploadTargetFor(capped, targetUrl, options.getUploadFallbackUrl?.() ?? '');
   const viaFallback = planTarget !== targetUrl;
   if (viaFallback) options.onLog('[telegram] the bot model takes no uploads — this media goes to the fallback model');
-  const batch = await prepareItems(capped, ctx, options, planTarget);
+  // Only a run converts: a video or a recording is fetched when the caption asks for a file and a run takes it.
+  const forTools = Boolean(options.onBuiltinCommand) && asksForAFile(caption);
+  const batch = await prepareItems(capped, ctx, options, planTarget, forTools);
 
   if (batch.attachments.length === 0 && batch.inlineBlocks.length === 0) {
     if (batch.rejections.length > 0) {
@@ -309,6 +363,22 @@ async function processBatch(
   if (batch.truncated > 0) {
     await ctx.reply(t(strings, 'telegram.media.truncated', { count: String(batch.truncated) }))
       .catch(() => {});
+  }
+
+  // Only uploads go to a run: a text file's words are read into the single question instead.
+  if (options.onBuiltinCommand && batch.inlineBlocks.length === 0 && mediaGoesToAgent(caption, capped)) {
+    options.onLog(`[telegram] media from ${from.id} → agent run`);
+    try {
+      await runAgentOnMedia(ctx, options, {
+        input: caption || defaultPromptFor(capped, strings),
+        targetUrl: viaFallback ? planTarget : direct.targetUrl,
+        attachments: batch.attachments,
+      });
+    } finally {
+      // The run keeps its own copies in the chat media folder from its start.
+      await deleteTempAttachments(batch.attachments);
+    }
+    return;
   }
 
   const promptParts = [caption || defaultPromptFor(capped, strings), ...context, ...batch.inlineBlocks];

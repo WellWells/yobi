@@ -10,23 +10,39 @@
   --bg-secondary: #161b22;
   --bg-tertiary: #21262d;
   --border: #30363d;
+  --border-control: #6e7277;
+  --focus-ring: #58a6ff;
   --text-primary: #e6edf3;
   --text-secondary: #c9d1d9;
-  --text-muted: #8b949e;
+  --text-muted: #9199a3;
   --text-disabled: #6e7681;
   --accent: #58a6ff;
+  --accent-text: #58a6ff;
   --accent-dim: rgba(88, 166, 255, 0.15);
+  --danger-text: #ff8787;
+  --caption-on-backdrop: #e0e0e0;
   --success: #3fb950;
   --warning: #d29922;
+  --warning-text: #d29922;
+  --success-text: #3fb950;
+  --error-text: #f85149;
   --error: #f85149;
   --bg-hover: #3c4046;
   --border-hover: #64686e;
   --code-bg: #161b22;
   --selection-bg: rgba(88, 166, 255, 0.25);
 
+  /* What the views and the sidebars paint. A theme with a drawn backdrop (theme/backdrop.ts) makes
+     the page see-through and the sidebar part see-through, and sets the two gradient layers. */
+  --page-bg: var(--bg-primary);
+  --panel-bg: var(--bg-secondary);
+  --backdrop-back: none;
+  --backdrop-front: none;
+
   /* Mantine-namespaced aliases — keep in sync with cssVariablesResolver.ts */
   --mantine-color-bg-tertiary: var(--bg-tertiary);
   --mantine-color-accent: var(--accent);
+  --mantine-color-accent-text: var(--accent-text);
   --mantine-color-accent-dim: var(--accent-dim);
   --mantine-color-border-hover: var(--border-hover);
   --mantine-color-success: var(--success);
@@ -42,20 +58,20 @@
   --font-sans: 'Segoe UI', system-ui, -apple-system, sans-serif;
   --font-mono: 'Cascadia Code', 'SFMono-Regular', 'Menlo', 'Consolas', 'Liberation Mono', monospace;
 
-  /* Font-size scale */
-  --font-size-xs:   11px;
-  --font-size-sm:   12px;
-  --font-size-base: 13px;
-  --font-size-md:   14px;
-  --font-size-xl:   15px;
-  --font-size-3xl:  17px;
+  /* Shared type scale, relative to the user's accessibility text size. */
+  --font-size-xs:   0.75rem;
+  --font-size-sm:   0.8125rem;
+  --font-size-base: 0.875rem;
+  --font-size-md:   0.9375rem;
+  --font-size-xl:   1rem;
+  --font-size-3xl:  1.125rem;
   /* Empty-chat greetings only: they sit alone above the composer, like the providers' own home pages. */
-  --font-size-display: 26px;
+  --font-size-display: 1.625rem;
 
   /* The reading column only (answers, prompts, the conversation title); see store/readingStore.ts.
-     Never the UI: Mantine's sizes stay put. */
+     Reading preferences do not change UI typography. */
   --font-reading: var(--font-sans);
-  --reading-size: 14px;
+  --reading-size: 1rem;
 }
 
 /* System faces only (zero bytes, CSP allows nothing else unbundled). */
@@ -76,6 +92,11 @@
 :root[data-reading-font='mono']:lang(zh-CN) {
   --font-reading: 'Cascadia Code', 'SFMono-Regular', 'Menlo', 'Consolas', 'Liberation Mono',
     'Microsoft YaHei UI', 'PingFang SC', 'Noto Sans CJK SC', monospace;
+}
+
+/* A sidebar out as a drawer lies over the view, not over the backdrop: solid. */
+[data-sidebar-drawer] {
+  --panel-bg: var(--bg-secondary);
 }
 
 html, body, #root {
@@ -143,24 +164,51 @@ button:active:not(:disabled):not([data-disabled]):not([data-no-press]):not(.mant
   transform: translateY(1px);
 }
 
-button:focus-visible,
-input:focus-visible,
-select:focus-visible,
-textarea:focus-visible {
-  /* Keep outline for assistive tech and Windows High Contrast Mode.
-     Use transparent colour so the visual ring comes from box-shadow,
-     but AT and forced-colour themes can still detect it. */
-  outline: 2px solid transparent;
+/* ── Focus ring ──────────────────────────────────────────────────────────── */
+/* One solid 2px ring in --focus-ring for everything the keyboard reaches (WCAG 2.4.7, 1.4.11): the
+   token is ≥3:1 on the page, panels, cards, hovered and selected rows (cssVariablesResolver.ts).
+   An outline, never a box-shadow: Windows forced-colors mode keeps outlines and drops shadows.
+   :where() keeps it at zero specificity; Mantine's own rings are recoloured below, and a row that
+   would clip an outer ring draws it inset (outline-offset: -2px) in its own stylesheet. Menu items
+   and listbox options keep their highlighted row instead, like native menus. */
+:where(button, a[href], summary, input, select, textarea, [tabindex]:not([tabindex='-1']), [role='button'], [role='tab'], [role='switch'], [role='link']):focus-visible {
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
-  box-shadow: 0 0 0 3px var(--accent-dim);
 }
 
-/* Text fields add an accent border on top of that ring; the outline above already covers them.
-   :focus-visible (not :focus) keeps the ring for keyboard users while suppressing it for pointer
-   interactions. */
-input:focus-visible,
-textarea:focus-visible {
-  border-color: var(--accent);
+.mantine-focus-auto:focus-visible,
+.mantine-focus-always:focus {
+  outline-color: var(--focus-ring);
+}
+
+.mantine-Switch-input:focus-visible + .mantine-Switch-track {
+  outline-color: var(--focus-ring);
+}
+
+.mantine-SegmentedControl-input[data-focus-ring]:focus:focus-visible + .mantine-SegmentedControl-label {
+  --segmented-control-outline: 2px solid var(--focus-ring);
+}
+
+/* ── Control boundaries ──────────────────────────────────────────────────── */
+/* Text fields, selects, checkboxes and radios are drawn by their border, so it gets --border-control
+   (≥3:1 on page, panel and card, WCAG 1.4.11) instead of the decorative --border (≈1.2:1). Mantine
+   reads --input-bd from the wrapper; an error keeps Mantine's error border. A focused field turns
+   its border to --focus-ring and doubles it inside, so focus is a 2px ring like everywhere else. */
+:root .mantine-Input-wrapper[data-variant='default']:not([data-error]) {
+  --input-bd: var(--border-control);
+  --input-bd-focus: var(--focus-ring);
+}
+
+.mantine-Input-input:focus,
+.mantine-Input-input:focus-within {
+  outline: 2px solid transparent;
+  outline-offset: -2px;
+  box-shadow: inset 0 0 0 1px var(--input-bd);
+}
+
+.mantine-Checkbox-input,
+.mantine-Radio-radio {
+  border-color: var(--border-control);
 }
 
 button:disabled,
@@ -258,7 +306,7 @@ textarea:disabled {
   margin: 0 !important;
   padding: 36px 1rem 1rem !important;
   border-radius: 0 !important;
-  font-size: 13px !important;
+  font-size: var(--font-size-base) !important;
   font-family: var(--font-mono) !important;
   line-height: 1.6 !important;
 }
@@ -312,7 +360,7 @@ textarea:disabled {
 .md-content {
   line-height: 1.75;
   color: var(--text-secondary);
-  font-size: 14px;
+  font-size: var(--reading-size);
 }
 
 .md-content h1,
@@ -346,7 +394,7 @@ textarea:disabled {
 
 .md-content code {
   background: var(--bg-tertiary);
-  color: var(--accent);
+  color: var(--accent-text);
   padding: 0.15em 0.4em;
   border-radius: var(--radius-sm);
   font-family: var(--font-mono);
@@ -380,7 +428,7 @@ textarea:disabled {
   width: 100%;
   border-collapse: collapse;
   margin: 0.75em 0;
-  font-size: 13px;
+  font-size: 0.9375em;
 }
 
 .md-content th,
@@ -417,11 +465,13 @@ textarea:disabled {
   white-space: nowrap;
 }
 
+/* A link in running text is underlined, not only coloured (WCAG 1.4.1); citation chips are boxes
+   of their own and opt out below. */
 .md-content a {
-  color: var(--accent);
-  text-decoration: none;
+  color: var(--accent-text);
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
 }
-.md-content a:hover { text-decoration: underline; }
 
 .md-content ul,
 .md-content ol {
@@ -501,22 +551,27 @@ textarea:disabled {
   margin-bottom: 0.4em;
 }
 
-/* GitHub callouts (markdownAlerts): the quote takes the kind's colour */
+/* GitHub callouts (markdownAlerts): the quote takes the kind's colour; the title, being text,
+   takes the kind's readable text token. */
 .md-content .md-alert-note,
 .md-content .md-alert-important {
   --md-alert-color: var(--accent);
+  --md-alert-text: var(--accent-text);
 }
 
 .md-content .md-alert-tip {
   --md-alert-color: var(--mantine-color-success);
+  --md-alert-text: var(--success-text);
 }
 
 .md-content .md-alert-warning {
   --md-alert-color: var(--mantine-color-warning);
+  --md-alert-text: var(--warning-text);
 }
 
 .md-content .md-alert-caution {
   --md-alert-color: var(--mantine-color-error);
+  --md-alert-text: var(--error-text);
 }
 
 .md-content blockquote.md-alert {
@@ -528,7 +583,7 @@ textarea:disabled {
 .md-content .md-alert-title {
   margin-bottom: 0.25em;
   font-weight: 600;
-  color: var(--md-alert-color);
+  color: var(--md-alert-text);
 }
 
 /* A citation chip (CitationChip): the site's name comes from data-label; the marker itself stays in
@@ -544,8 +599,9 @@ textarea:disabled {
   border-radius: var(--mantine-radius-sm);
   background: var(--bg-secondary);
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   white-space: nowrap;
+  text-decoration: none;
 }
 
 .md-content a.md-cite::before {
@@ -704,6 +760,17 @@ a.md-cite-row:hover {
 .mantine-Select-option[data-hovered] {
   background-color: var(--bg-hover) !important;
   color: var(--text-primary) !important;
+}
+
+/* A destructive item (DangerMenuItem) stays red at rest, hovered and keyboard-highlighted, in the
+   red the theme lifted to 4.5:1 on the menu and its highlight (cssVariablesResolver --danger-text).
+   Mantine's own `color="red"` paints shade 6 inline, 3.28:1 on a light menu. */
+.mantine-Menu-item[data-danger],
+.mantine-Menu-item[data-danger]:hover,
+.mantine-Menu-item[data-danger][data-hovered],
+.mantine-Menu-item[data-danger][data-menu-active],
+.mantine-Menu-item[data-danger]:focus-visible {
+  color: var(--danger-text) !important;
 }
 
 /* Same type as GroupHeader: sentence case, no tracking (caps and tracking pulled CJK apart). */

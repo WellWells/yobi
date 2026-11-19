@@ -3,6 +3,7 @@ import { ActionIcon, Badge, Box, Group, Stack, Text, Tooltip } from '@mantine/co
 import { Check, ChevronDown, ChevronRight, Copy, Undo2, X } from 'lucide-react';
 import { dedentPair } from '../../../../shared/docAssistant';
 import { clipboardApi } from '../../api/electronApi';
+import { ASSISTANT_TEXT } from '../../components/AssistantPanel';
 import { AppButton } from '../../components/AppButton';
 import { MessageMarkdown } from '../../components/chat/MessageMarkdown';
 import { RenderedDiff } from '../../components/chat/RenderedDiff';
@@ -96,7 +97,7 @@ const EditRow: React.FC<{
         >
           {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
         </ActionIcon>
-        <Text fz="var(--font-size-xs)" c="var(--text-secondary)" truncate style={{ flex: 1, minWidth: 0 }}>{where}</Text>
+        <Text fz={ASSISTANT_TEXT.secondary} c="var(--text-secondary)" truncate style={{ flex: 1, minWidth: 0 }}>{where}</Text>
         {settled && (
           <Badge variant="light" size="sm" color={edit.state === 'stale' ? 'var(--mantine-color-warning)' : undefined} style={{ flexShrink: 0 }}>
             {t(STATE_BADGE[edit.state as keyof typeof STATE_BADGE])}
@@ -131,7 +132,7 @@ const EditRow: React.FC<{
             srRemoved={t('history.diff.removed')}
             srAdded={t('history.diff.added')}
           />
-          {!edit.after.trim() && <Text fz="var(--font-size-xs)" c="var(--text-muted)" pl={50} mt={4}>{t('notion.assistant.edit.removes')}</Text>}
+          {!edit.after.trim() && <Text fz={ASSISTANT_TEXT.secondary} c="var(--text-muted)" pl={50} mt={4}>{t('notion.assistant.edit.removes')}</Text>}
         </Box>
       )}
       {pending && (
@@ -164,13 +165,13 @@ export const AssistantReply: React.FC<AssistantReplyProps> = ({
   return (
     <Stack gap={10}>
       {message.text && (
-        <Box className="md-content" fz="var(--font-size-sm)" style={{ lineHeight: 1.65, color: 'var(--text-primary)' }}>
+        <Box className="md-content" fz={ASSISTANT_TEXT.body} style={{ lineHeight: 1.65, color: 'var(--text-primary)' }}>
           <MessageMarkdown>{message.text}</MessageMarkdown>
         </Box>
       )}
       {message.ask && (
         <Stack gap={6}>
-          <Text fz="var(--font-size-sm)" fw={600}>{message.ask.question}</Text>
+          <Text fz={ASSISTANT_TEXT.heading} fw={600}>{message.ask.question}</Text>
           {message.ask.options.length > 0 && (
             <Stack gap={6} align="flex-start">
               {message.ask.options.map((option) => (
@@ -196,7 +197,7 @@ export const AssistantReply: React.FC<AssistantReplyProps> = ({
       {edits.length > 0 && (
         <Stack gap={6}>
           <Group justify="space-between" gap={6} wrap="nowrap">
-            <Text fz="var(--font-size-xs)" fw={600} c="var(--text-muted)">
+            <Text fz={ASSISTANT_TEXT.secondary} fw={600} c="var(--text-muted)">
               {fillTemplate(t(pending.length === edits.length ? 'notion.assistant.edits.count' : 'notion.assistant.edits.made'), { count: String(edits.length) })}
             </Text>
             <Group gap={4} wrap="nowrap">
@@ -234,13 +235,13 @@ export const AssistantReply: React.FC<AssistantReplyProps> = ({
       )}
       {unplaced.length > 0 && (
         <Stack gap={6}>
-          <Text fz="var(--font-size-xs)" fw={600} c="var(--mantine-color-warning)">
+          <Text fz={ASSISTANT_TEXT.secondary} fw={600} c="var(--warning-text)">
             {fillTemplate(t('notion.assistant.unplaced.title'), { count: String(unplaced.length) })}
           </Text>
-          <Text fz="var(--font-size-xs)" c="var(--text-muted)">{t('notion.assistant.unplaced.hint')}</Text>
+          <Text fz={ASSISTANT_TEXT.secondary} c="var(--text-muted)">{t('notion.assistant.unplaced.hint')}</Text>
           {unplaced.map((edit, index) => (
             <Group key={`${index}:${edit.find.slice(0, 20)}`} gap={6} wrap="nowrap" align="flex-start">
-              <Text fz="var(--font-size-xs)" c="var(--text-secondary)" lineClamp={3} style={{ flex: 1, minWidth: 0, whiteSpace: 'pre-wrap' }}>
+              <Text fz={ASSISTANT_TEXT.body} c="var(--text-secondary)" lineClamp={3} style={{ flex: 1, minWidth: 0, whiteSpace: 'pre-wrap' }}>
                 {edit.replace || edit.find}
               </Text>
               <Tooltip label={t('notion.assistant.unplaced.copy')} position="bottom">

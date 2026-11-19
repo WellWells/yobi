@@ -1,13 +1,16 @@
 import { botFlowAdminAllowed, botOwnerAllowed, getBotRights } from '../../botPermissions/rights';
 import { telegramSendLimitBytes } from '../../telegram/largeUpload';
+import { config } from '../../config';
 import { NO_BOT_RIGHTS } from '../../../shared/botPermissions';
+import { botDownloadCapBytes, botDownloadCapKey, normalizeBotDownloadCap, normalizeBotDownloadCaps } from '../../../shared/downloads';
 import { LINE_VIDEO_SEND_BYTES, exceedsLimit } from '../../../shared/ytdl';
 import type { SizeLimit, YtdlChoice, YtdlDestination } from '../../../shared/ytdl';
 import { parseBotPlatform } from '../../../shared/types';
+import type { BotPlatform } from '../../../shared/types';
 
 /**
  * What the person who started the run may get from a download. Someone at the computer (the app,
- * a schedule) gets everything. A bot user without the admin grant is capped (`BOT_USER_CAP_BYTES`)
+ * a schedule) gets everything. A bot user without the admin grant is capped (`botUserCapBytes`)
  * and never told where a file sits on this computer; an admin — and on LINE PC, which answers as
  * the owner from their own computer, the owner — is told only in their own private chat, since a
  * group would read the path too. On LINE PC only the owner is ever told: another admin is uncapped
@@ -18,13 +21,18 @@ export interface YtdlAccess {
   capped: boolean;
   showPath: boolean;
   preview: boolean;
+  /** A capped person's cap in bytes (null = none of Yobi's); left out, the one for everyone. */
+  capBytes?: number | null;
 }
 
 /**
- * The most a bot user without the admin right may download, whatever the chat.
- * An admin has no cap of Yobi's: only what the chat itself takes (`chatSendLimitBytes`).
+ * The most a bot user without the admin right may download, whatever the chat: the owner's choice
+ * under Settings › Downloader, read on every download (null = no cap of Yobi's).
+ * An admin never has one: only what the chat itself takes (`chatSendLimitBytes`).
  */
-export const BOT_USER_CAP_BYTES = 100_000_000;
+export function botUserCapBytes(): number | null {
+  return botDownloadCapBytes(normalizeBotDownloadCap(config.botDownloadCap));
+}
 
 const AT_THE_COMPUTER: YtdlAccess = { capped: false, showPath: true, preview: false };
 
@@ -37,12 +45,33 @@ export async function ytdlAccessFor(config: Record<string, string>): Promise<Ytd
   const rights = await getBotRights(platform, userId, chatId).catch(() => NO_BOT_RIGHTS);
   // The preview grant is the account's own; the downloader it needs may be its group's.
   const preview = rights.preview && rights.download;
-  const uncapped = rights.admin || (platform === 'lineSelf' && (await botFlowAdminAllowed(platform, userId, chatId).catch(() => false)));
-  if (!uncapped) return { capped: true, showPath: false, preview };
+  // The owner is never capped, whatever the chat: the files land on their own computer.
+  const owner = await isOwner(platform, userId);
+  const uncapped = owner || rights.admin || (platform === 'lineSelf' && (await botFlowAdminAllowed(platform, userId, chatId).catch(() => false)));
+  if (!uncapped) return { capped: true, showPath: false, preview, capBytes: accountCapBytes(platform, userId) };
   const ownChat = Boolean(chatId) && chatId === userId;
   // LINE PC answers from the owner's computer as the owner: its paths are theirs alone, not an admin's.
-  const showPath = ownChat && (platform !== 'lineSelf' || (await botOwnerAllowed(platform, userId).catch(() => false)));
+  const showPath = ownChat && (platform !== 'lineSelf' || owner);
   return { capped: false, showPath, preview };
+}
+
+async function isOwner(platform: BotPlatform, userId: string): Promise<boolean> {
+  try {
+    return await botOwnerAllowed(platform, userId);
+  } catch {
+    return false;
+  }
+}
+
+/** This account's cap: its own when the owner set one (Settings › the account's row), else the one for everyone. */
+function accountCapBytes(platform: BotPlatform, userId: string): number | null {
+  const own = normalizeBotDownloadCaps(config.botDownloadCaps)[botDownloadCapKey(platform, userId)];
+  return own ? botDownloadCapBytes(own) : botUserCapBytes();
+}
+
+/** A capped person's cap: the one read for them (`ytdlAccessFor`), else the one for everyone. */
+function capOf(access: YtdlAccess): number | null {
+  return access.capBytes !== undefined ? access.capBytes : botUserCapBytes();
 }
 
 /**
@@ -59,18 +88,19 @@ export function chatSendLimitBytes(destination: 'telegram' | 'lineSelf'): number
  */
 export function chatLimitBytes(access: YtdlAccess, destination: 'telegram' | 'lineSelf'): number {
   const send = chatSendLimitBytes(destination);
-  return access.capped ? Math.min(BOT_USER_CAP_BYTES, send) : send;
+  const cap = access.capped ? capOf(access) : null;
+  return cap === null ? send : Math.min(cap, send);
 }
 
 /**
  * The largest file this person gets for `destination`, all limits taken together: a capped
- * person's `BOT_USER_CAP_BYTES` — and for a chat never more than it takes. Over it, a capped person
- * gets nothing (`overCap`); anyone else gets the file saved on the computer only. Null = no limit
- * (this computer, for someone at it or an admin).
+ * person's cap (`botUserCapBytes`) — and for a chat never more than it takes. Over it, a capped
+ * person gets nothing (`overCap`); anyone else gets the file saved on the computer only. Null = no
+ * limit (this computer, for someone at it, an admin, or anyone once the owner lifted the cap).
  */
 export function downloadLimitBytes(access: YtdlAccess, destination: YtdlDestination): SizeLimit {
   if (destination !== 'local') return chatLimitBytes(access, destination);
-  return access.capped ? BOT_USER_CAP_BYTES : null;
+  return access.capped ? capOf(access) : null;
 }
 
 /** The qualities a capped person may pick: the estimate fits. An unknown size is still tried. */

@@ -16,9 +16,8 @@ import { RUN_SPOT_LABEL_KEY, runSpot, stepLogsById } from '../flowRunExport';
 import { FlowAssistPanel } from '../assist/FlowAssistPanel';
 import { FlowOutline } from './FlowOutline';
 import { collectStepIssues } from './stepIssues';
+import { OutlineResizeHandle } from './OutlineResizeHandle';
 
-/** The outline's width beside the editor (Notion's and Docs' outlines are 240–280px). */
-export const OUTLINE_WIDTH = 264;
 /** Below this editor width the 560px column and the outline do not both fit: it becomes a drawer. */
 export const OUTLINE_BESIDE_MIN_WIDTH = 880;
 
@@ -27,6 +26,8 @@ interface OutlinePaneProps {
   t: (key: string) => string;
   /** The editor is too narrow to have it beside: a drawer over the editor's right edge. */
   narrow: boolean;
+  width: number;
+  widthLimits: { min: number; max: number };
 }
 
 /**
@@ -34,13 +35,14 @@ interface OutlinePaneProps {
  * narrow (closed until asked for; picking a step, Escape, the backdrop, another flow and the
  * editor widening close it). What it shows comes from the draft flow and the open flow's last run.
  */
-export const OutlinePane: React.FC<OutlinePaneProps> = ({ flow: draft, t, narrow }) => {
+export const OutlinePane: React.FC<OutlinePaneProps> = ({ flow: draft, t, narrow, width, widthLimits }) => {
   // A step behind while typing: the outline redraws after the keystroke's card, not before it.
   const flow = useDeferredValue(draft);
   const { open, drawerOpen, setDrawerOpen, prune } = useFlowOutlineStore(useShallow((s) => ({
     open: s.open, drawerOpen: s.drawerOpen, setDrawerOpen: s.setDrawerOpen, prune: s.prune,
   })));
   const shown = narrow ? drawerOpen : open;
+  const setWidth = useFlowOutlineStore((s) => s.setWidth);
 
   const stepIdsKey = flow.steps.map((step) => step.id).join('\n');
   useEffect(() => {
@@ -129,13 +131,14 @@ export const OutlinePane: React.FC<OutlinePaneProps> = ({ flow: draft, t, narrow
         component="aside"
         aria-label={t('flow.outline.title')}
         data-outline-drawer={narrow ? '' : undefined}
-        w={OUTLINE_WIDTH}
+        w={width}
         h="100%"
         bg="var(--mantine-color-body)"
         style={narrow
           ? { position: 'absolute', top: 0, right: 0, bottom: 0, zIndex: 5, boxShadow: 'var(--mantine-shadow-md)' }
-          : { flexShrink: 0, borderLeft: '1px solid var(--mantine-color-default-border)' }}
+          : { position: 'relative', flexShrink: 0, borderLeft: '1px solid var(--mantine-color-default-border)' }}
       >
+        <OutlineResizeHandle width={width} {...widthLimits} onResize={setWidth} label={t('flow.outline.title')} />
         {outline}
       </Box>
       {narrow && (

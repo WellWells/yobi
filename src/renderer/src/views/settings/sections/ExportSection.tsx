@@ -13,6 +13,7 @@ import { BackgroundStylePicker, DirectionGrid, PaletteSwatchGrid } from '../../.
 import type { CaptureDirection } from '../../../../../shared/capturePalettes';
 import { CardStyleSample } from '../../../components/capture/CardStyleSample';
 import { MarginSlider } from '../../../components/capture/MarginSlider';
+import { CardOpacitySlider } from '../../../components/capture/CardOpacitySlider';
 import { CAPTURE_WIDTHS, captureWidthLabelKey } from '../../../../../shared/types';
 import type { CardLayout, QuickExportFormat } from '../../../../../shared/types';
 import type { useQuickExportRecorder } from '../hooks/useQuickExportRecorder';
@@ -93,6 +94,7 @@ export const ExportSection: React.FC<Props> = ({
           hint={t('settings.quickExport.format.hint')}
           control={(
             <SelectDropdown
+              aria-label={t('settings.quickExport.format')}
               value={quickExport.format}
               onChange={(value) => { void quickExport.setFormat(value as QuickExportFormat); }}
               options={[...CAPTURE_FORMATS, { value: 'text', label: t('settings.quickExport.format.text') }]}
@@ -106,6 +108,7 @@ export const ExportSection: React.FC<Props> = ({
             hint={t('settings.quickExport.zip.hint')}
             control={(
               <ToggleSwitch
+                aria-label={t('settings.quickExport.zip')}
                 checked={quickExport.zip}
                 onChange={(e) => { void quickExport.setZip(e.currentTarget.checked); }}
               />
@@ -130,6 +133,7 @@ export const ExportSection: React.FC<Props> = ({
             cardLayout={preferences.cardLayout}
             width={preferences.width}
             margin={preferences.margin}
+            cardOpacity={preferences.cardOpacity}
             hiDpi={preferences.hiDpi}
             t={t}
           />
@@ -159,6 +163,7 @@ export const ExportSection: React.FC<Props> = ({
           label={t('capture.layout')}
           control={(
             <SelectDropdown
+              aria-label={t('capture.layout')}
               value={preferences.cardLayout}
               onChange={(value) => preferences.setCardLayout(value as CardLayout)}
               options={[
@@ -173,6 +178,7 @@ export const ExportSection: React.FC<Props> = ({
           label={t('capture.size')}
           control={(
             <SelectDropdown
+              aria-label={t('capture.size')}
               value={String(preferences.width)}
               onChange={(value) => preferences.setWidth(Number(value))}
               options={CAPTURE_WIDTHS.map((w) => ({ value: String(w), label: `${t(captureWidthLabelKey(w))} · ${w}px` }))}
@@ -193,9 +199,21 @@ export const ExportSection: React.FC<Props> = ({
           )}
         />
         <SettingRow
+          label={t('capture.cardOpacity')}
+          hint={t('capture.cardOpacity.desc')}
+          control={(
+            <CardOpacitySlider
+              value={preferences.cardOpacity}
+              onChange={preferences.setCardOpacity}
+              label={t('capture.cardOpacity')}
+              w={170}
+            />
+          )}
+        />
+        <SettingRow
           label={t('capture.hiDpi')}
           hint={t('capture.hiDpi.desc')}
-          control={<ToggleSwitch checked={preferences.hiDpi} onChange={(e) => preferences.setHiDpi(e.currentTarget.checked)} />}
+          control={<ToggleSwitch aria-label={t('capture.hiDpi')} checked={preferences.hiDpi} onChange={(e) => preferences.setHiDpi(e.currentTarget.checked)} />}
         />
       </Stack>
     </SectionCard>

@@ -13,7 +13,7 @@ import { languageForLocale } from '../../shared/localeLanguage';
 import { IPC } from '../../shared/types';
 import type { FlowDefinition } from '../../shared/types';
 import { config, saveConfig } from '../config';
-import { askJson } from '../flow/agent/structuredLlm';
+import { askJson, rejectedReplyPreview } from '../flow/agent/structuredLlm';
 import type { FlowFolderStore } from '../flow/flowFolders';
 import { buildSortPrompt, folderExamples, sortSubjects, validateSortReply } from '../flow/flowFolderSort';
 import type { SortPromptInput } from '../flow/flowFolderSort';
@@ -126,13 +126,13 @@ async function propose(deps: FlowFolderSortDeps, request: FlowSortProposeRequest
       timeoutMs: config.responseTimeout,
       validate: (json) => validateSortReply(json, subjects, existing),
       buildRepair: (raw, error) => buildSortPrompt({ ...input, rejected: { raw, error } }),
-      onReject: (error, attempt) => sendLog(`🗂️ [Flow] folder proposal rejected (attempt ${attempt}): ${error}`),
+      onReject: (error, attempt, preview) => sendLog(`🗂️ [Flow] folder proposal rejected (attempt ${attempt}): ${error}; reply: "${preview}"`),
       signal: controller.signal,
     });
     if (controller.signal.aborted) return { ok: false, reason: 'cancelled' };
     if (!result.ok || !result.value) {
       // The validator's text is the repair instruction written for the model; the log keeps it.
-      sendLog(`⚠️ [Flow] folder sort failed: ${result.error ?? 'no usable proposal'}`);
+      sendLog(`⚠️ [Flow] folder sort failed: ${result.error ?? 'no usable proposal'}; reply: "${rejectedReplyPreview(result.raw)}"`);
       return { ok: false, reason: 'failed', error: t(getLangCache(), 'flow.folder.sort.invalidOutput') };
     }
     latest = {

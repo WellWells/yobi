@@ -1,7 +1,8 @@
 import React from 'react';
-import { Code, Menu, Stack, Text, Tooltip } from '@mantine/core';
+import { Code, Menu, Stack, Text } from '@mantine/core';
 import { Braces } from 'lucide-react';
 import { AppButton } from '../../components/AppButton';
+import { TooltipTarget } from '../../components/TooltipTarget';
 import { FLOW_VAR_PREFIX } from '../../../../shared/flowVariables';
 import { resolveSysInfoSelection } from '../../../../shared/sysinfoFields';
 import { isCaptureFormat, isFileOutputStep, parseLlmExportFormats } from '../../../../shared/fileOutputStep';
@@ -109,12 +110,14 @@ export function stepSubfields(s: SkillInstance): string[] {
       : ['path', 'kind', 'format', 'summary', 'fellBack', 'zipped', ...failFlag];
     case 'gmap_reviews': return ['place', 'rating', 'total', 'distribution', 'positive', 'verdict', 'tier', ...failFlag];
     case 'line_read': return ['count', 'dropped', 'chatName', 'chatCount', 'firstAt', 'lastAt', 'isFirstRun', ...failFlag];
-    case 'telegram_read': return ['count', 'dropped', 'groupNames', 'groupCount', 'firstAt', 'lastAt', ...failFlag];
+    case 'telegram_read': return ['count', 'dropped', 'groupNames', 'groupCount', 'firstAt', 'lastAt', 'messageLinks', ...failFlag];
     case 'stock': return splitSymbols(s.config.symbol).length > 1 ? [] : ['price', 'changePct', 'name', 'currency', ...historyFields(s.config), 'isFailed'];
     case 'forex': return ['rate', 'converted', 'asOf', 'session', 'previousClose', 'changePct', ...historyFields(s.config), 'isFailed'];
     case 'weather': return weatherFields(s.config);
     case 'air_quality': return ['aqi', 'level', 'status', 'statusLocal', 'pollutant', 'pm2_5', 'station', 'isFailed'];
     case 'almanac': return almanacFields(s.config);
+    case 'app_store': return ['text', 'store', 'name', 'developer', 'price', 'inAppPurchases', 'purchases', 'version', 'whatsNew', 'storefront', 'link', 'icon', 'matched', 'matches'];
+    case 'price_search': return ['text', 'query', 'typed', 'lowest', 'lowestStore', 'lowestTitle', 'lowestUrl', 'average', 'median', 'highest', 'count', 'unit', 'unitLowest', 'unitAverage', 'checkedAt', 'failedStores', ...(s.config.track === 'true' ? ['news', 'dropped', 'previousLowest', 'change', 'isRecordLow', 'recordLow', 'recordLowAt', 'isFirstRun'] : [])];
     case 'tw_invoice': return ['text', 'won', 'count', 'period', 'label', 'drawnAt', 'claimUntil', 'newThisMonth'];
     case 'calendar': return [...failFlag, 'text', 'count', 'calendar', 'from', 'to'];
     case 'mail_fetch': return [...failFlag, 'text', 'count'];
@@ -326,7 +329,7 @@ export const InsertDataMenu: React.FC<{
     // returnFocus off: the insert puts the caret back in the field, and the menu must not take it.
     <Menu position="bottom-start" returnFocus={false} shadow="md">
       <Menu.Target>
-        <Tooltip label={t('flow.insertData.hint')} position="top">
+        <TooltipTarget label={t('flow.insertData.hint')} position="top">
           <AppButton
             variant="subtle"
             size="compact-xs"
@@ -336,7 +339,7 @@ export const InsertDataMenu: React.FC<{
           >
             {t('flow.insertData')}
           </AppButton>
-        </Tooltip>
+        </TooltipTarget>
       </Menu.Target>
       <Menu.Dropdown {...INSERT_DATA_DROPDOWN}>
         <InsertDataGroups varInput={varInput} onInsert={onInsert} t={t} />

@@ -64,7 +64,7 @@ export const ComposerPill = React.forwardRef<HTMLButtonElement, ComposerPillProp
         background: accent
           ? 'var(--mantine-color-accent-dim)'
           : outlined ? 'var(--mantine-color-default)' : 'transparent',
-        color: accent ? 'var(--mantine-color-accent)' : 'var(--mantine-color-text)',
+        color: accent ? 'var(--mantine-color-accent-text)' : 'var(--mantine-color-text)',
         borderRadius: 999,
         padding: '5px 10px',
         fontSize: 'var(--font-size-base)',
@@ -82,7 +82,7 @@ export const ComposerPill = React.forwardRef<HTMLButtonElement, ComposerPillProp
         <ChevronDown
           size={12}
           style={{
-            color: accent ? 'var(--mantine-color-accent)' : 'var(--mantine-color-dimmed)',
+            color: accent ? 'var(--mantine-color-accent-text)' : 'var(--mantine-color-dimmed)',
             marginLeft: 1,
             transform: open ? 'rotate(180deg)' : 'none',
           }}

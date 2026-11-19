@@ -2,12 +2,13 @@ import { IPC, parseBotPlatform } from '../../shared/types';
 import type { FlowExecutionResult } from '../../shared/types';
 import { BOT_MODEL_VARIABLE, TRIGGER_IS_INPUT_VARIABLE } from '../../shared/builtinFlows';
 import {
-  botAccessDeniedText,
+  botAnalyzeAllowed,
   botBuiltinAllowed,
   botChatAllowed,
   botDownloadAllowed,
   botFlowAdminAllowed,
   botFlowAllowed,
+  botFlowDeniedText,
   grantPairingDefaults,
   isBotGroupPending,
   isBotUserBlocked,
@@ -116,6 +117,7 @@ export function createTelegramRuntime(deps: {
     isAdminUser: (userId) => isTelegramAdminUser(userId),
     canUseBuiltin: (key, userId, chatId) => botBuiltinAllowed('telegram', key, String(userId), String(chatId)),
     canUseDownloader: (userId, chatId) => botDownloadAllowed('telegram', String(userId), String(chatId)),
+    canAnalyze: (userId, chatId) => botAnalyzeAllowed('telegram', String(userId), String(chatId)),
     linkSites: currentLinkSiteFilter,
     canChat: (userId, chatId) => botChatAllowed('telegram', String(userId), String(chatId)),
     isFlowAdmin: (userId, chatId) => botFlowAdminAllowed('telegram', String(userId), String(chatId)),
@@ -268,7 +270,8 @@ export function createTelegramRuntime(deps: {
         [inputVariable]: input,
         'bot.triggerChatId': String(chatId),
         ...(messageId ? { 'bot.triggerMessageId': String(messageId) } : {}),
-        ...(messageId && messageIsInput ? { [TRIGGER_IS_INPUT_VARIABLE]: '1' } : {}),
+        // Off in Settings: the answer quotes the pasted link instead of taking its place.
+        ...(messageId && messageIsInput && config.telegram.replaceLinkMessage ? { [TRIGGER_IS_INPUT_VARIABLE]: '1' } : {}),
         'bot.triggerUserId': String(userId),
         'bot.triggerPlatform': 'telegram',
         [BOT_MODEL_VARIABLE]: resolveLlmDirectTarget(config.telegram.llmDirect, getHiddenSources()).targetUrl,
@@ -280,9 +283,9 @@ export function createTelegramRuntime(deps: {
         sendLog(`[Flow] Bot flow ${flowId} refused for user ${userId} in chat ${chatId} — limited to admins in a private chat`);
         return notRun(flowId, 'Flow command limited to admins', t(getLangCache(), 'bot.chat.flowNotAllowed'));
       }
-      if (!(await botFlowAllowed('telegram', flowId, String(userId), String(chatId)))) {
-        sendLog(`[Flow] Bot flow ${flowId} refused for user ${userId} — no download grant`);
-        return notRun(flowId, 'Downloader not granted', botAccessDeniedText(getLangCache(), 'download'));
+      if (!(await botFlowAllowed('telegram', flowId, String(userId), String(chatId), input))) {
+        sendLog(`[Flow] Bot flow ${flowId} refused for user ${userId} — the grant it needs is missing`);
+        return notRun(flowId, 'Downloader not granted', botFlowDeniedText(getLangCache(), flowId, input));
       }
       const execution = flowManager.queueExecutionWithId(flowId, extraContext, 'bot', onProgress);
       sendLog(`[Flow] Bot command triggered flow ${flowId} for user ${userId} with input: ${input}`);

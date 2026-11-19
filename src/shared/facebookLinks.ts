@@ -20,6 +20,10 @@ const VIDEOS_PATH = new RegExp(`^/(${NAME})/videos/(?:[^/]+/)*?(${NUMERIC})/?$`)
 /** `/<page>/photos/<id>/`, also with an album (`a.<id>`), a post (`pcb.<id>`) or a title slug in between. */
 const PHOTOS_PATH = new RegExp(`^/(${NAME})/photos/(?:[^/]+/)*?(${NUMERIC})/?$`);
 const POSTS_PATH = new RegExp(`^/(${NAME})/posts/(${POST_ID})(?:/|$)`);
+/** `/<page>/posts/<title slug>/<id>/`: a page's post as its own page links it, the first words in the address. */
+const SLUG_POSTS_PATH = new RegExp(`^/(${NAME})/posts/[^/]+/(${POST_ID})/?$`);
+/** The account a `story.php` / `permalink.php` link names (`id=4` is a real one). */
+const OWNER_ID = /^\d{1,25}$/;
 const GROUP_POST_PATH = new RegExp(`^/groups/(${NAME})/(?:posts|permalink)/(${NUMERIC})(?:/|$)`);
 /** `/stories/<bucket>/` and `/stories/<bucket>/<card>/`: a person's stories, opened at one card. */
 const STORIES_PATH = new RegExp(`^/stories/(${NUMERIC})(?:/([^/]{8,600}))?/?$`);
@@ -157,7 +161,7 @@ function readPath(url: URL): FacebookRef | null {
   if (reel) return { kind: 'reel', url: facebookReelLink(reel[1]), id: reel[1], author: '' };
   const stories = STORIES_PATH.exec(path);
   if (stories) return storyRef(stories[1], stories[2] ?? '', url);
-  if (/^\/watch\/?$/.test(path) || path === '/video.php') {
+  if (/^\/watch(?:\/live)?\/?$/.test(path) || path === '/video.php') {
     const id = url.searchParams.get('v') ?? '';
     return new RegExp(`^${NUMERIC}$`).test(id) ? videoRef(id) : null;
   }
@@ -171,15 +175,15 @@ function readPath(url: URL): FacebookRef | null {
   if (photo && !RESERVED.has(photo[1].toLowerCase())) return photoRef(photo[2], photo[1]);
   const group = GROUP_POST_PATH.exec(path);
   if (group) return postRef(`https://www.facebook.com/groups/${group[1]}/posts/${group[2]}/`, group[2], '');
-  if (path === '/permalink.php' || path === '/story.php') {
+  if (/^\/(?:permalink|story)\.php\/?$/.test(path)) {
     const story = idParam(url, 'story_fbid');
     const owner = url.searchParams.get('id') ?? '';
-    if (!story || !new RegExp(`^${NUMERIC}$`).test(owner)) return null;
+    if (!story || !OWNER_ID.test(owner)) return null;
     // Facebook sends a visitor of either page to its sign-in wall, even for a public post; the
     // owner's `/posts/` page shows it to them.
     return postRef(`https://www.facebook.com/${owner}/posts/${story}/`, story, '');
   }
-  const post = POSTS_PATH.exec(path);
+  const post = POSTS_PATH.exec(path) ?? SLUG_POSTS_PATH.exec(path);
   if (post && !RESERVED.has(post[1].toLowerCase())) {
     return postRef(`https://www.facebook.com/${post[1]}/posts/${post[2]}/`, post[2], post[1]);
   }
@@ -187,8 +191,8 @@ function readPath(url: URL): FacebookRef | null {
 }
 
 /**
- * A Facebook reel (`/reel/<id>`), video (`/watch?v=`, `/<page>/videos/…/<id>`, `/video.php?v=`),
- * post (`/<page>/posts/<id|pfbid…>`, `/permalink.php`, `/story.php`, a group's
+ * A Facebook reel (`/reel/<id>`), video (`/watch?v=`, `/watch/live/?v=`, `/<page>/videos/…/<id>`, `/video.php?v=`),
+ * post (`/<page>/posts/<id|pfbid…>`, also after a title slug, `/permalink.php`, `/story.php`, a group's
  * `/groups/<group>/posts/<id>`), photo (`/photo.php?fbid=`, `/photo/?fbid=`, `/<page>/photos/…/<id>`),
  * share link (`/share/r|p|v/<code>`, `fb.watch/<code>`), or a person's stories
  * (`/stories/<bucket>/`, `/stories/<bucket>/<card>/`).

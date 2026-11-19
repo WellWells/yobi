@@ -1,5 +1,7 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import { Box, Group, Stack, Text } from '@mantine/core';
+import { useI18nStore } from '../store/i18nStore';
+import { fillTemplate } from '../../../shared/fillTemplate';
 
 export interface TrendBarSeries {
   id: string;
@@ -9,6 +11,8 @@ export interface TrendBarSeries {
 }
 
 interface Props {
+  /** What the chart counts (the card's title): the start of the chart's accessible name. */
+  title: string;
   labels: string[];
   series: TrendBarSeries[];
   height?: number;
@@ -38,14 +42,41 @@ function niceAxisMax(value: number): number {
   return nice * pow;
 }
 
+/**
+ * What a screen reader hears for the chart (WCAG 1.1.1 / 4.1.2: the svg needs a
+ * name): the title, the date span and each series' total over it, written out in full like the
+ * legend (only the axis and the hover card abbreviate).
+ */
+export function trendChartSummary(
+  title: string,
+  labels: string[],
+  series: TrendBarSeries[],
+  t: (key: string) => string,
+  locale: string,
+): string {
+  const parts = series.map((s) => fillTemplate(t('a11y.b.chartSeries'), {
+    label: s.label,
+    value: s.values.reduce((sum, value) => sum + value, 0).toLocaleString(locale),
+  }));
+  return fillTemplate(t('a11y.b.chartSummary'), {
+    title,
+    from: labels[0] ?? '',
+    to: labels[labels.length - 1] ?? '',
+    parts: new Intl.ListFormat(locale, { type: 'unit' }).format(parts),
+  });
+}
+
 /** Stacked day columns: the series are parts of one day's total, and grouped bars hide the small series. */
 export const TrendBarChart: React.FC<Props> = ({
+  title,
   labels,
   series,
   height = 150,
   totalLabel,
   formatValue = formatTick,
 }) => {
+  const t = useI18nStore((s) => s.t);
+  const locale = useI18nStore((s) => s.locale);
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const count = labels.length;
 
@@ -78,7 +109,13 @@ export const TrendBarChart: React.FC<Props> = ({
 
   return (
     <Box w="100%" pos="relative" onMouseMove={handleMouseMove} onMouseLeave={() => setHoverIndex(null)}>
-      <svg viewBox={`0 0 ${VIEW_W} ${height}`} width="100%" role="img" style={{ display: 'block' }}>
+      <svg
+        viewBox={`0 0 ${VIEW_W} ${height}`}
+        width="100%"
+        role="img"
+        aria-label={trendChartSummary(title, labels, series, t, locale)}
+        style={{ display: 'block' }}
+      >
         {[1, 0.5, 0].map((fraction) => (
           <line
             key={fraction}

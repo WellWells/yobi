@@ -1,6 +1,6 @@
 import React from 'react';
-import { Box, Code, Group, Text, UnstyledButton } from '@mantine/core';
-import { Bot, Clock, FolderInput, Keyboard, MonitorCog, MousePointerClick, SquareSlash } from 'lucide-react';
+import { ActionIcon, Box, Code, Group, Text, Tooltip, UnstyledButton } from '@mantine/core';
+import { Bot, Clock, FolderInput, Keyboard, MonitorCog, MousePointerClick, Play, SquareSlash, Square } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { FlowDefinition, TriggerType } from '../../../../shared/types';
 import { fillTemplate } from '../../../../shared/fillTemplate';
@@ -10,7 +10,7 @@ import { isMac } from '../../utils/keyLabels';
 import { TemplateIcon } from './TemplateIcon';
 import type { FlowTemplate } from './examples';
 import type { FlowRowStatus } from './flowRowStatus';
-import { triggerFact } from './flowHomeModel';
+import { runsFromButton, triggerFact } from './flowHomeModel';
 import classes from './FlowHome.module.css';
 
 /** How a flow starts, as a glyph on its card (the sidebar row says it in a badge). */
@@ -25,8 +25,8 @@ export const TRIGGER_ICON: Record<TriggerType, LucideIcon> = {
 };
 
 const TONE_COLOR: Record<FlowRowStatus['tone'], string> = {
-  error: 'var(--mantine-color-error)',
-  warning: 'var(--mantine-color-warning)',
+  error: 'var(--error-text)',
+  warning: 'var(--warning-text)',
   dimmed: 'var(--text-muted)',
 };
 
@@ -34,35 +34,55 @@ interface FlowCardProps {
   flow: FlowDefinition;
   /** Whether it is working (`flowRowStatus`); none = say how it starts. */
   status: FlowRowStatus | null;
+  running: boolean;
   t: (key: string) => string;
   onOpen: () => void;
+  onRun: () => void;
+  onStop: () => void;
 }
 
-/** One of your flows: how it starts, its name, what it does, whether it is working. Opens it. */
-export const FlowCard: React.FC<FlowCardProps> = ({ flow, status, t, onOpen }) => {
+/**
+ * One of your flows: how it starts, its name, what it does, whether it is working. The card opens
+ * it; its ▶ runs it (the sidebar menu's 「執行」), and while it runs the same place stops it. A flow
+ * only a bot command can start has no ▶: from here it could only fail.
+ */
+export const FlowCard: React.FC<FlowCardProps> = ({ flow, status, running, t, onOpen, onRun, onStop }) => {
   const Icon = TRIGGER_ICON[flow.trigger.type] ?? MousePointerClick;
+  const name = flow.name || t('flow.flowName');
   const description = flow.description?.trim()
     || fillTemplate(t('flow.home.steps'), { count: String(flow.steps.length) });
-  const line = status?.text ?? triggerFact(flow.trigger, t, isMac);
+  const line = running ? t('flow.home.running') : status?.text ?? triggerFact(flow.trigger, t, isMac);
+  const tone = running ? 'dimmed' : status?.tone ?? 'dimmed';
+  const runLabel = `${t(running ? 'flow.stopFlow' : 'flow.runFlow')} ${name}`;
   return (
-    <UnstyledButton
-      className={classes.card}
-      data-disabled={!flow.enabled || undefined}
-      onClick={onOpen}
-      aria-label={`${flow.name || t('flow.flowName')} ${description} ${line}${flow.enabled ? '' : ` ${t('flow.home.disabled')}`}`}
-    >
-      <Box className={classes.triggerMark} aria-hidden><Icon size={15} /></Box>
-      <Box className={classes.body}>
-        <Text fz="sm" fw={600} truncate>{flow.name || t('flow.flowName')}</Text>
-        <Text fz="xs" c="var(--text-muted)" lineClamp={2} lh={1.45}>{description}</Text>
-        <Group gap={6} wrap="nowrap" mt={2}>
-          <Text fz="xs" c={TONE_COLOR[status?.tone ?? 'dimmed']} truncate style={{ fontVariantNumeric: 'tabular-nums' }}>
-            {line}
-          </Text>
-          {!flow.enabled && <Text fz="xs" c="var(--text-muted)" style={{ flexShrink: 0 }}>{`· ${t('flow.home.disabled')}`}</Text>}
-        </Group>
-      </Box>
-    </UnstyledButton>
+    <Box className={classes.card} data-disabled={!flow.enabled || undefined}>
+      {/* Named by its own text (WCAG 2.5.3): a separate aria-label drifted from what is shown. */}
+      <UnstyledButton
+        className={classes.cardOpen}
+        onClick={onOpen}
+      >
+        <Box className={classes.triggerMark} aria-hidden><Icon size={15} /></Box>
+        <Box className={classes.body}>
+          <Text fz="sm" fw={600} truncate>{name}</Text>
+          <Text fz="xs" c="var(--text-muted)" lineClamp={2} lh={1.45}>{description}</Text>
+          <Group gap={6} wrap="nowrap" mt={2}>
+            <Text fz="xs" c={TONE_COLOR[tone]} truncate style={{ fontVariantNumeric: 'tabular-nums' }}>
+              {line}
+            </Text>
+            {!flow.enabled && <Text fz="xs" c="var(--text-muted)" style={{ flexShrink: 0 }}>{`· ${t('flow.home.disabled')}`}</Text>}
+          </Group>
+        </Box>
+      </UnstyledButton>
+      {(running || runsFromButton(flow)) && (
+        <Box className={classes.cardRun} data-running={running || undefined}>
+          <Tooltip label={t(running ? 'flow.stopFlow' : 'flow.runFlow')} position="top">
+            <ActionIcon variant="subtle" size={28} radius="sm" aria-label={runLabel} onClick={running ? onStop : onRun}>
+              {running ? <Square size={13} /> : <Play size={14} />}
+            </ActionIcon>
+          </Tooltip>
+        </Box>
+      )}
+    </Box>
   );
 };
 
@@ -80,9 +100,8 @@ export const TemplateCard: React.FC<TemplateCardProps> = ({ template, t, locale,
   const schedule = trigger?.type === 'cron' ? describeSchedule(trigger, t) : '';
   return (
     <UnstyledButton
-      className={classes.card}
+      className={`${classes.card} ${classes.cardOpen}`}
       onClick={() => onPick(template)}
-      aria-label={`${t(template.titleKey)} ${t(template.descKey)}`}
     >
       <TemplateIcon template={template} size={28} />
       <Box className={classes.body}>

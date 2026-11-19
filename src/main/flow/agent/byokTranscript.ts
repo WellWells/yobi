@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { ByokChatMessage } from '../../providers/byokClient';
 
 /**
@@ -7,6 +8,12 @@ import type { ByokChatMessage } from '../../providers/byokClient';
  * deltas, so an observation stays in view instead of falling out of a fixed window of steps.
  */
 export interface ByokTranscript {
+  /**
+   * A random id for this conversation, sent as the cache-routing key the provider takes
+   * (`byokCacheHints.ts`) so every turn lands on the cache the previous one wrote. Kept across a
+   * rebuild: the key only routes, the cache itself still matches on the prefix.
+   */
+  id: string;
   messages: ByokChatMessage[];
   /**
    * What the steps rendered inside the first message cost. They are observations too, so they
@@ -22,7 +29,7 @@ export interface ByokTranscript {
 }
 
 export function createByokTranscript(): ByokTranscript {
-  return { messages: [], baseChars: 0, pending: [] };
+  return { id: randomUUID(), messages: [], baseChars: 0, pending: [] };
 }
 
 /** Starts the conversation over; the next request sends the full prompt. */

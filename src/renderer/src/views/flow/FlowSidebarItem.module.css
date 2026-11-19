@@ -67,7 +67,8 @@
 }
 
 .sortableWrap:focus-visible .row {
-  box-shadow: 0 0 0 2px var(--mantine-color-accent-dim);
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
 }
 
 /* The row's "⋯" keeps its slot left of the switch whether it shows or not, so hovering moves

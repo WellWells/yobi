@@ -123,7 +123,7 @@ export const AlmanacConfig: React.FC<SkillConfigProps> = ({ step, onChange, t })
         />
       )}
       {!timeApplies && time.trim() !== '' && (
-        <Text fz="xs" c="var(--mantine-color-warning)">{t('flow.skill.almanac.time.unused')}</Text>
+        <Text fz="xs" c="var(--warning-text)">{t('flow.skill.almanac.time.unused')}</Text>
       )}
 
       <GroupHeader variant="plain" label={t('flow.skill.almanac.group.filter')} />

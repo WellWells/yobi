@@ -1,6 +1,6 @@
 import { BrowserWindow } from 'electron';
 import { CLEAN_UA } from '../../userAgent';
-import { SILENT_WEB_PREFERENCES, muteWindow, parkWindowOffscreen } from '../../silentWindow';
+import { SILENT_WEB_PREFERENCES, muteWindow, hideBeforeMapping, parkWindowOffscreen } from '../../silentWindow';
 import { siteSession } from '../../siteAccounts';
 import { Semaphore } from '../lanes';
 import { within } from '../../promiseRace';
@@ -92,7 +92,7 @@ async function capture(
   try {
     // Mapped, not merely created: a window that has never been shown stalls rendering, and with
     // it the page's own fetches. Transparent before it is mapped, so it never flashes before parking.
-    win.setOpacity(0);
+    hideBeforeMapping(win);
     win.showInactive();
     parkWindowOffscreen(win);
     // A webContents that has never navigated gives the debugger no page, and `Network.enable`

@@ -3,8 +3,10 @@ import { llmLane } from './flow/lanes';
 import { isWorkerRevealed } from './windows';
 import { isModelCatalogStale } from '../shared/modelCatalogFreshness';
 import { refreshGeminiModelList } from './ipc/geminiModel';
+import { trustedGeminiCatalog } from './providers/geminiModelScript';
 import { refreshClaudeModelList } from './ipc/claudeModel';
 import { refreshChatgptModelList } from './ipc/chatgptModel';
+import { refreshPerplexityModelList } from './ipc/perplexityModel';
 
 /**
  * Re-reads cached model lists for providers nobody has sent to lately (a send refreshes only its
@@ -17,15 +19,16 @@ const CHECK_INTERVAL_MS = 60 * 60_000;
 const MAX_BACKOFF_MS = 24 * 60 * 60_000;
 
 interface Source {
-  provider: 'gemini' | 'claude' | 'chatgpt';
+  provider: 'gemini' | 'claude' | 'chatgpt' | 'perplexity';
   catalog: () => { updatedAt: string } | null;
   refresh: () => Promise<void>;
 }
 
 const SOURCES: readonly Source[] = [
-  { provider: 'gemini', catalog: () => config.geminiModelCatalog, refresh: () => refreshGeminiModelList() },
+  { provider: 'gemini', catalog: () => trustedGeminiCatalog(config.geminiModelCatalog), refresh: () => refreshGeminiModelList() },
   { provider: 'claude', catalog: () => config.claudeModelCatalog, refresh: () => refreshClaudeModelList() },
   { provider: 'chatgpt', catalog: () => config.chatgptModelCatalog, refresh: () => refreshChatgptModelList() },
+  { provider: 'perplexity', catalog: () => config.perplexityModelCatalog, refresh: () => refreshPerplexityModelList() },
 ];
 
 interface Failure {

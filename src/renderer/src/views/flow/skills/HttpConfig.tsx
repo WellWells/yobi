@@ -73,7 +73,7 @@ export const HttpConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) =>
         />
       )}
       {!showBody && body.trim() !== '' && (
-        <Text fz="xs" c="var(--mantine-color-warning)" data-http-body-unsent="">
+        <Text fz="xs" c="var(--warning-text)" data-http-body-unsent="">
           {fillTemplate(t('flow.skill.http.body.unsent'), { method })}
         </Text>
       )}

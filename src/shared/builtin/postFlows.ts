@@ -15,7 +15,9 @@ import { BOT_MODEL, CHAT_MODEL, END_IF, REPLY, chatFlowOf, flowOf, llmStep, step
  * `buttonImages`) and a button per item.
  */
 export function postForwardFlow(ids: PostIds, name: string, analyzeLabel: string): FlowDefinition {
-  const media = { ...REPLY, attachment: '{{xm}}', preview: '{{xm.previews}}' };
+  // The first message out takes the place of a link pasted alone (`replaceTrigger`; the post's
+  // own link is in its text). What follows it goes unquoted then, the message being gone.
+  const media = { ...REPLY, attachment: '{{xm}}', preview: '{{xm.previews}}', replaceTrigger: 'true' };
   const closing = { buttons: `${analyzeLabel} | {{xm.analyze}}\n${MP3_LABEL} | {{xm.mp3}}\n{{xm.buttons}}`, buttonImages: '{{xm.buttonImages}}' };
   return flowOf(ids.forward, name, ids.cmdForward, stepsOf(ids.forward, [
     ['x_media', { input: '{{input}}', destination: 'auto', folder: '', reader: '' }, 'xm'],
@@ -25,7 +27,7 @@ export function postForwardFlow(ids: PostIds, name: string, analyzeLabel: string
     ['if', { left: '{{xm.rest}}', operator: 'is_true', right: '' }],
     ['bot', { ...media, message: '{{xm.lead}}' }, 'bot_lead'],
     ['if', { left: '{{bot_lead.isFailed}}', operator: 'equals', right: '1' }],
-    ['bot', { ...REPLY, ...closing, message: '{{xm.overflow}}' }, 'bot_text'],
+    ['bot', { ...REPLY, ...closing, message: '{{xm.overflow}}', replaceTrigger: 'true' }, 'bot_text'],
     END_IF,
     ['if', { left: '{{bot_lead.isFailed}}', operator: 'not_equals', right: '1' }],
     ['bot', { ...REPLY, ...closing, message: '{{xm.rest}}' }, 'bot_rest'],
@@ -108,14 +110,15 @@ function threadStep(style: ReplyStyle, maxReplies = DEFAULT_ANALYSIS_REPLIES): [
  * account (an Instagram profile, `x_thread`'s `.subject`) — the account. Only one branch runs, and
  * both answer as `llm_1`. An article's pushes have one prompt of their own.
  */
-function analysisSteps(locale: string, model: string, style: ReplyStyle): StepSpec[] {
-  if (style === 'pushes') return [llmStep(pushesAnalyzePrompt(locale), model)];
+function analysisSteps(locale: string, model: string, style: ReplyStyle, once = false): StepSpec[] {
+  if (style === 'pushes') return [llmStep(pushesAnalyzePrompt(locale), model, undefined, once)];
   return [
     ['if', { left: '{{xt.subject}}', operator: 'equals', right: 'account' }],
-    llmStep(xAccountAnalyzePrompt(locale), model),
+    llmStep(xAccountAnalyzePrompt(locale), model, undefined, once),
     END_IF,
     ['if', { left: '{{xt.subject}}', operator: 'not_equals', right: 'account' }],
-    llmStep(xAnalyzePrompt(locale), model),
+    // The post's own photos go along when the model takes pictures; without them it reads the text.
+    llmStep(xAnalyzePrompt(locale), model, '{{xt.photos}}', once),
     END_IF,
   ];
 }
@@ -127,7 +130,8 @@ function analysisSteps(locale: string, model: string, style: ReplyStyle): StepSp
 export function postAnalyzeFlow(ids: PostIds, name: string, locale: string, style: ReplyStyle = 'replies', maxReplies?: number): FlowDefinition {
   return flowOf(ids.analyze, name, ids.cmdAnalyze, stepsOf(ids.analyze, [
     threadStep(style, maxReplies),
-    ...analysisSteps(locale, BOT_MODEL, style),
+    // Anyone allowed may press the button under a post: the same analysis is asked for once.
+    ...analysisSteps(locale, BOT_MODEL, style, true),
     ['bot', { ...REPLY, message: '{{llm_1}}' }, 'bot_analysis'],
   ]));
 }

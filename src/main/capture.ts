@@ -1,9 +1,9 @@
 import { app, BrowserWindow } from 'electron';
 import * as path from 'node:path';
 import type { MarkdownCaptureRequest, CaptureFormat, CaptureHeightVerdict, CaptureMode, CaptureTurn, CardLayout } from '../shared/types';
-import { DEFAULT_CAPTURE_WIDTH, MAX_CAPTURE_WIDTH, MIN_CAPTURE_WIDTH, checkCaptureHeight, clampCaptureMargin, printPageSlack } from '../shared/types';
+import { DEFAULT_CAPTURE_WIDTH, MAX_CAPTURE_WIDTH, MIN_CAPTURE_WIDTH, checkCaptureHeight, clampCaptureMargin, clampCardOpacity, printPageSlack } from '../shared/types';
 import { stripConversationMarkers } from '../shared/conversationDoc';
-import { captureBackgroundCss, DEFAULT_CAPTURE_PALETTE } from '../shared/capturePalettes';
+import { captureBackgroundCss, DEFAULT_CAPTURE_PALETTE, withoutCaptureGrain } from '../shared/capturePalettes';
 import { isSafeCaptureBackground } from '../shared/captureBackgroundGuard';
 import { brandPdfMetadata } from './pdfMetadata';
 import { flattenPdfBackdrop } from './capturePdfBackdrop';
@@ -12,7 +12,7 @@ import { sendLog } from './helpers';
 import { getLangCache, t } from './i18n';
 import { config } from './config';
 import { exportReadingFont } from '../shared/readingPrefs';
-import { SILENT_WEB_PREFERENCES, muteWindow, parkWindowOffscreen } from './silentWindow';
+import { SILENT_WEB_PREFERENCES, muteWindow, hideBeforeMapping, parkWindowOffscreen } from './silentWindow';
 import { pinPageZoom } from './pageZoom';
 
 const CAPTURE_TIMEOUT_MS = 30_000;
@@ -21,6 +21,23 @@ interface CaptureDocumentResult {
   buffer: Buffer;
   ext: 'png' | 'webp' | 'pdf';
   mode: CaptureMode;
+}
+
+/** What the capture window takes on just before printToPDF: one page exactly the card's size. */
+export function pdfPrintCss(logicalWidth: number, pdfHeight: number): string {
+  return `@page { size: ${logicalWidth}px ${pdfHeight}px; margin: 0; }` +
+    `html, body { margin: 0 !important; padding: 0 !important; width: ${logicalWidth}px !important; height: ${pdfHeight}px !important; overflow: hidden !important; box-sizing: border-box !important; }` +
+    // Stretch the backdrop to the whole page so its border stays exactly the configured
+    // margin on all four sides, and let the last card swallow the slack as interior
+    // space — :last-child rather than .capture-card so bubble layouts, which stack
+    // several cards, only stretch the bottom one.
+    `.capture-scene { min-height: ${pdfHeight}px !important; box-sizing: border-box !important; display: flex !important; flex-direction: column !important; }` +
+    `.capture-scene > :last-child { flex: 1 1 auto !important; }` +
+    // Plain underlines. Chromium prints a skip-ink underline as an even-odd clip of the whole page
+    // minus each descender, and PDF viewers built on PDFium (Edge, Chrome) rasterise a page-sized
+    // mask per clip: a card with many links took seconds per screenful to draw and stuttered when
+    // scrolled. Images keep skip-ink, where it costs nothing.
+    '*, *::before, *::after { text-decoration-skip-ink: none !important; }';
 }
 
 export function normalizeCaptureRequest(request: MarkdownCaptureRequest): MarkdownCaptureRequest {
@@ -76,7 +93,10 @@ export function normalizeCaptureRequest(request: MarkdownCaptureRequest): Markdo
       showTokens: Boolean(request?.options?.showTokens),
       width,
       margin: request?.options?.margin === undefined ? undefined : clampCaptureMargin(request.options.margin),
-      background: safeBackground,
+      cardOpacity: request?.options?.cardOpacity === undefined ? undefined : clampCardOpacity(request.options.cardOpacity),
+      // Stripped before the page renders, so a PDF whose backdrop flattening fails falls back to
+      // the gradients alone, not to an SVG filter printed into the document.
+      background: format === 'pdf' ? withoutCaptureGrain(safeBackground) : safeBackground,
       cardTheme,
       cardLayout,
       pixelRatio: request?.options?.pixelRatio === 2 ? 2 : 1,
@@ -170,7 +190,7 @@ export async function captureMarkdownDocument(
   // A never-shown window stalls Chromium's rendering, so map it invisibly: transparent, shown
   // inactive, then parked offscreen (macOS pulls a window shown at an offscreen origin back
   // on screen).
-  captureWin.setOpacity(0);
+  hideBeforeMapping(captureWin);
   captureWin.showInactive();
   parkWindowOffscreen(captureWin);
 
@@ -248,16 +268,7 @@ async function captureMarkdownDocumentCore(
     await applyPdfDocumentTitle(captureWin, request);
     captureWin.setContentSize(logicalWidth, logicalHeight);
     await flattenPdfBackdrop(captureWin, logicalWidth, logicalHeight);
-    const cssKey = await captureWin.webContents.insertCSS(
-      `@page { size: ${logicalWidth}px ${pdfHeight}px; margin: 0; }` +
-      `html, body { margin: 0 !important; padding: 0 !important; width: ${logicalWidth}px !important; height: ${pdfHeight}px !important; overflow: hidden !important; box-sizing: border-box !important; }` +
-      // Stretch the backdrop to the whole page so its border stays exactly the configured
-      // margin on all four sides, and let the last card swallow the slack as interior
-      // space — :last-child rather than .capture-card so bubble layouts, which stack
-      // several cards, only stretch the bottom one.
-      `.capture-scene { min-height: ${pdfHeight}px !important; box-sizing: border-box !important; display: flex !important; flex-direction: column !important; }` +
-      `.capture-scene > :last-child { flex: 1 1 auto !important; }`,
-    );
+    const cssKey = await captureWin.webContents.insertCSS(pdfPrintCss(logicalWidth, pdfHeight));
     await captureWin.webContents.executeJavaScript(
       `new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 100))))`,
       true,

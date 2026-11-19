@@ -6,6 +6,7 @@ import { useI18nStore } from '../store/i18nStore';
 import type { AiNameSource } from '../../../shared/aiName';
 import { AiModelMenu } from './AiModelMenu';
 import { AI_NAME_BUTTON_ATTR } from './renameKeys';
+import { MIN_TARGET_PX } from './a11y';
 
 /**
  * One naming request at a time per box: a newer pick, typing, Escape or the box closing drops the
@@ -88,7 +89,7 @@ export const AiNameButton: React.FC<AiNameButtonProps> = ({ busy, disabled, onPi
         <ActionIcon
           {...attrs}
           variant="subtle"
-          size={22}
+          size={MIN_TARGET_PX}
           c="dimmed"
           aria-label={t('aiName.busy')}
           onMouseDown={keepFocus}
@@ -107,7 +108,7 @@ export const AiNameButton: React.FC<AiNameButtonProps> = ({ busy, disabled, onPi
     <ActionIcon
       {...attrs}
       variant="subtle"
-      size={22}
+      size={MIN_TARGET_PX}
       c="dimmed"
       aria-label={t('aiName.button')}
       aria-haspopup={disabled ? undefined : 'menu'}

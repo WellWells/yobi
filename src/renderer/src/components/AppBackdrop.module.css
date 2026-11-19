@@ -1,0 +1,48 @@
+/* The drawn page background of the silk and flowing themes. Behind everything in the window, never
+   in the way of a click, and absent in every other theme. */
+.backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  display: none;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+:root[data-backdrop] .backdrop {
+  display: block;
+}
+
+/* Plain gradients: what shows where the canvas over them could not be painted (no WebGL). */
+.back,
+.front,
+.canvas {
+  position: absolute;
+  inset: 0;
+}
+
+.back {
+  background-image: var(--backdrop-back);
+}
+
+.front {
+  background-image: var(--backdrop-front);
+}
+
+/* Painted by theme/backdropPainter.ts, which also moves it: nothing here animates. */
+.canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.canvas[hidden] {
+  display: none;
+}
+
+/* Asked for more contrast, or colours forced by the system: the plain page colour. */
+@media (prefers-contrast: more), (forced-colors: active) {
+  :root[data-backdrop] .backdrop {
+    display: none;
+  }
+}

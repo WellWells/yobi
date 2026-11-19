@@ -117,7 +117,6 @@ function applyToTranslations(moves: readonly ConversationMove[]): void {
     return {
       jobs: remapKeyed(state.jobs, moves, turnKeyParts),
       memory: remapKeyed(state.memory, moves, turnKeyParts),
-      views: remapKeyed(state.views, moves, turnKeyParts),
       conversation: state.conversation && conversationTo ? { ...state.conversation, path: conversationTo } : state.conversation,
     };
   });

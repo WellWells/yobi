@@ -90,7 +90,7 @@ export const ShikiCodeBlock = React.memo<ShikiCodeBlockProps>(({ lang, code }) =
         display: 'inline-block',
         padding: '2px 7px',
         borderRadius: 4,
-        fontSize: 10,
+            fontSize: '0.625rem',
         lineHeight: 1.4,
       }}
     >
@@ -130,7 +130,7 @@ export const ShikiCodeBlock = React.memo<ShikiCodeBlockProps>(({ lang, code }) =
         style={{
           marginTop: CODE_CHROME.top,
           marginRight: CODE_CHROME.side,
-          color: copied ? 'var(--success)' : 'var(--text-muted)',
+          color: copied ? 'var(--success-text)' : 'var(--text-muted)',
           pointerEvents: 'auto',
         }}
       >

@@ -17,6 +17,7 @@ import type {
 import { mustShowPrompt } from '../../hooks/captureRequest';
 import { SectionLabel } from './SectionLabel';
 import { MarginSlider } from '../capture/MarginSlider';
+import { CardOpacitySlider } from '../capture/CardOpacitySlider';
 
 export interface ExportSettingsPanelProps {
   palettes: readonly CapturePalette[];
@@ -51,6 +52,8 @@ export interface ExportSettingsPanelProps {
   setWidth: (value: number) => void;
   margin: number;
   setMargin: (value: number) => void;
+  cardOpacity: number;
+  setCardOpacity: (value: number) => void;
   hiDpi: boolean;
   setHiDpi: (value: boolean) => void;
   zip: boolean;
@@ -112,6 +115,8 @@ export const ExportSettingsPanel: React.FC<ExportSettingsPanelProps> = ({
   setWidth,
   margin,
   setMargin,
+  cardOpacity,
+  setCardOpacity,
   hiDpi,
   setHiDpi,
   zip,
@@ -181,6 +186,14 @@ export const ExportSettingsPanel: React.FC<ExportSettingsPanelProps> = ({
       </Box>
 
       <Box>
+        <SectionLabel>{t('capture.cardOpacity')}</SectionLabel>
+        <CardOpacitySlider value={cardOpacity} onChange={setCardOpacity} label={t('capture.cardOpacity')} />
+        <Text fz="var(--font-size-sm)" c="var(--text-muted)" mt={6}>
+          {t('capture.cardOpacity.desc')}
+        </Text>
+      </Box>
+
+      <Box>
         <SectionLabel>{t('capture.format')}</SectionLabel>
         <AppSegmentedControl
           value={format}
@@ -195,6 +208,7 @@ export const ExportSettingsPanel: React.FC<ExportSettingsPanelProps> = ({
       <Box>
         <SectionLabel>{t('capture.cardTitle')}</SectionLabel>
         <AppTextInput
+          aria-label={t('capture.cardTitle')}
           value={title}
           onChange={(e) => setTitle(e.currentTarget.value)}
           size="sm"

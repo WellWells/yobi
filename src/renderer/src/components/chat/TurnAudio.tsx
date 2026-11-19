@@ -113,7 +113,8 @@ export const TurnAudio: React.FC<{ file: string; onError: () => void }> = ({ fil
             value={duration > 0 ? Math.min(shown, duration) : 0}
             disabled={duration <= 0}
             label={(value) => playerClock(value)}
-            aria-label={t('chat.audio.position')}
+            thumbLabel={t('chat.audio.position')}
+            thumbValueText={(value) => playerClock(value)}
             onChange={setDragging}
             onChangeEnd={seek}
             styles={{ track: { '--slider-track-bg': 'var(--bg-tertiary)' } as React.CSSProperties }}

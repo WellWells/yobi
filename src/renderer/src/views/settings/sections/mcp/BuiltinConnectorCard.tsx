@@ -1,8 +1,7 @@
 import React from 'react';
 import { Badge, Box, Group, Loader, Stack, Text } from '@mantine/core';
 import { ToggleSwitch } from '../../../../components/ToggleSwitch';
-import { renderServerIcon, serverTint } from '../../../../config/connectorIcons';
-import { useThemeStore } from '../../../../store/themeStore';
+import { ConnectorTile } from './ConnectorTile';
 import { findBuiltinConnector } from '../../../../../../shared/builtinConnectors';
 import classes from './ConnectorCard.module.css';
 import { BotAccessCaption } from '../BotAccessCaption';
@@ -24,6 +23,8 @@ interface Props {
   setup?: React.ReactNode;
   /** Always shown under the card, on or off — for what other features use too (X's sign-in serves flows). */
   footer?: React.ReactNode;
+  /** Shown under the card while the connector is on, connected or not (the program it runs). */
+  whenOn?: React.ReactNode;
   /** Who may use this connector through the bots (read-only); omitted while no bot is on. */
   botAccess?: string;
   /** Why this connector has no slash command, or which connector went without the name it kept. */
@@ -33,13 +34,11 @@ interface Props {
 // An opt-in connector hosted by the app. Once on it behaves like any other connector (its tools
 // drive chat and its slash command), but it is switched rather than added by URL.
 export const BuiltinConnectorCard: React.FC<Props> = ({
-  mcp, t, id, title, description, toggleLabel, onOpenTools, waitingError, setup, footer, botAccess, commandNotice,
+  mcp, t, id, title, description, toggleLabel, onOpenTools, waitingError, setup, footer, whenOn, botAccess, commandNotice,
 }) => {
   const server = mcp.servers.find((s) => s.id === id);
   // The same mark and colour the chat menus show, from the one resolver both read.
   const url = findBuiltinConnector(id)?.descriptor().url ?? '';
-  const theme = useThemeStore((state) => state.theme);
-  const tint = serverTint(url, theme);
   const enabled = Boolean(server);
   const connected = server?.status === 'connected';
   const pending = mcp.busyId === id || server?.status === 'connecting';
@@ -63,16 +62,7 @@ export const BuiltinConnectorCard: React.FC<Props> = ({
     >
       <Group justify="space-between" align="flex-start" wrap="nowrap" gap={10}>
         <Group gap={10} align="flex-start" wrap="nowrap" flex={1} miw={0}>
-          <Box
-            c={tint ?? 'var(--text-primary)'}
-            style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              width: 30, height: 30, flexShrink: 0, borderRadius: 'var(--mantine-radius-sm)',
-              background: 'var(--bg-tertiary)',
-            }}
-          >
-            {renderServerIcon(url)}
-          </Box>
+          <ConnectorTile url={url} />
           <Stack gap={3} miw={0}>
             <Group gap={6} wrap="nowrap" miw={0}>
               <Text fz="var(--font-size-base)" fw={600} c="var(--text-primary)" truncate>
@@ -114,6 +104,12 @@ export const BuiltinConnectorCard: React.FC<Props> = ({
       {setup && enabled && !connected && !pending && (
         <Box mt={10} pl={40}>
           {setup}
+        </Box>
+      )}
+
+      {enabled && whenOn && (
+        <Box mt={10} pl={40} onClick={(e) => e.stopPropagation()}>
+          {whenOn}
         </Box>
       )}
 

@@ -44,8 +44,8 @@ export const SchedulePreviewPanel: React.FC<SchedulePreviewPanelProps> = ({ trig
 
       {warningKey && (
         <Group gap={6} align="center" wrap="nowrap">
-          <TriangleExclamationPoint size={13} color="var(--mantine-color-warning)" />
-          <Text fz="xs" c="var(--mantine-color-warning)">{t(warningKey)}</Text>
+          <TriangleExclamationPoint size={13} color="var(--warning-text)" />
+          <Text fz="xs" c="var(--warning-text)">{t(warningKey)}</Text>
         </Group>
       )}
 

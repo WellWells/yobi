@@ -4,6 +4,7 @@
  * join raises one notification per group — a busy group that re-sends its join, or a promotion
  * reported as another membership change, does not raise it again.
  */
+import { config } from '../config';
 import { sendWebNotification } from '../helpers';
 import { getLangCache, t } from '../i18n';
 import { BOT_PLATFORM_NAMES } from '../../shared/types';
@@ -29,13 +30,15 @@ export function takeLineJoinCard(now: Date = new Date()): boolean {
 /**
  * The bot was just added to this group. Notifies the owner once, and only while the group is
  * still pending (a group allowed before, removed and added back keeps its grants). Returns
- * whether a notification went out.
+ * whether this join is news (the first for a pending group), whatever the desktop switch says.
  */
 export function notifyBotGroupJoined(platform: BotPlatform, group: { id: string; title?: string }): boolean {
   const id = group.id.trim();
   const key = `${platform}:${id}`;
   if (!id || noticed.has(key) || !isBotGroupPending(platform, id)) return false;
   noticed.add(key);
+  // The switch silences the desktop notice only; callers still send the managers their card.
+  if (!config.notifyEvents.botRequests) return true;
   const strings = getLangCache();
   sendWebNotification(
     t(strings, 'bot.group.notify.title'),

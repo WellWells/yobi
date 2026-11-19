@@ -115,6 +115,7 @@ export const ConversationSearchOverlay: React.FC<ConversationSearchOverlayProps>
       onSelect={selectFileRow}
       onClosed={handleClosed}
       placeholder={t('sidebar.searchPlaceholder')}
+      label={t('sidebar.search.tooltip')}
       emptyLabel={query.trim() ? t('sidebar.emptyFiltered') : t('sidebar.empty')}
       renderRow={renderRow}
     />

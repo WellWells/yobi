@@ -1,5 +1,6 @@
 import React from 'react';
 import { Box, Group, Stack, Text, Button as MButton } from '@mantine/core';
+import { SearchSection } from '../FreezeWhileHidden';
 import { KeyRound, Link, MessageSquare, Plug, Send, Users, UsersRound } from 'lucide-react';
 import dayjs from 'dayjs';
 import { AppPasswordInput } from '../../../components/AppPasswordInput';
@@ -7,10 +8,7 @@ import { SectionCard, SettingRow, SettingField, SettingDivider, ToggleSwitch, Se
 import { SecretHealthAlert } from '../../../components/SecretHealthAlert';
 import { fillTemplate } from '../../../../../shared/fillTemplate';
 import { BotDefaultModelSetting } from './BotDefaultModelSetting';
-import { BotReplyPreview } from './BotReplyPreview';
-import { BotAskTtlSetting } from './BotAskTtlSetting';
-import type { BotCommandsControls } from './BotAskTtlSetting';
-import { BotAudienceSection } from './BotAudienceSection';
+import { BotGroupList, BotUserList, useBotAudience } from './BotAudienceSection';
 import { TelegramPairingPanel } from './TelegramPairingPanel';
 import { TelegramPairedUsers } from './TelegramPairedUsers';
 import { BotDefaultGrants } from './BotUserPermissions';
@@ -23,10 +21,10 @@ type TelegramSettings = ReturnType<typeof useTelegramSettings>;
 
 function getTelegramRuntimeColor(status?: string): string {
   switch (status) {
-    case 'running': return 'var(--mantine-color-success)';
-    case 'error': return 'var(--mantine-color-error)';
+    case 'running': return 'var(--success-text)';
+    case 'error': return 'var(--error-text)';
     case 'starting':
-    case 'stopping': return 'var(--mantine-color-warning)';
+    case 'stopping': return 'var(--warning-text)';
     default: return 'var(--mantine-color-dimmed)';
   }
 }
@@ -45,8 +43,6 @@ interface Props {
   telegram: TelegramSettings;
   /** Each paired account's grants and owner mark, edited under its row. */
   access: BotAccessControls;
-  /** The shared commands config; its answer window is shown in this card's reply section. */
-  botCommands?: BotCommandsControls;
   t: (key: string) => string;
   showSection: (tags: readonly string[], category: 'bots') => boolean;
   isSearching: boolean;
@@ -54,16 +50,17 @@ interface Props {
 }
 
 export const TelegramSection: React.FC<Props> = ({
-  telegram, access, botCommands, t, showSection, isSearching, sectionGap,
+  telegram, access, t, showSection, isSearching, sectionGap,
 }) => {
   const settings = telegram.telegramSettings;
+  const audience = useBotAudience('telegram', settings, t);
   const runtimeStatus = settings?.runtime.status;
   const pendingCodes = settings?.pairing.pendingCodes ?? [];
   const pairedUsers = settings?.pairing.pairedUsers ?? [];
   const expanded = (settings?.enabled ?? false) || isSearching;
 
   return (
-    <Box display={showSection(TAG_SETS.telegram, 'bots') ? 'block' : 'none'}>
+    <SearchSection shown={showSection(TAG_SETS.telegram, 'bots')}>
       <SectionCard style={{ marginBottom: sectionGap }}>
         <Group justify="space-between" align="center">
           <Group gap={8} align="center">
@@ -97,6 +94,7 @@ export const TelegramSection: React.FC<Props> = ({
           hint={expanded ? undefined : t('settings.telegram.enabled.offHint')}
           control={
             <ToggleSwitch
+              aria-label={t('settings.telegram.enabled')}
               checked={settings?.enabled ?? false}
               onChange={() => { void telegram.handleToggleTelegramEnabled(); }}
             />
@@ -144,7 +142,7 @@ export const TelegramSection: React.FC<Props> = ({
                     </Text>
                   )}
                   {settings?.runtime.errorMessage && (
-                    <Text fz="var(--font-size-sm)" c="var(--mantine-color-error)" mt={settings?.runtime.botUsername ? 4 : 0}>
+                    <Text fz="var(--font-size-sm)" c="var(--error-text)" mt={settings?.runtime.botUsername ? 4 : 0}>
                       {settings.runtime.errorMessage}
                     </Text>
                   )}
@@ -184,7 +182,7 @@ export const TelegramSection: React.FC<Props> = ({
                 t={t}
               />
 
-              <BotDefaultGrants access={access} t={t} />
+              <SettingDivider my={4} />
 
               <Text fz="var(--font-size-sm)" fw={600} c="var(--mantine-color-default-color)">
                 {t('settings.telegram.paired.title')}
@@ -206,36 +204,20 @@ export const TelegramSection: React.FC<Props> = ({
                 onUnpair={(userId) => { void telegram.handleUnpairTelegramUser(userId); }}
                 t={t}
               />
-            </Stack>
 
-            <SettingDivider my={16} />
-
-            <SectionTitle icon={<MessageSquare size={15} />} label={t('settings.telegram.section.reply')} />
-            <Stack gap={12}>
-              <BotReplyPreview note={t('settings.telegram.preview.note')} t={t} />
+              <BotUserList audience={audience} t={t} />
 
               <SettingDivider my={4} />
 
-              {settings && (
-                <BotDefaultModelSetting
-                  value={settings.llmDirect}
-                  busy={telegram.telegramBusy}
-                  hint={t('settings.telegram.defaultModel.hint')}
-                  onUpdate={(patch) => { void telegram.handleUpdateTelegramLlmDirect(patch); }}
-                  t={t}
-                />
-              )}
-
-              {botCommands && <BotAskTtlSetting botCommands={botCommands} t={t} />}
+              <BotDefaultGrants access={access} t={t} />
             </Stack>
 
             <SettingDivider my={16} />
 
             <SectionTitle icon={<UsersRound size={15} />} label={t('settings.telegram.chats.title')} />
-            <BotAudienceSection
-              platform="telegram"
+            <BotGroupList
+              audience={audience}
               connectors={access.connectors}
-              refreshKey={settings}
               channels={settings?.channels ?? []}
               contacts={settings?.contacts ?? []}
               onForgetChannel={(chatId) => { void telegram.handleForgetTelegramChannel(chatId); }}
@@ -247,6 +229,7 @@ export const TelegramSection: React.FC<Props> = ({
                     alignStart
                     control={
                       <ToggleSwitch
+                        aria-label={t('settings.telegram.allowGroup')}
                         checked={settings?.allowGroupCommands ?? false}
                         onChange={() => { void telegram.handleToggleTelegramGroupCommands(); }}
                       />
@@ -262,6 +245,34 @@ export const TelegramSection: React.FC<Props> = ({
 
             <SettingDivider my={16} />
 
+            <SectionTitle icon={<MessageSquare size={15} />} label={t('settings.bot.section.answer')} />
+            <Stack gap={12}>
+              {settings && (
+                <BotDefaultModelSetting
+                  value={settings.llmDirect}
+                  busy={telegram.telegramBusy}
+                  hint={t('settings.telegram.defaultModel.hint')}
+                  onUpdate={(patch) => { void telegram.handleUpdateTelegramLlmDirect(patch); }}
+                  t={t}
+                />
+              )}
+
+              <SettingRow
+                label={t('settings.telegram.replaceLinkMessage')}
+                hint={t('settings.telegram.replaceLinkMessage.hint')}
+                alignStart
+                control={
+                  <ToggleSwitch
+                    aria-label={t('settings.telegram.replaceLinkMessage')}
+                    checked={settings?.replaceLinkMessage ?? true}
+                    onChange={() => { void telegram.handleToggleTelegramReplaceLinkMessage(); }}
+                  />
+                }
+              />
+            </Stack>
+
+            <SettingDivider my={16} />
+
             <TelegramLargeUploadSettings
               saved={settings?.largeUpload}
               reload={telegram.loadTelegramSettings}
@@ -270,6 +281,6 @@ export const TelegramSection: React.FC<Props> = ({
           </>
         )}
       </SectionCard>
-    </Box>
+    </SearchSection>
   );
 };

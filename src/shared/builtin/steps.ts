@@ -52,7 +52,17 @@ export const BOT_MODEL = `{{${BOT_MODEL_VARIABLE}}}`;
 export const CHAT_MODEL_VARIABLE = 'chat.modelUrl';
 export const CHAT_MODEL = `{{${CHAT_MODEL_VARIABLE}}}`;
 
-/** One answer to a fixed prompt, on `provider`: the bot's model in a bot chat, the chat's own model on the desktop. */
-export function llmStep(prompt: string, provider: string): [SkillType, Record<string, string>, string] {
-  return ['llm', { ...DEFAULT_SKILL_CONFIG.llm, prompt, provider }, 'llm_1'];
+/**
+ * One answer to a fixed prompt, on `provider`: the bot's model in a bot chat, the chat's own model
+ * on the desktop. `imageUrls` are pictures the step sends when the model takes them and leaves
+ * out when it does not (a built-in field only, like `x_media`'s `audio`). `once` (a bot chat's
+ * analysis, `answerCache`, built-in only too) hands back the answer the same model already gave to
+ * the very same prompt instead of asking again: a second person pressing "analyze" in a group.
+ */
+export function llmStep(prompt: string, provider: string, imageUrls?: string, once = false): [SkillType, Record<string, string>, string] {
+  return ['llm', {
+    ...DEFAULT_SKILL_CONFIG.llm, prompt, provider,
+    ...(imageUrls ? { imageUrls } : {}),
+    ...(once ? { answerCache: 'true' } : {}),
+  }, 'llm_1'];
 }

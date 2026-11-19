@@ -14,8 +14,8 @@ export interface FeedRead {
  * an error status: a feed body served with a 4xx keeps working.
  */
 export async function readFeed(url: string, signal?: AbortSignal): Promise<FeedRead> {
-  const { status, text } = signal ? await fetchRawResponse(url, { signal }) : await fetchRawResponse(url);
-  const items = parseRssFeed(text);
+  const { status, text, finalUrl } = signal ? await fetchRawResponse(url, { signal }) : await fetchRawResponse(url);
+  const items = parseRssFeed(text, finalUrl || url);
   if (items.length === 0 && status >= 400) throw new Error(`HTTP ${status}`);
   return { items, body: text };
 }

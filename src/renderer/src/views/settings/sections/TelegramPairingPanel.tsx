@@ -2,6 +2,8 @@ import React from 'react';
 import { ActionIcon, Group, Menu, Stack, Text, Tooltip } from '@mantine/core';
 import { Copy, ExternalLink, Link, EllipsisVertical, CircleX } from 'lucide-react';
 import type { TelegramPendingCode } from '../../../../../shared/types';
+import { DangerMenuItem } from '../../../components/DangerMenuItem';
+import { TooltipTarget } from '../../../components/TooltipTarget';
 
 interface Props {
   pendingCodes: TelegramPendingCode[];
@@ -50,11 +52,11 @@ export const TelegramPairingPanel: React.FC<Props> = ({
             </Tooltip>
             <Menu position="bottom-end" withinPortal>
               <Menu.Target>
-                <Tooltip label={t('common.moreActions')} position="bottom">
+                <TooltipTarget label={t('common.moreActions')} position="bottom">
                   <ActionIcon variant="subtle" size={26} aria-label={t('common.moreActions')}>
                     <EllipsisVertical size={13} />
                   </ActionIcon>
-                </Tooltip>
+                </TooltipTarget>
               </Menu.Target>
               <Menu.Dropdown>
                 <Menu.Item leftSection={<Copy size={13} />} onClick={() => onCopyCode(item.code)}>
@@ -64,9 +66,9 @@ export const TelegramPairingPanel: React.FC<Props> = ({
                   {t('settings.telegram.pairing.copyLink')}
                 </Menu.Item>
                 <Menu.Divider />
-                <Menu.Item color="red" leftSection={<CircleX size={13} />} onClick={() => onRevoke(item.code)}>
+                <DangerMenuItem leftSection={<CircleX size={13} />} onClick={() => onRevoke(item.code)}>
                   {t('settings.telegram.pairing.revoke')}
-                </Menu.Item>
+                </DangerMenuItem>
               </Menu.Dropdown>
             </Menu>
           </Group>

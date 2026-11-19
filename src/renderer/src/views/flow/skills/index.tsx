@@ -1,6 +1,6 @@
 import React from 'react';
 import {
-  MoonStar, ReceiptText, Terminal, Globe, MessageSquare, Clipboard, Timer, Bell, Camera, Bot, Rss, OctagonX, StickyNote, ListTree, Repeat, IterationCcw, Split, Merge, Cpu, Webhook, MonitorPlay, ListVideo, Film, MonitorDown, Rocket, Braces, Power, RotateCcw, AppWindow, SquareCode, SquareX, FilePen, FileText, Share2, FolderOpen, Inbox, Mail, Trash, Type, TrendingUp, ArrowRightLeft, Cloud, Wind, CalendarDays, Download, Dices, ArrowRightFromLine, SkipForward, Search, MapPin, Microscope, GitCompare, MessagesSquare, MessageSquareQuote, MessageSquareText, Flame, SquarePlay, Plug, Newspaper,
+  MoonStar, ReceiptText, TabletSmartphone, Tags, Terminal, Globe, MessageSquare, Clipboard, Timer, Bell, Camera, Bot, Rss, OctagonX, StickyNote, ListTree, Repeat, IterationCcw, Split, Merge, Cpu, Webhook, MonitorPlay, ListVideo, Film, MonitorDown, Rocket, Braces, Power, RotateCcw, AppWindow, SquareCode, SquareX, FilePen, FileText, Share2, FolderOpen, Inbox, Mail, Trash, Type, TrendingUp, ArrowRightLeft, Cloud, Wind, CalendarDays, Download, Dices, ArrowRightFromLine, SkipForward, Search, MapPin, Microscope, GitCompare, MessagesSquare, MessageSquareQuote, MessageSquareText, Flame, SquarePlay, Plug, Newspaper,
 } from 'lucide-react';
 import { XIcon } from '../../../config/brandIcons';
 import type { SkillType } from '../../../../../shared/types';
@@ -59,6 +59,8 @@ import { CalendarConfig } from './CalendarConfig';
 import { MailFetchConfig } from './MailFetchConfig';
 import { AlmanacConfig } from './AlmanacConfig';
 import { TwInvoiceConfig } from './TwInvoiceConfig';
+import { AppStoreConfig } from './AppStoreConfig';
+import { PriceSearchConfig } from './PriceSearchConfig';
 import { FileDownloadConfig } from './FileDownloadConfig';
 import { RandomConfig } from './RandomConfig';
 import { OnChangeConfig } from './OnChangeConfig';
@@ -127,6 +129,8 @@ export const STEP_CONFIG_EDITOR: SkillConfigEditorMap = {
   mail_fetch: MailFetchConfig,
   almanac: AlmanacConfig,
   tw_invoice: TwInvoiceConfig,
+  app_store: AppStoreConfig,
+  price_search: PriceSearchConfig,
   random: RandomConfig,
 };
 
@@ -191,6 +195,8 @@ export const SKILL_ICON: Record<SkillType, React.ReactNode> = {
   mail_fetch: <Inbox size={14} />,
   almanac: <MoonStar size={14} />,
   tw_invoice: <ReceiptText size={14} />,
+  app_store: <TabletSmartphone size={14} />,
+  price_search: <Tags size={14} />,
   random: <Dices size={14} />,
 };
 

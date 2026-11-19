@@ -23,6 +23,9 @@ export const BUILTIN_RAIL_SERVER_ID = 'builtin-rail';
 /** Stable id/command of the in-process connector that reads PTT (www.ptt.cc) boards and posts. */
 export const BUILTIN_PTT_SERVER_ID = 'builtin-ptt';
 
+/** Stable id/command of the in-process connector for Taiwan's laws and regulations (全國法規資料庫, indexed locally). */
+export const BUILTIN_TWLAW_SERVER_ID = 'builtin-twlaw';
+
 /** Stable id/command of the in-process connector for the user's own mailbox (IMAP + the shared SMTP account). */
 export const BUILTIN_MAIL_SERVER_ID = 'builtin-mail';
 
@@ -35,10 +38,24 @@ export const BUILTIN_TRANSLATE_SERVER_ID = 'builtin-translate';
 /** Stable id/command of the in-process connector that reads a web page's text by link. */
 export const BUILTIN_PAGE_SERVER_ID = 'builtin-page';
 
+/** Stable id/command of the connector that creates, reads and edits Office files through OfficeCLI. */
+export const BUILTIN_OFFICE_SERVER_ID = 'builtin-office';
+
+/** i18n key the registry keeps as the Office connector's error while no OfficeCLI is found. */
+export const OFFICE_TOOL_MISSING_ERROR = 'settings.mcp.office.unavailable';
+
+/**
+ * Stable id/command of the in-process connector that controls Yobi itself: its default models,
+ * flows, conversations, statistics, updates and restarts. Who may use it from a bot is the
+ * `manage` grant, never a connector grant (`shared/botPermissions.ts`).
+ */
+export const BUILTIN_YOBI_SERVER_ID = 'builtin-yobi';
+
 /** The config flag that records the user's opt-in for each built-in connector. */
 export type BuiltinConnectorFlag =
   | 'lineReaderEnabled' | 'thunderbirdEnabled' | 'xConnectorEnabled' | 'taiwanRailEnabled' | 'pttConnectorEnabled' | 'mailEnabled'
-  | 'calendarEnabled' | 'translateConnectorEnabled' | 'pageConnectorEnabled' | SiteConnectorFlag;
+  | 'calendarEnabled' | 'translateConnectorEnabled' | 'pageConnectorEnabled' | 'officeConnectorEnabled' | 'yobiConnectorEnabled'
+  | 'taiwanLawEnabled' | SiteConnectorFlag;
 
 export interface BuiltinConnector {
   id: string;
@@ -113,6 +130,16 @@ export const BUILTIN_CONNECTORS: readonly BuiltinConnector[] = [
     publicData: true,
   },
   {
+    id: BUILTIN_TWLAW_SERVER_ID,
+    flag: 'taiwanLawEnabled',
+    descriptor: () => builtinServerConfig('twlaw', 'Taiwan Law'),
+    // Words for statute text itself. No bare 法律 or 法: "法律問題怎麼寫信" is a writing request, and a
+    // match turns the message into an agent run with the connector open.
+    keywords: ['法條', '法条', '條文', '条文', '法規', '法规', '施行細則', '施行细则', '全國法規', '全国法规', 'Taiwan law', 'Taiwanese law'],
+    // The ministry's published laws only.
+    publicData: true,
+  },
+  {
     id: BUILTIN_MAIL_SERVER_ID,
     flag: 'mailEnabled',
     descriptor: () => builtinServerConfig('mail', 'Mail'),
@@ -142,14 +169,38 @@ export const BUILTIN_CONNECTORS: readonly BuiltinConnector[] = [
   {
     id: BUILTIN_PAGE_SERVER_ID,
     flag: 'pageConnectorEnabled',
-    descriptor: () => builtinServerConfig('page', 'Universal Page Reader'),
+    descriptor: () => builtinServerConfig('page', 'Page Reader'),
     // No bare 內文 or 新聞: a match turns the message into an agent run, and it is on by default. Its
-    // title counts as a keyword too, so it is not a phrase people say either. A link is what names it.
-    keywords: ['通用網頁讀取', '通用网页读取', '取得內文', '获取正文', '網頁內文', '网页内文', '新聞內文', '新聞全文', '文章全文'],
+    // title counts as a keyword too: "讀取網頁" asks for exactly this job, a bare 網頁 never wakes it. A link
+    // with words around it is what names it otherwise.
+    keywords: ['讀取網頁', '读取网页', 'page reader', '通用網頁讀取', '通用网页读取', '取得內文', '获取正文', '網頁內文', '网页内文', '新聞內文', '新聞全文', '文章全文'],
     mentionedIn: asksAboutLink,
     // Public pages, read signed out, public addresses only.
     publicData: true,
     anyPage: true,
+  },
+  {
+    id: BUILTIN_OFFICE_SERVER_ID,
+    flag: 'officeConnectorEnabled',
+    descriptor: () => builtinServerConfig('office', 'Office'),
+    // File types and the programs' names. No bare "Word" or "表格": "in a word", "做個表格" (a Markdown
+    // table) are not about a file, and a match turns the message into an agent run.
+    keywords: [
+      'Excel', 'PowerPoint', '.xlsx', '.docx', '.pptx', 'xlsx', 'docx', 'pptx', '試算表', '电子表格', '工作表', '簡報檔', '演示文稿',
+      'Word 檔', 'Word檔', 'Word 文件', 'Word文件', 'Word 文档', 'Word文档',
+    ],
+  },
+  {
+    id: BUILTIN_YOBI_SERVER_ID,
+    flag: 'yobiConnectorEnabled',
+    // Not plain "Yobi": a LINE PC message starts with the name, and a match declares the connector
+    // in every one of them. Phrases about Yobi's own settings only; it is in every run's catalog
+    // anyway, so "關掉早上的流程" reaches it without a keyword.
+    descriptor: () => builtinServerConfig('yobi', 'Yobi Control'),
+    keywords: [
+      'Yobi 設定', 'Yobi設定', 'Yobi 设置', 'Yobi设置', 'Yobi settings', '預設模型', '预设模型', '默认模型', 'default model',
+      '檢查更新', '检查更新', '重設統計', '重置统计', '重新啟動 Yobi', '重啟 Yobi', '重启 Yobi', 'restart Yobi',
+    ],
   },
   ...SITE_CONNECTOR_ROWS.map((row): BuiltinConnector => ({
     id: siteConnectorServerId(row.site),
@@ -167,10 +218,13 @@ export const BUILTIN_CONNECTOR_TITLES: Readonly<Record<string, string>> = {
   [BUILTIN_X_SERVER_ID]: 'settings.mcp.x.title',
   [BUILTIN_RAIL_SERVER_ID]: 'settings.mcp.rail.title',
   [BUILTIN_PTT_SERVER_ID]: 'settings.mcp.ptt.title',
+  [BUILTIN_TWLAW_SERVER_ID]: 'settings.mcp.twlaw.title',
   [BUILTIN_MAIL_SERVER_ID]: 'settings.mcp.mail.title',
   [BUILTIN_CALENDAR_SERVER_ID]: 'settings.mcp.calendar.title',
   [BUILTIN_TRANSLATE_SERVER_ID]: 'settings.mcp.translate.title',
   [BUILTIN_PAGE_SERVER_ID]: 'settings.mcp.page.title',
+  [BUILTIN_OFFICE_SERVER_ID]: 'settings.mcp.office.title',
+  [BUILTIN_YOBI_SERVER_ID]: 'settings.mcp.yobi.title',
   ...Object.fromEntries(SITE_CONNECTOR_ROWS.map((row) => [siteConnectorServerId(row.site), row.keys.title])),
 };
 

@@ -35,7 +35,7 @@ export const SystemTriggerFields: React.FC<SystemTriggerFieldsProps> = ({ value,
         />
         <Text fz="xs" c="dimmed">{t(`flow.trigger.system.${event}.hint`)}</Text>
         {!supported && (
-          <Text fz="xs" c="var(--mantine-color-warning)">{t('flow.trigger.system.unsupported')}</Text>
+          <Text fz="xs" c="var(--warning-text)">{t('flow.trigger.system.unsupported')}</Text>
         )}
       </Stack>
     </Box>

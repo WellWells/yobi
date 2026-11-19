@@ -1,7 +1,8 @@
 import React from 'react';
-import { Box } from '@mantine/core';
+import { SearchSection } from '../FreezeWhileHidden';
 import { Sparkles, Waypoints } from 'lucide-react';
-import { SectionCard, SectionTitle } from '../components';
+import { SectionCard, SectionTitle, SettingDivider } from '../components';
+import { BotAskTtlSetting } from './BotAskTtlSetting';
 import { BotProviderCommands } from './BotProviderCommands';
 import { BotBuiltinCommands } from './BotBuiltinCommands';
 import { TAG_SETS } from '../hooks/useSettingsNav';
@@ -23,7 +24,7 @@ interface Props {
 export const BotCommandsSection: React.FC<Props> = ({
   botCommands, anyBotEnabled, roster, t, showSection, isSearching, sectionGap,
 }) => (
-  <Box display={showSection(TAG_SETS.bots, 'bots') && (anyBotEnabled || isSearching) ? 'block' : 'none'}>
+  <SearchSection shown={showSection(TAG_SETS.bots, 'bots') && (anyBotEnabled || isSearching)}>
     <SectionCard style={{ marginBottom: sectionGap }}>
       <SectionTitle icon={<Sparkles size={15} />} label={t('settings.bot.commands.title')} />
 
@@ -51,6 +52,10 @@ export const BotCommandsSection: React.FC<Props> = ({
           t={t}
         />
       )}
+
+      {/* Shared by every bot, so it is shown once here rather than in each platform's card. */}
+      <SettingDivider my={16} />
+      <BotAskTtlSetting botCommands={botCommands} t={t} />
     </SectionCard>
-  </Box>
+  </SearchSection>
 );

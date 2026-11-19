@@ -9,7 +9,7 @@ import { NEW_CONVERSATION_KEY } from '../../../store/appStore';
 import { useI18nStore } from '../../../store/i18nStore';
 import { translateBusy, turnKey, useTranslateStore, type TurnTranslateJob } from '../../../store/translateStore';
 import { convertToTraditional } from '../../../utils/openccRuntime';
-import { showSavedContent } from '../answerEditActions';
+import { showSavedContent, writeAnswer } from '../answerEditActions';
 import { ensureWritingModel } from '../writingToolsActions';
 
 /**
@@ -130,7 +130,6 @@ async function settle(key: string, id: string, path: string, turnIndex: number, 
     return;
   }
   store.setJob(key, null);
-  store.setView(key, 'both');
 }
 
 /** Translates one answer whole with the quick-action model, and keeps the result under it. */
@@ -201,6 +200,41 @@ export function cancelTurnTranslation(path: string, turnIndex: number): void {
   if (!job) return;
   if (translateBusy(job) && job.by === 'ai') cancelTranslation(job.id);
   useTranslateStore.getState().setJob(key, null);
+}
+
+/**
+ * Puts the translation in place of the answer: an edit like any other, with undo. The translation
+ * stays in the marker, so undo shows it again under the original.
+ */
+export async function replaceAnswerWithTranslation(args: {
+  path: string;
+  turnIndex: number;
+  turnCount: number;
+  editedAt: string | null;
+  response: string;
+  text: string;
+}): Promise<void> {
+  const { t } = useI18nStore.getState();
+  // The button already says so; this covers a translation started after it was drawn.
+  if (translateBusy(useTranslateStore.getState().jobs[turnKey(args.path, args.turnIndex)])) {
+    showAppNotice({ message: t('chat.edit.lockedTranslating'), level: 'error' });
+    return;
+  }
+  const result = await writeAnswer({
+    path: args.path,
+    turnIndex: args.turnIndex,
+    turnCount: args.turnCount,
+    editedAt: args.editedAt,
+    expected: args.response,
+    response: args.text,
+  });
+  if (result.ok) return;
+  if (result.reason === 'conflict' || result.reason === 'missing') {
+    void reloadOpenConversation();
+    showAppNotice({ message: t('chat.translate.replace.changed'), level: 'error' });
+    return;
+  }
+  showAppNotice({ message: t('chat.edit.failed'), level: 'error' });
 }
 
 /** Takes the translation away (the answer itself is never touched). */

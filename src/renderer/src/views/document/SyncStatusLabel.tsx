@@ -24,8 +24,8 @@ export const SyncStatusLabel: React.FC<{ line: SyncLine | null; t: (key: string)
     case 'notConnected':
       return (
         <Group gap={4} wrap="nowrap" style={{ flexShrink: 0 }}>
-          <CloudOff size={12} color="var(--mantine-color-warning)" />
-          <Text fz="var(--font-size-xs)" c="var(--mantine-color-warning)" style={{ whiteSpace: 'nowrap' }}>
+          <CloudOff size={12} color="var(--warning-text)" />
+          <Text fz="var(--font-size-xs)" c="var(--warning-text)" style={{ whiteSpace: 'nowrap' }}>
             {t('notion.status.notConnected')}
           </Text>
           <Anchor component="button" fz="var(--font-size-xs)" onClick={() => useAppStore.getState().openSettingsCategory('connectors')}>
@@ -34,23 +34,23 @@ export const SyncStatusLabel: React.FC<{ line: SyncLine | null; t: (key: string)
         </Group>
       );
     case 'conflicts':
-      return text(fillTemplate(t('notion.status.conflicts'), { count: String(line.count) }), 'var(--mantine-color-warning)', <CircleExclamationPoint size={12} color="var(--mantine-color-warning)" />);
+      return text(fillTemplate(t('notion.status.conflicts'), { count: String(line.count) }), 'var(--warning-text)', <CircleExclamationPoint size={12} color="var(--warning-text)" />);
     case 'locked':
       return text(
         fillTemplate(t('notion.status.locked'), { count: String(line.count) }),
-        'var(--mantine-color-warning)',
-        <CircleExclamationPoint size={12} color="var(--mantine-color-warning)" />,
+        'var(--warning-text)',
+        <CircleExclamationPoint size={12} color="var(--warning-text)" />,
         t('notion.sync.lockedReason'),
       );
     case 'error':
-      return text(t(`notion.error.${line.error}`), 'var(--mantine-color-error)', <CircleExclamationPoint size={12} color="var(--mantine-color-error)" />);
+      return text(t(`notion.error.${line.error}`), 'var(--error-text)', <CircleExclamationPoint size={12} color="var(--error-text)" />);
     case 'unsynced':
-      return text(t('notion.status.unsynced'), 'var(--mantine-color-warning)', <CircleExclamationPoint size={12} color="var(--mantine-color-warning)" />);
+      return text(t('notion.status.unsynced'), 'var(--warning-text)', <CircleExclamationPoint size={12} color="var(--warning-text)" />);
     case 'synced':
       return text(
         line.at ? fillTemplate(t('notion.status.syncedAt'), { time: formatTime(line.at) }) : t('notion.status.synced'),
         'var(--text-muted)',
-        <Check size={12} color="var(--mantine-color-success)" />,
+        <Check size={12} color="var(--success-text)" />,
       );
     default:
       return null;

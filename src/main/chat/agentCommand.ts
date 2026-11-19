@@ -30,6 +30,7 @@ import { sendLog, sendToRenderer } from '../helpers';
 import { buildCombinedPromptFromPrefs, localizeUserFacingError, t } from '../i18n';
 import { agentPromptPrefs, agentRunIsOwner, prefsReshapeAnswers, renderAgentPrefsBlock } from './agentPrefs';
 import { getProviderLabel } from '../providers';
+import { getByokContextTokensForUrl } from '../providers/byokModelLimits';
 import { runAgent } from '../flow/agent/agentEngine';
 import { sendBuildEvent } from '../flow/flowBuildBroadcast';
 // Straight from the pure module, not the engine's barrel: delivery needs the fact, not the loop.
@@ -38,6 +39,7 @@ import { buildActionFooter, withActionFooter } from '../flow/agent/actionOutcome
 import { completionNotice, withCompletionNotice } from '../flow/agent/completion';
 import { extractRecapLine } from './recapLine';
 import { withSourcesSection } from '../flow/agent/agentCitations';
+import { knowledgeEntriesFor, knowledgeOnlyBases, knowledgeOnlyRules } from '../flow/agent/agentKnowledge';
 import { agentRecapBlock } from './recapPrompt';
 import { currentRecap } from '../../shared/recap';
 import { researchLabel } from '../../shared/researchIntent';
@@ -48,9 +50,10 @@ import type { Fact } from '../flow/agent/toolContracts';
 import { loadConversation } from './conversationStore';
 import {
   AgentRunError, AgentScopeError, BOT_TOOL_SCOPE, FULL_TOOL_SCOPE, isAllowedTool, isWebTool, withDocumentCapability,
-  withHotelReviewCapability, withPictureCapability, withWebCapability,
+  withHotelReviewCapability, knowledgeOnlyScope, withKnowledgeCapability, withPictureCapability, withWebCapability,
 } from '../flow/agent/agentTools';
-import { agentFileExporter, runDocuments } from './agentDocuments';
+import { agentDocumentKeeper, agentFileExporter, runDocuments } from './agentDocuments';
+import { attachedFileNames, isOfficeAttachment, modelUploads, officeWorkingCopies } from './agentWorkingCopies';
 import { isBuiltinTool } from '../flow/agent/agentBuiltins';
 import type { AgentBuiltinTool, FlowSaveRequest } from '../flow/agent/agentBuiltins';
 import type { AgentToolScope } from '../flow/agent/agentTools';
@@ -131,6 +134,8 @@ export interface AgentRunRequest {
   linkQuestions?: boolean;
   /** Only these MCP servers exist for the run (a bot account's per-connector grants). */
   allowedMcpServerIds?: readonly string[];
+  /** These never do (the Yobi connector for a bot account without `manage`). */
+  deniedMcpServerIds?: readonly string[];
   /**
    * A bot account holding the shell grant: each shell command is put to it as a question in the
    * chat and runs when the answer approves it. Without this a bot run never runs one.
@@ -138,9 +143,10 @@ export interface AgentRunRequest {
   shellInChat?: boolean;
   /**
    * The owner in their own private bot chat: a connector change is put to them as a question in the
-   * chat and made when the answer approves it. Without this a bot run's changes are refused.
+   * chat and made when the answer approves it. Without this a bot run's changes are refused. A list
+   * puts only those connectors' changes to them (the Yobi connector, for anyone else with `manage`).
    */
-  connectorChangesInChat?: boolean;
+  connectorChangesInChat?: true | readonly string[];
   /**
    * A bot admin in their own private chat (the owner, or a Telegram admin-grant holder): the scope
    * carries the flow builders, and a flow they build or change is put to them as a question in the
@@ -181,6 +187,9 @@ const BUILTIN_PROGRESS_KEYS: Record<AgentBuiltinTool, string> = {
   export_file: 'agent.progress.exportFile',
   use_skill: 'agent.progress.useSkill',
   movie_info: 'agent.progress.movieInfo',
+  price_search: 'agent.progress.priceSearch',
+  ai_usage: 'agent.progress.aiUsage',
+  kb_search: 'agent.progress.kbSearch',
 };
 
 /**
@@ -428,6 +437,13 @@ export function executeAgentRun(deps: AgentRunDeps, request: AgentRunRequest): P
         state.updatedAt = new Date().toISOString();
         void saveRunState(state);
       };
+      // A bot's upload and a paste are scratch files outside every folder the agent reads: kept in
+      // the chat media folder from the start (as the turn record would keep them), the run's tools
+      // can name them and a resumed run still has them. A copy that fails leaves the scratch file.
+      if (!resumeFrom?.length && state.attachments?.length && !isEphemeralDelivery(origin)) {
+        const kept = await keptAttachmentPaths(state.attachments, false);
+        state.attachments = state.attachments.map((file, index) => kept[index] || file);
+      }
       const turnAttachments = resumeFrom?.length ? undefined : state.attachments;
       // The "AI responses" settings, for the URL shortcut's single send and for the agent's answer.
       const answerPrefs = agentPromptPrefs(await agentRunIsOwner(origin, request.memory));
@@ -539,6 +555,23 @@ export function executeAgentRun(deps: AgentRunDeps, request: AgentRunRequest): P
         ? agentRecapBlock(await conversationRecap(state, origin).catch(() => undefined))
         : '';
 
+      // The Office connector edits in the output folder only: the attachments get working copies there, once.
+      if (state.workingCopies === undefined && config.officeConnectorEnabled && state.attachments?.some(isOfficeAttachment)) {
+        state.workingCopies = await officeWorkingCopies(state.attachments);
+        void saveRunState(state);
+      }
+      const baseScope = request.toolScope ?? (origin === 'bot' ? BOT_TOOL_SCOPE : FULL_TOOL_SCOPE);
+      const attachedFiles = await attachedFileNames(state.attachments, state.workingCopies);
+      const uploads = modelUploads(providerUrl, state.attachments);
+      const knowledge = knowledgeEntriesFor(
+        request.toolScope ? (request.toolScope.knowledge ?? []).map((entry) => entry.id) : origin === 'bot' ? [] : 'all',
+        state.knowledgeIds ?? [],
+        state.goal,
+      );
+      // "Knowledge base only": the attached bases and nothing else — no files on this computer, no web,
+      // no connectors, no flows. The user's choice on the composer, not a reading of their words.
+      const onlyBases = knowledgeOnlyBases(state, knowledge);
+
       const { result: outcome, usage } = await measureTokens(() => runAgent(
         goal,
         providerUrl,
@@ -568,12 +601,16 @@ export function executeAgentRun(deps: AgentRunDeps, request: AgentRunRequest): P
           ...(state.conversationPath ? { conversationPath: state.conversationPath } : {}),
           // Only the desktop composer's run is the temporary chat; a bot run never reads it.
           ...(isEphemeralDelivery(origin) ? { temporaryChat: true } : {}),
-          ...(state.attachments?.length ? { attachments: state.attachments } : {}),
+          ...(uploads?.length ? { attachments: uploads } : {}),
+          ...(attachedFiles.length ? { attachedFiles } : {}),
           ...(state.replyTo ? { replyTo: state.replyTo } : {}),
           ...(state.recentChat?.length ? { recentChat: state.recentChat } : {}),
           ...(state.chatRecap ? { chatRecap: true as const } : {}),
           ...(state.linkedPage ? { linkedPage: state.linkedPage } : {}),
           signal: controller.signal,
+          // Sizes a BYOK run from the window its provider reports (5 s lookup, cached); a browser
+          // target never asks, and a failed lookup keeps today's sizes.
+          getContextTokens: getByokContextTokensForUrl,
           onConfirm: buildAgentConfirm(deps.getMainWin, strings, origin),
           // The always-allow list is the desktop user's; a bot run asks in its chat every time.
           ...(origin === 'app' ? { trustedShell: trustedShellCommands } : {}),
@@ -581,7 +618,10 @@ export function executeAgentRun(deps: AgentRunDeps, request: AgentRunRequest): P
             ? { shellApproval: (req: ShellConfirmRequest) => shellApprovalText(req, strings) }
             : {}),
           ...(origin === 'bot' && request.connectorChangesInChat
-            ? { connectorApproval: (req: McpConfirmRequest) => connectorApprovalText(req, strings) }
+            ? {
+              connectorApproval: (req: McpConfirmRequest) => connectorApprovalText(req, strings),
+              ...(request.connectorChangesInChat === true ? {} : { connectorApprovalServers: request.connectorChangesInChat }),
+            }
             : {}),
           ...(flowsInChat
             ? {
@@ -614,25 +654,34 @@ export function executeAgentRun(deps: AgentRunDeps, request: AgentRunRequest): P
           // scope says whether this account may draw — never on the wording: the model reads what
           // was meant.
           // `agoda_reviews` is the desktop's alone for now, and goes with the web checkbox.
-          // `export_file` only where the caller can send a file (a bot whose platform takes one); the
-          // desktop has its own export.
-          toolScope: withDocumentCapability(
+          // `export_file` wherever a file reaches the user: the desktop chat (it is also how a file
+          // becomes a PDF there), and a bot whose platform can send one.
+          // The knowledge bases: every one on the desktop, a bot account's granted ones (its
+          // `toolScope.knowledge`, set by the bot caller); local reads, so the web switch leaves them.
+          toolScope: onlyBases ? knowledgeOnlyScope(onlyBases.entries) : withKnowledgeCapability(withDocumentCapability(
             withPictureCapability(
               withWebCapability(
                 withHotelReviewCapability(
-                  request.toolScope ?? (origin === 'bot' ? BOT_TOOL_SCOPE : FULL_TOOL_SCOPE),
+                  baseScope,
                   request.toolScope ? request.toolScope.hotelReviews === true : origin !== 'bot',
                 ),
                 state.web !== false,
               ),
               request.toolScope ? request.toolScope.pictures === true : origin !== 'bot',
             ),
-            request.toolScope?.documents === true,
-          ),
+            request.toolScope ? request.toolScope.documents === true : origin !== 'bot',
+          ), knowledge),
+          ...(onlyBases ? { knowledgeOnly: knowledgeOnlyRules(onlyBases.bases, undefined, state.knowledgeFiles) } : {}),
+          // A bot's answer is read on a phone: a skill with a compact form for that uses it.
+          ...(origin === 'bot' ? { phoneChat: true } : {}),
           drawImage: agentPictureDrawer(state),
           keepPictures: agentPictureKeeper(state),
-          exportFile: agentFileExporter(state),
+          keepDocuments: agentDocumentKeeper(state),
+          // A PDF of a local file is a read of it: only a run that may `file_read` names one.
+          exportFile: agentFileExporter(state, { readsFiles: baseScope.skills.includes('file_read') }),
           onSaveFlow: async (flow) => recordFlow(await flowManager.saveGeneratedFlow(flow)),
+          // The desktop dialog's approval of a one-time flow switches it on (`build_flow`).
+          ...(origin === 'app' ? { onEnableFlow: (flowId: string) => flowManager.enableFlowFromAgent(flowId) } : {}),
           onReplaceFlow: async (flow) => recordFlow(await flowManager.replaceFlowFromAgent(flow)),
           listFlows: () => flowManager.getAll(),
           // A bot's test run is marked as one (connector steps change nothing, bot-command flows run).
@@ -644,11 +693,13 @@ export function executeAgentRun(deps: AgentRunDeps, request: AgentRunRequest): P
           // decide the connector is not the right instrument for this turn. Never `[]` — an
           // empty array filters every server out and, with built-ins still present, produces a
           // silent zero-connector run instead of an error.
-          ...(connectors.length > 0 ? { mcpServerIds: connectors } : {}),
+          ...(connectors.length > 0 && !onlyBases ? { mcpServerIds: connectors } : {}),
           // The restriction the run was started with, read off the saved state so a resume keeps it.
-          ...(state.connectors === 'none' ? { noConnectors: true } : {}),
+          ...(state.connectors === 'none' || onlyBases ? { noConnectors: true } : {}),
           ...(request.allowedMcpServerIds ? { allowedMcpServerIds: request.allowedMcpServerIds } : {}),
-          ...(pageReadersOff ? { deniedMcpServerIds: ANY_PAGE_CONNECTOR_IDS } : {}),
+          ...(pageReadersOff || request.deniedMcpServerIds
+            ? { deniedMcpServerIds: [...(pageReadersOff ? ANY_PAGE_CONNECTOR_IDS : []), ...(request.deniedMcpServerIds ?? [])] }
+            : {}),
         },
       ));
 

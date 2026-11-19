@@ -14,11 +14,20 @@ import {
   sortBotGrants,
 } from '../../shared/botPermissions';
 import type { BotApprovePairingResult, BotGrant } from '../../shared/botPermissions';
-import { BUILTIN_CALENDAR_SERVER_ID, BUILTIN_CONNECTORS, BUILTIN_PAGE_SERVER_ID, BUILTIN_PTT_SERVER_ID, BUILTIN_TRANSLATE_SERVER_ID } from '../../shared/builtinConnectors';
+import {
+  BUILTIN_CALENDAR_SERVER_ID, BUILTIN_CONNECTORS, BUILTIN_OFFICE_SERVER_ID, BUILTIN_PAGE_SERVER_ID, BUILTIN_PTT_SERVER_ID, BUILTIN_TRANSLATE_SERVER_ID,
+  BUILTIN_TWLAW_SERVER_ID, BUILTIN_YOBI_SERVER_ID,
+} from '../../shared/builtinConnectors';
 import { clipLine } from '../../shared/textBudget';
 
 /** Built-in connectors added later than the rest, in the order they came. */
-const LATER_CONNECTORS: readonly string[] = [BUILTIN_PTT_SERVER_ID, BUILTIN_CALENDAR_SERVER_ID, BUILTIN_TRANSLATE_SERVER_ID, BUILTIN_PAGE_SERVER_ID];
+const LATER_CONNECTORS: readonly string[] = [BUILTIN_PTT_SERVER_ID, BUILTIN_CALENDAR_SERVER_ID, BUILTIN_TRANSLATE_SERVER_ID, BUILTIN_PAGE_SERVER_ID, BUILTIN_OFFICE_SERVER_ID];
+
+/** Built-in connectors added after `manage`, in the order they came. */
+const CONNECTORS_AFTER_MANAGE: readonly string[] = [BUILTIN_TWLAW_SERVER_ID];
+
+/** Built-in connectors no account is granted as a connector: the Yobi connector comes with `manage`. */
+const NOT_CONNECTOR_GRANTS: readonly string[] = [BUILTIN_YOBI_SERVER_ID];
 
 /**
  * Every grant a card may toggle, in a fixed order: a toggle names its grant by index here. Shell
@@ -29,9 +38,16 @@ const LATER_CONNECTORS: readonly string[] = [BUILTIN_PTT_SERVER_ID, BUILTIN_CALE
  */
 export const ACCOUNT_GRANT_CANDIDATES: readonly BotGrant[] = ([
   'agent', 'web', 'download', 'local', ALL_CONNECTORS_GRANT,
-  ...BUILTIN_CONNECTORS.filter((connector) => !LATER_CONNECTORS.includes(connector.id)).map((connector) => connectorGrant(connector.id)),
+  ...BUILTIN_CONNECTORS
+    .filter((connector) => ![...LATER_CONNECTORS, ...CONNECTORS_AFTER_MANAGE, ...NOT_CONNECTOR_GRANTS].includes(connector.id))
+    .map((connector) => connectorGrant(connector.id)),
   'preview',
   ...LATER_CONNECTORS.map(connectorGrant),
+  // Controlling Yobi: the owner's to hand out (`mayToggleGrant`), never an admin's.
+  'manage',
+  ...CONNECTORS_AFTER_MANAGE.map(connectorGrant),
+  // The analysis buttons: last, as every later grant.
+  'analyze',
 ] as BotGrant[]).filter((grant) => !isExplicitGrant(grant));
 
 /** Where each candidate shows on a card: the display order of every grant list. */
@@ -172,9 +188,9 @@ export function visibleGrantToggles(
  */
 export function toggledGrants(grants: readonly BotGrant[], grant: BotGrant): BotGrant[] {
   if (grants.includes(grant)) {
-    return sortBotGrants(grants.filter((g) => g !== grant && !(grant === 'download' && g === 'preview')));
+    return sortBotGrants(grants.filter((g) => g !== grant && !(grant === 'download' && g === 'preview') && !(grant === 'agent' && g === 'manage')));
   }
-  const added: BotGrant[] = grant === 'preview' ? ['download', 'preview'] : [grant];
+  const added: BotGrant[] = grant === 'preview' ? ['download', 'preview'] : grant === 'manage' ? ['agent', 'manage'] : [grant];
   return sortBotGrants([...new Set<BotGrant>([...grants, ...added])]);
 }
 

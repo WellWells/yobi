@@ -14,6 +14,8 @@ export interface ContextMenuPortalProps {
   /** Off = focus stays where it was (a text field keeps its selection drawn); default on. */
   trapFocus?: boolean;
   dropdownRef?: React.Ref<HTMLDivElement>;
+  /** Closed with Escape (not by a click elsewhere): the list it came from can take focus back. */
+  onEscape?: () => void;
 }
 
 export const ContextMenuPortal: React.FC<ContextMenuPortalProps> = ({
@@ -22,20 +24,25 @@ export const ContextMenuPortal: React.FC<ContextMenuPortalProps> = ({
   children,
   trapFocus = true,
   dropdownRef,
+  onEscape,
 }) => {
   useEffect(() => {
     if (!position) return;
     const close = () => onClose();
     window.addEventListener('mousedown', close);
     window.addEventListener('scroll', close, true);
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      close();
+      onEscape?.();
+    };
     window.addEventListener('keydown', onKey);
     return () => {
       window.removeEventListener('mousedown', close);
       window.removeEventListener('scroll', close, true);
       window.removeEventListener('keydown', onKey);
     };
-  }, [position, onClose]);
+  }, [position, onClose, onEscape]);
 
   if (!position) return null;
 

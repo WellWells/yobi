@@ -82,7 +82,7 @@ export const BotConfig: React.FC<SkillConfigProps> = ({ step, onChange, t, flowV
         {variablePlatform ? t('flow.skill.bot.platform.variable.hint') : t(`flow.skill.bot.platform.${platform}.hint`)}
       </Text>
       {platform === 'line' && (step.config.attachment ?? '').trim() !== '' && (
-        <Text fz="xs" c="var(--mantine-color-warning)">{t('flow.skill.bot.platform.line.attachmentWarning')}</Text>
+        <Text fz="xs" c="var(--warning-text)">{t('flow.skill.bot.platform.line.attachmentWarning')}</Text>
       )}
       <ChatRecipientPicker
         value={chatIdsRaw}
@@ -152,7 +152,7 @@ export const BotConfig: React.FC<SkillConfigProps> = ({ step, onChange, t, flowV
           label={t(platform === 'line' || platform === 'lineSelf' ? 'flow.skill.bot.choices' : 'flow.skill.bot.buttons')}
           description={command
             ? fillTemplate(t(buttonsDescKey(variablePlatform ? 'auto' : platform)), { command: `/${command}` })
-            : <Text span fz="xs" c="var(--mantine-color-warning)">{t('flow.skill.bot.buttons.unused')}</Text>}
+            : <Text span fz="xs" c="var(--warning-text)">{t('flow.skill.bot.buttons.unused')}</Text>}
           placeholder={t('flow.skill.bot.buttons.placeholder')}
           value={step.config.buttons ?? ''}
           onChange={(e) => onChange({ ...step.config, buttons: e.currentTarget.value })}

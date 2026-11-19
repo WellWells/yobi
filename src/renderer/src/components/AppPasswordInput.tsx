@@ -1,6 +1,7 @@
 import React from 'react';
 import { PasswordInput, type PasswordInputProps } from '@mantine/core';
 import { buildInputStyles, mergeInputStyles, type AppInputTone } from './inputStyles';
+import { useFieldName } from './fieldLabel';
 
 interface AppPasswordInputProps extends PasswordInputProps {
   tone?: AppInputTone;
@@ -12,14 +13,18 @@ export const AppPasswordInput = React.forwardRef<HTMLInputElement, AppPasswordIn
   mono = false,
   styles,
   ...props
-}, ref) => (
-  <PasswordInput
-    ref={ref}
-    size="sm"
-    variant="default"
-    styles={mergeInputStyles(buildInputStyles({ tone, mono }), styles)}
-    {...props}
-  />
-));
+}, ref) => {
+  const named = useFieldName(props);
+  return (
+    <PasswordInput
+      ref={ref}
+      size="sm"
+      variant="default"
+      styles={mergeInputStyles(buildInputStyles({ tone, mono }), styles)}
+      {...named}
+      {...props}
+    />
+  );
+});
 
 AppPasswordInput.displayName = 'AppPasswordInput';

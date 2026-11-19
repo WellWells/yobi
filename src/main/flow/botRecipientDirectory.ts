@@ -1,4 +1,6 @@
 import { config } from '../config';
+import { listBotContacts } from '../botDirectory';
+import { chatNamesFrom } from '../flowExplainMaterial';
 import { sendLog } from '../helpers';
 import { getLangCache, t } from '../i18n';
 import { loadUserMemory } from '../memory/memoryStore';
@@ -104,6 +106,18 @@ export function lazyRecipients(given?: RecipientDirectory): () => Promise<Recipi
     directory ??= await loadRecipientDirectory({ lineSelfChats: true }).catch(() => EMPTY_RECIPIENT_DIRECTORY);
     return directory;
   };
+}
+
+/**
+ * Every chat id this computer can name, for material a model reads in place of the ids (the flow
+ * explanation): the recipient lists and the bots' contact directory. A failure names nothing.
+ */
+export async function loadChatNames(): Promise<Map<string, string>> {
+  const [directory, contacts] = await Promise.all([
+    loadRecipientDirectory({ lineSelfChats: true }).catch(() => EMPTY_RECIPIENT_DIRECTORY),
+    listBotContacts().catch(() => []),
+  ]);
+  return chatNamesFrom(directory.entries, contacts);
 }
 
 /** The recipient question in the app's language — it is shown to the user, unlike the rest of a build. */

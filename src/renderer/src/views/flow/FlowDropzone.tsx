@@ -66,7 +66,7 @@ export const FlowDropzone: React.FC<FlowDropzoneProps> = ({ t, onImport, childre
         >
           <Stack align="center" gap="sm">
             <Download size={40} color="var(--mantine-color-accent)" />
-            <Text fw={600} fz="md" c="var(--mantine-color-accent)">
+            <Text fw={600} fz="md" c="var(--mantine-color-accent-text)">
               {t('flow.import.drop.hint')}
             </Text>
           </Stack>

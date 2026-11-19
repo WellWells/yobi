@@ -20,6 +20,8 @@ interface SectionRowProps<K extends string> {
   onToggle: (section: K) => void;
   /** The chat list's keyboard walk; the flow list has none. */
   registerItemRef?: (key: string, node: HTMLDivElement | null) => void;
+  /** The list's one Tab stop (roving focus: the arrows walk the rest). */
+  tabbable: boolean;
 }
 
 /**
@@ -31,22 +33,27 @@ interface SectionRowProps<K extends string> {
  * in it, so a click on one never folds the section.
  */
 function SectionRowView<K extends string = SidebarSectionKey>({
-  section, label, collapsed, empty = false, detail, status, actions, onToggle, registerItemRef,
+  section, label, collapsed, empty = false, detail, status, actions, onToggle, registerItemRef, tabbable,
 }: SectionRowProps<K>): React.ReactElement {
   return (
-    <Box className={styles.sectionRow}>
+    // The whole heading is the tree item that takes focus; its buttons live inside it (a tree may
+    // own only tree items and groups: axe aria-required-children), beside the toggle area.
+    <Box
+      ref={(node: HTMLDivElement | null) => registerItemRef?.(sectionRowKey(section), node)}
+      role="treeitem"
+      aria-level={1}
+      aria-expanded={empty ? undefined : !collapsed}
+      tabIndex={tabbable ? 0 : -1}
+      className={styles.sectionRow}
+    >
       <Box
-        ref={(node: HTMLDivElement | null) => registerItemRef?.(sectionRowKey(section), node)}
-        tabIndex={0}
-        role={empty ? undefined : 'button'}
-        aria-expanded={empty ? undefined : !collapsed}
         className={styles.sectionItem}
         data-empty={empty || undefined}
         onClick={empty ? undefined : () => onToggle(section)}
       >
-        <Text component="span" fz="var(--font-size-sm)" fw={600} lh="18px" truncate>{label}</Text>
+        <Text component="span" fz="var(--font-size-sm)" fw={600} lh={1.5} truncate>{label}</Text>
         {detail && (
-          <Text component="span" fz="var(--font-size-sm)" lh="18px" c="var(--text-muted)" truncate className={styles.sectionDetail}>
+          <Text component="span" fz="var(--font-size-sm)" lh={1.5} c="var(--text-muted)" truncate className={styles.sectionDetail}>
             {`· ${detail}`}
           </Text>
         )}

@@ -1,19 +1,24 @@
 import { randomBytes } from 'node:crypto';
 import type { FlowButton } from '../../shared/types';
+import { builtinFlowRight } from '../../shared/builtinFlowRight';
 import { telegramCallbackData } from './callbackRouter';
 
 /** Prefix of a flow button's `callback_data`; the export buttons use their own. */
 export const FLOW_BUTTON_CB_PREFIX = 'fb';
 
 const BUTTON_TTL_MS = 10 * 60_000;
-const MAX_LIVE_BUTTONS = 500;
+/** An analysis button is there for the whole chat, and a chat reads a post hours after it came. */
+const SHARED_BUTTON_TTL_MS = 24 * 60 * 60_000;
+const MAX_LIVE_BUTTONS = 2_000;
 
 export interface FlowButtonRecord {
   flowId: string;
   input: string;
   chatId: number;
-  /** The person who started the run; only they may press. Absent for a run nobody started. */
+  /** The person who started the run; only they may press, unless `shared`. Absent for a run nobody started. */
   userId?: number;
+  /** An analysis button: anyone in the chat may press it, and is checked as themselves. */
+  shared?: boolean;
   expiresAt: number;
   /** Its run is still going: a second tap now would start the same download twice. */
   busy?: boolean;
@@ -45,8 +50,22 @@ export function registerFlowButton(
 ): string {
   prune(now);
   const token = randomBytes(12).toString('base64url');
-  live.set(token, { flowId: owner.flowId, input: button.input, chatId: owner.chatId, userId: owner.userId, expiresAt: now + BUTTON_TTL_MS });
+  const shared = isAnalysisButton(owner.flowId, button.input);
+  live.set(token, {
+    flowId: owner.flowId, input: button.input, chatId: owner.chatId, userId: owner.userId,
+    expiresAt: now + (shared ? SHARED_BUTTON_TTL_MS : BUTTON_TTL_MS),
+    ...(shared ? { shared } : {}),
+  });
   return token;
+}
+
+/**
+ * A built-in's button that only reads and sums up — "analyze" under a forwarded post or page, the
+ * video menu's summary — and so belongs to the chat rather than to whoever pasted the link. A
+ * download's button, and every button of a person's own flow, stays with the one who started it.
+ */
+export function isAnalysisButton(flowId: string, input: string): boolean {
+  return builtinFlowRight(flowId, input) === 'analyze';
 }
 
 export function flowButtonCallbackData(token: string): string {
@@ -67,14 +86,15 @@ export type FlowButtonClaim =
  * Takes the button for this press. It keeps working until it expires — the person may press it
  * again after deleting the video it sent — but not while its own run is still going, so the second
  * tap of a double tap does not start the same download twice. `releaseFlowButton` frees it when
- * the run ends. A press by someone else leaves it in place for the person it belongs to.
+ * the run ends. A press by someone else leaves it in place for the person it belongs to; an
+ * analysis button (`shared`) is anyone's in the chat, one run at a time.
  */
 export function claimFlowButton(token: string, press: { chatId: number; userId: number }, now = Date.now()): FlowButtonClaim {
   prune(now);
   const record = live.get(token);
   if (!record) return { ok: false, reason: 'expired' };
   if (record.chatId !== press.chatId) return { ok: false, reason: 'otherChat' };
-  if (record.userId !== undefined && record.userId !== press.userId) return { ok: false, reason: 'otherUser' };
+  if (!record.shared && record.userId !== undefined && record.userId !== press.userId) return { ok: false, reason: 'otherUser' };
   if (record.busy) return { ok: false, reason: 'busy' };
   record.busy = true;
   return { ok: true, record };

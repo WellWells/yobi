@@ -10,7 +10,7 @@ export const NATIVE_CORE_UNAVAILABLE = 'NATIVE_CORE_UNAVAILABLE' as const;
 export const NATIVE_CORE_UNAVAILABLE_TEXT = 'LINE native send core is unavailable';
 
 /** The core contract this build speaks; another version is refused at load. */
-export const NATIVE_CORE_VERSION = '1.0.0';
+export const NATIVE_CORE_VERSION = '1.0.1';
 
 /** `dataDir` (LINE's data folder), and for tests version, osVer and locale themselves. */
 export type NativeClientEnv = Record<string, string>;

@@ -1,6 +1,19 @@
 /** instagram.com and the hosts that redirect to it. */
 const INSTAGRAM_HOSTS = new Set(['instagram.com', 'www.instagram.com', 'm.instagram.com', 'instagr.am', 'www.instagr.am']);
 
+/**
+ * Embed-fix mirrors people re-post Instagram links through so chat apps show the media (InstaFix's
+ * ddinstagram, and its eeinstagram / kkinstagram successors; `d.` is ddinstagram's direct-media
+ * form). Their paths are Instagram's own, so a post or a story is read from them, rebuilt on
+ * instagram.com; nothing is ever fetched from the mirror. A mirror's profile page is not taken.
+ */
+const INSTAGRAM_MIRROR_HOSTS: ReadonlySet<string> = new Set(
+  ['ddinstagram.com', 'eeinstagram.com', 'kkinstagram.com'].flatMap((host) => [host, `www.${host}`, `d.${host}`]),
+);
+
+/** Whether a token may hold an Instagram link, before parsing it: a cheap host check for the link table. */
+export const INSTAGRAM_HOST_HINT = /(?:^|[./])(?:(?:dd|ee|kk)?instagram\.com|instagr\.am)\//i;
+
 /** Instagram usernames: letters, digits, dots and underscores, up to 30. */
 const USERNAME = '[A-Za-z0-9._]{1,30}';
 /** A post's shortcode: URL-safe base64, 11 characters for a public post, longer for a private one. */
@@ -125,7 +138,14 @@ export function parseInstagramUrl(raw: string): InstagramRef | null {
   } catch {
     return null;
   }
-  if (!isInstagramHost(url.hostname) || url.username || url.password || url.port) return null;
+  if (url.username || url.password || url.port) return null;
+  if (isInstagramHost(url.hostname)) return parseInstagramPath(url);
+  if (!INSTAGRAM_MIRROR_HOSTS.has(url.hostname.toLowerCase())) return null;
+  const ref = parseInstagramPath(url);
+  return ref?.kind === 'profile' ? null : ref;
+}
+
+function parseInstagramPath(url: URL): InstagramRef | null {
   const path = url.pathname;
   const highlight = HIGHLIGHT_PATH.exec(path);
   if (highlight) return highlightRef(highlight[1], url);

@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { settingsApi } from '../api/electronApi';
-import { DEFAULT_CAPTURE_MARGIN, DEFAULT_CAPTURE_WIDTH } from '../../../shared/types';
+import { DEFAULT_CAPTURE_MARGIN, DEFAULT_CAPTURE_WIDTH, DEFAULT_CARD_OPACITY } from '../../../shared/types';
 import { DEFAULT_CAPTURE_BACKGROUND_STYLE, DEFAULT_CAPTURE_PALETTE } from '../../../shared/capturePalettes';
 import type { CaptureSettings, HotkeyBindResult, QuickExportSettings } from '../../../shared/types';
 
@@ -27,6 +27,7 @@ const CAPTURE_FALLBACK: CaptureSettings = {
   range: 'all',
   width: DEFAULT_CAPTURE_WIDTH,
   margin: DEFAULT_CAPTURE_MARGIN,
+  cardOpacity: DEFAULT_CARD_OPACITY,
   pixelRatio: 1,
   zip: false,
 };

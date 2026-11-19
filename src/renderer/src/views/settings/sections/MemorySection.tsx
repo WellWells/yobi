@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ActionIcon, Box, Group, Progress, Stack, Text, Tooltip } from '@mantine/core';
+import { SearchSection } from '../FreezeWhileHidden';
 import { Brain, Pencil, Plus, Sparkles, Trash } from 'lucide-react';
 import { useUserMemoryStore } from '../../../store/userMemoryStore';
 import { MemoryCurateModal } from './MemoryCurateModal';
@@ -118,7 +119,7 @@ export const MemorySection: React.FC<Props> = ({
   const groupHeads = buildTimeGroupHeads(snapshot.entries.map((entry) => entry.createdAt), new Date());
 
   return (
-    <Box display={visible ? 'block' : 'none'}>
+    <SearchSection shown={visible}>
       <SectionCard style={{ marginBottom: sectionGap }}>
         <SectionTitle
           icon={<Brain size={15} />}
@@ -146,7 +147,7 @@ export const MemorySection: React.FC<Props> = ({
           <SettingRow
             label={t('settings.memory.enabled')}
             hint={t('settings.memory.enabled.hint')}
-            control={<ToggleSwitch checked={snapshot.enabled} onChange={() => { void memory.setEnabled(!snapshot.enabled); }} />}
+            control={<ToggleSwitch aria-label={t('settings.memory.enabled')} checked={snapshot.enabled} onChange={() => { void memory.setEnabled(!snapshot.enabled); }} />}
           />
           <SettingDivider />
           <Stack gap={4}>
@@ -270,6 +271,6 @@ export const MemorySection: React.FC<Props> = ({
         t={t}
         locale={locale}
       />
-    </Box>
+    </SearchSection>
   );
 };

@@ -13,7 +13,7 @@ import {
 } from './ProgressMark';
 import { AGENT_HELP_TOOL, IDENTIFIER, namesToolId, stepParam, withoutUnseen } from '../../../shared/agentStepLabel';
 import { fillTemplate } from '../../../shared/fillTemplate';
-import { helperStepLine, traceToolLabel } from '../utils/agentTrace';
+import { helperStepLine, helperStepMark, traceToolLabel } from '../utils/agentTrace';
 
 export { traceToolLabel };
 
@@ -66,15 +66,47 @@ export function stageLine(turn: AgentTraceTurn, t: (key: string) => string): str
   return fillTemplate(t(`agent.stage.${turn.stage.label}`), { detail: turn.stage.detail ?? '' });
 }
 
-/** What opening a step shows, besides its research checklist. */
-export function subLines(turn: AgentTraceTurn, t: (key: string) => string): string[] {
-  const lines: string[] = [];
+/**
+ * One line under an opened step. A helper's call has its mark, like a step row; one that never said
+ * how it ended (the helper stopped, or the record predates statuses) reads as a plain line, as it
+ * always did.
+ */
+export type TraceDetailLine =
+  | { kind: 'text'; text: string }
+  | { kind: 'helper'; text: string; mark?: ProgressState };
+
+/** What opening a step shows, besides its research checklist, in order. */
+export function detailLines(turn: AgentTraceTurn, t: (key: string) => string): TraceDetailLine[] {
+  const lines: TraceDetailLine[] = [];
   const thought = readableThought(turn);
-  if (thought) lines.push(thought);
-  for (const step of turn.helperSteps ?? []) lines.push(helperStepLine(step, t));
+  if (thought) lines.push({ kind: 'text', text: thought });
+  for (const step of turn.helperSteps ?? []) {
+    const mark = helperStepMark(step, turn.status);
+    lines.push({ kind: 'helper', text: helperStepLine(step, t), ...(mark ? { mark } : {}) });
+  }
   const preview = readablePreview(turn);
-  if (preview) lines.push(fillTemplate(t('agent.trace.result'), { preview }));
+  if (preview) lines.push({ kind: 'text', text: fillTemplate(t('agent.trace.result'), { preview }) });
   return lines;
+}
+
+/** The text of `detailLines`. */
+export function subLines(turn: AgentTraceTurn, t: (key: string) => string): string[] {
+  return detailLines(turn, t).map((line) => line.text);
+}
+
+const HELPER_LINE_STYLE = { ...PROGRESS_ROW_STYLE, maxWidth: '100%' };
+const HELPER_TEXT_STYLE = { ...SUBLINE_STYLE, minWidth: 0 };
+
+function DetailLine({ line }: { line: TraceDetailLine }) {
+  if (line.kind === 'text' || !line.mark) {
+    return <Text component="span" pl={LABEL_OFFSET} title={line.text} style={SUBLINE_STYLE}>{line.text}</Text>;
+  }
+  return (
+    <Box pl={LABEL_OFFSET} data-helper-step={line.mark} style={HELPER_LINE_STYLE}>
+      <ProgressMark state={line.mark} />
+      <Text component="span" title={line.text} style={HELPER_TEXT_STYLE}>{line.text}</Text>
+    </Box>
+  );
 }
 
 export function AgentTraceRow({ turn }: { turn: AgentTraceTurn }) {
@@ -83,7 +115,7 @@ export function AgentTraceRow({ turn }: { turn: AgentTraceTurn }) {
   const mark: ProgressState = turn.status === 'ok' ? 'done' : turn.status === 'error' ? 'failed' : 'active';
   const param = turn.tool ? stepParam(turn.tool, turn.config) : undefined;
   const stage = stageLine(turn, t);
-  const lines = subLines(turn, t);
+  const lines = detailLines(turn, t);
   const hasDetails = lines.length > 0 || Boolean(turn.research);
   // Work that reports as it goes opens by itself once the run is expanded; finished rows stay closed.
   const open = hasDetails && (userOpen ?? (turn.status === 'running' && Boolean(turn.research || turn.helperSteps)));
@@ -116,9 +148,7 @@ export function AgentTraceRow({ turn }: { turn: AgentTraceTurn }) {
         <Box style={PROGRESS_ROW_STYLE}>{row}</Box>
       )}
       {stage && <Text component="span" pl={LABEL_OFFSET} style={SUBLINE_STYLE}>{stage}</Text>}
-      {open && lines.map((line, index) => (
-        <Text key={`${index}-${line}`} component="span" pl={LABEL_OFFSET} title={line} style={SUBLINE_STYLE}>{line}</Text>
-      ))}
+      {open && lines.map((line, index) => <DetailLine key={`${index}-${line.text}`} line={line} />)}
       {open && turn.research && (
         <Stack gap={2} pl={LABEL_OFFSET} style={{ minWidth: 0 }}>
           {/* The links-only search step has results and no phases: it read nothing to count. */}

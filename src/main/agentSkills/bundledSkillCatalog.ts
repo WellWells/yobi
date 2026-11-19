@@ -11,6 +11,8 @@ export interface BundledSkill {
   name: string;
   version: string;
   interfaceId: string;
+  /** Used only when the user has not chosen an enabled state. */
+  defaultEnabled: boolean;
   /** Interface languages the skill is offered in; empty = every language. */
   locales: string[];
   hash: string;
@@ -35,6 +37,7 @@ export function offeredIn(bundle: Pick<BundledSkill, 'locales'>, locale: string)
 interface HostMetadata {
   interface?: { id?: unknown };
   locales?: unknown;
+  defaultEnabled?: unknown;
 }
 
 async function readBundle(dir: string, name: string): Promise<BundledSkill> {
@@ -45,11 +48,12 @@ async function readBundle(dir: string, name: string): Promise<BundledSkill> {
   const config = JSON.parse(await fs.readFile(path.join(dir, 'agents/yobi.json'), 'utf8')) as HostMetadata | null;
   const interfaceId = config?.interface?.id;
   if (typeof interfaceId !== 'string' || !/^[a-z][a-zA-Z0-9]*$/.test(interfaceId)) throw new Error('needs GUI metadata');
+  if (config?.defaultEnabled !== undefined && typeof config.defaultEnabled !== 'boolean') throw new Error('has an unreadable enabled default');
   const locales = config?.locales ?? [];
   if (!Array.isArray(locales) || !locales.every((locale) => typeof locale === 'string' && locale)) {
     throw new Error('has an unreadable locale list');
   }
-  return { name, version: read.parsed.version!, interfaceId, locales: locales as string[], hash: await skillHash(read.scan), read };
+  return { name, version: read.parsed.version!, interfaceId, defaultEnabled: config?.defaultEnabled !== false, locales: locales as string[], hash: await skillHash(read.scan), read };
 }
 
 /**

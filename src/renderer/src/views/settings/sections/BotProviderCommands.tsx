@@ -13,6 +13,7 @@ import type {
   BotProviderCommand,
   Provider,
 } from '../../../../../shared/types';
+import { fillTemplate } from '../../../../../shared/fillTemplate';
 import { AppTextInput } from '../../../components/AppTextInput';
 import { SettingDivider, ToggleSwitch } from '../components';
 import { getModelIconByUrl } from '../../../config/models';
@@ -60,6 +61,7 @@ const ProviderCommandRow: React.FC<RowProps> = ({ provider, cfg, busy, onUpdate,
       <Group gap={8} align="center" wrap="nowrap">
         <Text fz="var(--font-size-base)" c="dimmed">/</Text>
         <AppTextInput
+          aria-label={fillTemplate(t('a11y.f.commandName'), { name: PROVIDER_LABELS[provider] })}
           tone="body"
           mono
           w={150}
@@ -71,6 +73,7 @@ const ProviderCommandRow: React.FC<RowProps> = ({ provider, cfg, busy, onUpdate,
           error={invalid ? t('settings.bot.commands.invalid') : undefined}
         />
         <ToggleSwitch
+          aria-label={PROVIDER_LABELS[provider]}
           checked={cfg.enabled}
           disabled={busy}
           onChange={(e) => onUpdate(provider, { enabled: e.currentTarget.checked })}
@@ -107,11 +110,12 @@ const ByokCommandRow: React.FC<{
             /{info.command}
           </Text>
         ) : (
-          <Text fz="var(--font-size-sm)" c="var(--mantine-color-error)" w={162} ta="right">
+          <Text fz="var(--font-size-sm)" c="var(--error-text)" w={162} ta="right">
             {t('settings.bot.commands.byok.unavailable')}
           </Text>
         )}
         <ToggleSwitch
+          aria-label={info.name}
           checked={info.enabled}
           disabled={busy}
           onChange={(e) => onToggle(info.id, e.currentTarget.checked)}

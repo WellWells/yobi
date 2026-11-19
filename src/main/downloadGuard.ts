@@ -1,6 +1,7 @@
 import type { Session } from 'electron';
 import { SITE_PARTITIONS } from './siteAccounts';
 import { READER_PARTITIONS } from './sitePage';
+import { YOUTUBE_CLEARANCE_PARTITION } from './youtubeClearance';
 
 /**
  * Every session whose windows load someone else's page: the page readers, the agent's browser,
@@ -11,6 +12,7 @@ export const PAGE_READER_PARTITIONS: readonly string[] = [...new Set([
   'persist:url-parser',
   'persist:browser-flow',
   'persist:youtube',
+  YOUTUBE_CLEARANCE_PARTITION,
   'persist:gmaps',
   ...SITE_PARTITIONS,
   ...READER_PARTITIONS,

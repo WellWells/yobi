@@ -1,9 +1,10 @@
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { BUILTIN_CALENDAR_SERVER_ID, BUILTIN_MAIL_SERVER_ID, BUILTIN_PAGE_SERVER_ID, BUILTIN_PTT_SERVER_ID, BUILTIN_RAIL_SERVER_ID, BUILTIN_THUNDERBIRD_SERVER_ID, BUILTIN_TRANSLATE_SERVER_ID, BUILTIN_X_SERVER_ID, THUNDERBIRD_UNAVAILABLE_ERROR } from '../../shared/builtinConnectors';
+import { BUILTIN_CALENDAR_SERVER_ID, BUILTIN_MAIL_SERVER_ID, BUILTIN_OFFICE_SERVER_ID, BUILTIN_PAGE_SERVER_ID, BUILTIN_PTT_SERVER_ID, BUILTIN_RAIL_SERVER_ID, BUILTIN_THUNDERBIRD_SERVER_ID, BUILTIN_TRANSLATE_SERVER_ID, BUILTIN_TWLAW_SERVER_ID, BUILTIN_X_SERVER_ID, BUILTIN_YOBI_SERVER_ID, THUNDERBIRD_UNAVAILABLE_ERROR, OFFICE_TOOL_MISSING_ERROR } from '../../shared/builtinConnectors';
 import { BUILTIN_LINE_SERVER_ID } from '../../shared/types';
 import { forgetStoredLineKey } from '../line/lineKeyStore';
 import { connectionFileFingerprint } from '../thunderbird/bridge';
 import { bySiteConnectorId } from '../siteConnector';
+import { OFFICE_CALL_TIMEOUT_MS, officeAvailability } from '../office/officeAvailability';
 
 export interface BuiltinConnection {
   client: Client;
@@ -31,6 +32,9 @@ export interface BuiltinRuntime {
 
 /** The largest subtitle file is 200 requests in a row, with a retry or two on the way. */
 const TRANSLATE_CALL_TIMEOUT_MS = 10 * 60_000;
+
+/** The first law call waits for ~31 MB of downloads and a ~20 s index build. */
+const LAW_CALL_TIMEOUT_MS = 6 * 60_000;
 
 // The native LINE driver and Electron are pulled in lazily, keeping the registry importable offline.
 export const BUILTIN_RUNTIMES: Readonly<Record<string, BuiltinRuntime>> = {
@@ -60,6 +64,11 @@ export const BUILTIN_RUNTIMES: Readonly<Record<string, BuiltinRuntime>> = {
   [BUILTIN_PTT_SERVER_ID]: {
     connect: async (name, version) => (await import('../ptt/pttConnection')).connectPttMcp(name, version),
   },
+  // Connecting starts the download and index build; a first call waits for it.
+  [BUILTIN_TWLAW_SERVER_ID]: {
+    connect: async (name, version) => (await import('../twLaw/lawConnection')).connectLawMcp(name, version),
+    callTimeoutMs: LAW_CALL_TIMEOUT_MS,
+  },
   [BUILTIN_MAIL_SERVER_ID]: {
     connect: async (name, version) => (await import('../mail/mailConnection')).connectMailMcp(name, version),
     prepareCall: async (_toolName, args) => (await import('../mail/mailConnection')).prepareMailCall(args),
@@ -80,6 +89,18 @@ export const BUILTIN_RUNTIMES: Readonly<Record<string, BuiltinRuntime>> = {
   },
   [BUILTIN_PAGE_SERVER_ID]: {
     connect: async (name, version) => (await import('../pageRead/pageReadConnection')).connectPageReadMcp(name, version),
+  },
+  // OfficeCLI's own MCP server, behind Yobi's check of every command (`office/officeCommand.ts`).
+  // Waits, like Thunderbird, until a copy is found or downloaded (Settings › Connectors › Office).
+  [BUILTIN_OFFICE_SERVER_ID]: {
+    connect: async (name, version) => (await import('../office/officeConnection')).connectOfficeMcp(name, version),
+    availability: officeAvailability,
+    unavailableError: OFFICE_TOOL_MISSING_ERROR,
+    callTimeoutMs: OFFICE_CALL_TIMEOUT_MS,
+  },
+  // Yobi's own settings, flows and updates; who reaches it from a bot is the `manage` grant.
+  [BUILTIN_YOBI_SERVER_ID]: {
+    connect: async (name, version) => (await import('../yobiControl/yobiConnection')).connectYobiMcp(name, version),
   },
   // The sign-in site connectors (Instagram, Facebook, …) come from their table. Switching one off
   // never signs out: flows and pasted links read with the same sign-in.

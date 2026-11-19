@@ -10,7 +10,7 @@ import { ToolError, createToolServer, type ToolServer } from '../mcp/inProcessSe
 import { ALSO_NAMED } from '../mcp/schemaAliases';
 import { PageReadError, type PageRead } from './pageReader';
 
-export const PAGE_SERVER_NAME = 'Universal Page Reader';
+export const PAGE_SERVER_NAME = 'Page Reader';
 
 export interface PageReadMcpDeps {
   read: (url: string, signal?: AbortSignal) => Promise<PageRead>;
@@ -38,9 +38,16 @@ export const PAGE_TOOLS: Tool[] = [
   },
 ];
 
+function archivedNote(day: string): string {
+  return `The site no longer has this page: this is the Internet Archive's copy of ${day}. Tell the user it is an archived copy and from when, and cite archive_url.`;
+}
+
 function noteOn(page: PageRead): Record<string, string> {
-  if (page.preview) return { note: PREVIEW_NOTE };
-  return page.method === 'whole page' ? { note: WHOLE_PAGE_NOTE } : {};
+  const notes = [
+    page.archived ? archivedNote(page.archived.day) : '',
+    page.preview ? PREVIEW_NOTE : page.method === 'whole page' ? WHOLE_PAGE_NOTE : '',
+  ].filter(Boolean);
+  return notes.length > 0 ? { note: notes.join(' ') } : {};
 }
 
 export function createPageReadMcpServer(deps: PageReadMcpDeps): ToolServer {
@@ -72,6 +79,7 @@ export function createPageReadMcpServer(deps: PageReadMcpDeps): ToolServer {
           ...(page.author ? { author: page.author } : {}),
           ...(page.publishedAt ? { published: page.publishedAt } : {}),
           url: page.url,
+          ...(page.archived ? { archived_on: page.archived.day, archive_url: page.archived.url } : {}),
           text: page.text.slice(start, end),
           ...(more ? { next_start: end, total_chars: page.text.length } : {}),
           ...(page.truncated && !more ? { truncated: true } : {}),

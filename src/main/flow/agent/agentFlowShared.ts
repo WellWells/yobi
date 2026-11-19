@@ -3,6 +3,7 @@ import type {
 } from '../../../shared/types';
 import { actsAsOwner, flowReadsOwnerData } from '../../../shared/botCommandAccess';
 import { LINE_SELF_MAX_RECIPIENTS } from '../../../shared/botRecipients';
+import { formatLocalMoment, oneTimeRunAt } from '../../../shared/flowRunAt';
 import { SENSITIVE_STEP_TYPES } from '../flowRevision';
 
 /**
@@ -20,6 +21,8 @@ export interface FlowWriteConfirmRequest {
   edit?: AgentFlowEditSummary;
   /** Who the bot steps send to. The recipients come from the model's wording, so the user sees them here. */
   recipients?: AgentFlowRecipient[];
+  /** A one-time flow's moment (`localIsoMinute`): saved switched on, so the user must see when it runs. */
+  runAt?: string;
 }
 
 export function sensitiveTypesOf(types: readonly string[]): string[] {
@@ -103,15 +106,29 @@ export function holdingSave(): { save: (flow: FlowDefinition) => Promise<FlowDef
 }
 
 /** How a new flow ended up: off for review (the desktop), on as approved, or off for a reason. */
-export type SavedFlowState = { how: 'review' } | { how: 'on' } | { how: 'off'; why: AgentPendingFlowHold | 'settings' };
+export type SavedFlowState = { how: 'review' } | { how: 'on' } | { how: 'off'; why: AgentPendingFlowHold | 'settings' | 'passed' };
 
-const OFF_REASON: Record<AgentPendingFlowHold | 'settings', string> = {
+const OFF_REASON: Record<AgentPendingFlowHold | 'settings' | 'passed', string> = {
+  passed: 'its one-time moment had already passed when it was saved, so it would never run — offer to build it again for a later time',
   sensitive: 'it has steps that act on the computer, which the user reviews on the desktop before switching it on',
   ownerData: 'it reads the owner\'s own data, and only the owner switches such a flow on, from the desktop',
   ownerActs: 'it writes to the owner\'s computer or sends with the owner\'s accounts or network, and only the owner switches such a flow on, from the desktop',
   issues: 'something in it still has to be filled in (below), on the desktop',
   settings: 'it needs settings filled in before it can run, on the desktop',
 };
+
+/** What an enabled flow does from here: a one-time flow runs once, at its moment, and then removes itself. */
+function onSentence(flow: FlowDefinition): string {
+  const at = oneTimeRunAt(flow);
+  if (!at) return 'it runs by itself from now on';
+  return `it runs ONCE at ${formatLocalMoment(at)} (the user's local time) while Yobi is open — or when Yobi next starts, if it was closed then — and deletes itself after it succeeds. Tell the user that time`;
+}
+
+/** True when a one-time flow's moment is already behind: switched on, it would never run. */
+export function oneTimeMomentPassed(flow: FlowDefinition, now: Date = new Date()): boolean {
+  const at = oneTimeRunAt(flow);
+  return at !== null && at.getTime() <= now.getTime();
+}
 
 /**
  * What the model is allowed to say about the flow it just saved. The issues are here because the
@@ -126,7 +143,7 @@ export function describeSavedFlow(flow: FlowDefinition, issues: readonly FlowBui
   const saved = state.how === 'review'
     ? `${lead}, DISABLED for the user to review: ${shown}${more}.`
     : state.how === 'on'
-      ? `${lead} and switched it ON, as the user approved — it runs by itself from now on: ${shown}${more}.`
+      ? `${lead} and switched it ON, as the user approved — ${onSentence(flow)}: ${shown}${more}.`
       : `${lead} and left it OFF: ${OFF_REASON[state.why]}. Steps: ${shown}${more}.`;
   const where = state.how === 'on' ? 'Tell the user it is on and what it will do' : 'Tell the user it is waiting in the flow list and what it will do';
   return [

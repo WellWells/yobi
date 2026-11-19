@@ -1,5 +1,5 @@
 import { PROVIDER_URLS } from '../shared/types';
-import { DEFAULT_CAPTURE_MARGIN, DEFAULT_CAPTURE_WIDTH, defaultMainHotkey, defaultQuickExportHotkey, defaultRegionHotkey } from '../shared/types';
+import { DEFAULT_CAPTURE_MARGIN, DEFAULT_CAPTURE_WIDTH, DEFAULT_CARD_OPACITY, defaultMainHotkey, defaultQuickExportHotkey, defaultRegionHotkey } from '../shared/types';
 import { DEFAULT_SHARE_INSTANCE } from '../shared/types';
 import { DEFAULT_CAPTURE_BACKGROUND_STYLE, DEFAULT_CAPTURE_PALETTE } from '../shared/capturePalettes';
 import { DEFAULT_AGENT_ASK_TTL_MINUTES } from '../shared/types';
@@ -8,6 +8,8 @@ import type { SiteConnectorFlag } from '../shared/siteConnectors';
 import type { ShortcutOverride } from '../shared/shortcuts';
 import type { MailAuthKind } from '../shared/microsoftMail';
 import { EMPTY_GEMINI_CHOICE } from '../shared/geminiModels';
+import { EMPTY_PERPLEXITY_CHOICE } from '../shared/perplexityModels';
+import type { PerplexityModelCatalog, PerplexityModelChoice } from '../shared/perplexityModels';
 import type { GeminiModelCatalog, GeminiModelChoice } from '../shared/geminiModels';
 import { EMPTY_CLAUDE_CHOICE } from '../shared/claudeModels';
 import type { ClaudeModelCatalog, ClaudeModelChoice } from '../shared/claudeModels';
@@ -17,11 +19,12 @@ import { BOT_PERMISSIONS_VERSION } from '../shared/botPermissions';
 import type { BotGrant, BotGroupGrant } from '../shared/botPermissions';
 import type { ReadingFont } from '../shared/readingPrefs';
 import type { SidebarViewPrefs } from '../shared/sidebarView';
-import { DEFAULT_DOWNLOADS_KEEP } from '../shared/downloads';
-import type { DownloadsKeep } from '../shared/downloads';
+import { DEFAULT_BOT_DOWNLOAD_CAP, DEFAULT_DOWNLOADS_KEEP } from '../shared/downloads';
+import type { BotDownloadCap, DownloadsKeep } from '../shared/downloads';
 import type { TrustedCommand } from '../shared/trustedCommands';
 import type { LinkRecognitionPrefs } from '../shared/linkRecognition';
 import type { LinkAnalysisPreferences } from '../shared/types';
+import type { KnowledgeBase } from '../shared/knowledgeBase';
 import type { BotBuiltinCommands, BotByokCommands, BotLlmDirectConfig, BotProviderCommand, ByokGroup, ByokProviderType, CaptureFormat, CaptureRange, CaptureSettings, CardLayout, QuickExportSettings, LinePairingState, McpServerConfig, NotifyEventPrefs, PromptPreferences, Provider, ShareSettings, TelegramChannel, TelegramPairingState } from '../shared/types';
 
 /**
@@ -101,6 +104,8 @@ export interface Config extends SiteConnectorFlags {
   byokInstances: ByokInstance[];
   byokGroups: ByokGroup[];
   mcpServers: McpServerConfig[];
+  /** Folders of the user's own documents that `/agent` searches (`kb_search`); see `shared/knowledgeBase.ts`. */
+  knowledgeBases: KnowledgeBase[];
   /** Opt-in: let `/agent`, bots and flow connector steps use the mail account (the Mail connector). */
   mailEnabled: boolean;
   /** Opt-in: let `/agent` and bots read the calendars and change CalDAV events (the Calendar connector). */
@@ -118,10 +123,19 @@ export interface Config extends SiteConnectorFlags {
   taiwanRailEnabled: boolean | null;
   /** The PTT connector; null = not decided yet, decided once like `taiwanRailEnabled`. */
   pttConnectorEnabled: boolean | null;
+  /**
+   * The Taiwan law connector: off until the user switches it on, since switching it on downloads
+   * the ministry's exports and builds a ~250 MB index.
+   */
+  taiwanLawEnabled: boolean;
   /** The free machine-translation connector: on for everyone until the user switches it off. */
   translateConnectorEnabled: boolean;
   /** The news connector: on until the user switches it off, and only ever offered in zh-TW. */
   pageConnectorEnabled: boolean;
+  /** The Office documents connector (OfficeCLI): off until the user switches it on. */
+  officeConnectorEnabled: boolean;
+  /** The Yobi Control connector (Yobi's own settings, flows, updates): on until the user switches it off. */
+  yobiConnectorEnabled: boolean;
   /**
    * The "Recognize links" switches the user turned. A group not in here follows the region's
    * default every time it is read (`resolveLinkRecognition`), so a language change moves it.
@@ -142,6 +156,10 @@ export interface Config extends SiteConnectorFlags {
   chatgptModel: ChatgptModelChoice;
   /** The models, effort steps or thinking toggle this ChatGPT account offers, as last read. */
   chatgptModelCatalog: ChatgptModelCatalog | null;
+  /** Yobi's one Perplexity setting; a signed-in page is matched to it before every send. */
+  perplexityModel: PerplexityModelChoice;
+  /** The models this Perplexity account can choose, as last read; `null` for a visitor. */
+  perplexityModelCatalog: PerplexityModelCatalog | null;
   closeToTray: boolean;
   closeActionDecided: boolean;
   launchAtStartup: boolean;
@@ -156,6 +174,8 @@ export interface Config extends SiteConnectorFlags {
   showTokenUsage: boolean;
   /** The recap icon above the composer; off leaves only `/recap`. */
   showRecap: boolean;
+  /** Whether the background of a theme with a moving background moves: the way to stop it. */
+  backdropMotion: boolean;
   /** Where the main window was last left. `null` until the first run has produced one. */
   windowBounds: WindowBounds | null;
   captureSettings: CaptureSettings;
@@ -163,6 +183,10 @@ export interface Config extends SiteConnectorFlags {
   share: ShareSettings;
   /** How long Downloads/Yobi keeps what Yobi saved there; the sweep reads it every time. */
   downloadsKeep: DownloadsKeep;
+  /** The largest file a bot user without the admin right may download. */
+  botDownloadCap: BotDownloadCap;
+  /** One account's own cap in place of `botDownloadCap`, keyed `<platform>:<account id>`. */
+  botDownloadCaps: Record<string, BotDownloadCap>;
   /**
    * Programs and actions `/agent` runs without asking, on this computer only: a restored backup keeps
    * the current list (paths are this machine's, and a backup must not grant running anything).
@@ -213,6 +237,11 @@ export interface TelegramConfig extends BotAccessConfig {
   apiId: number;
   apiHash: string;
   allowGroupCommands: boolean;
+  /**
+   * The answer to a link pasted alone — a forwarded post, a video's menu — takes that message's
+   * place, which is then deleted. On unless turned off; a config from before it is read as on.
+   */
+  replaceLinkMessage: boolean;
   /**
    * Mirror of the accounts holding the `admin` grant, written on every change so an older build
    * still finds its admins. Read only by the one-time permissions migration.
@@ -365,6 +394,7 @@ export const defaultStored: StoredConfig = {
     chatFailure: true,
     flowSuccess: false,
     flowFailure: true,
+    botRequests: true,
   },
   metricsEnabled: true,
   oneShotTemporaryChat: true,
@@ -379,6 +409,7 @@ export const defaultStored: StoredConfig = {
   sidebarView: { sort: 'activity', groupByDate: true },
   showTokenUsage: true,
   showRecap: true,
+  backdropMotion: true,
   windowBounds: null,
   captureSettings: {
     palette: DEFAULT_CAPTURE_PALETTE,
@@ -393,6 +424,7 @@ export const defaultStored: StoredConfig = {
     range: 'all' as CaptureRange,
     width: DEFAULT_CAPTURE_WIDTH,
     margin: DEFAULT_CAPTURE_MARGIN,
+    cardOpacity: DEFAULT_CARD_OPACITY,
     pixelRatio: 1,
     zip: false,
   },
@@ -433,6 +465,7 @@ export const defaultStored: StoredConfig = {
     apiId: 0,
     apiHashEncrypted: '',
     allowGroupCommands: false,
+    replaceLinkMessage: true,
     adminUserIds: [],
     llmDirect: { targetUrl: '' },
     pairing: { pendingCodes: [], pairedUsers: [] },
@@ -494,6 +527,7 @@ export const defaultStored: StoredConfig = {
   byokInstances: [],
   byokGroups: [],
   mcpServers: [],
+  knowledgeBases: [],
   mailEnabled: false,
   calendarEnabled: false,
   lineReaderEnabled: false,
@@ -501,8 +535,11 @@ export const defaultStored: StoredConfig = {
   xConnectorEnabled: false,
   taiwanRailEnabled: null,
   pttConnectorEnabled: null,
+  taiwanLawEnabled: false,
   translateConnectorEnabled: true,
   pageConnectorEnabled: true,
+  officeConnectorEnabled: false,
+  yobiConnectorEnabled: true,
   linkRecognition: {},
   ...bySiteFlag(() => false),
   hiddenProviders: [],
@@ -514,6 +551,10 @@ export const defaultStored: StoredConfig = {
   claudeModelCatalog: null,
   chatgptModel: EMPTY_CHATGPT_CHOICE,
   chatgptModelCatalog: null,
+  perplexityModel: EMPTY_PERPLEXITY_CHOICE,
+  perplexityModelCatalog: null,
   downloadsKeep: DEFAULT_DOWNLOADS_KEEP,
+  botDownloadCap: DEFAULT_BOT_DOWNLOAD_CAP,
+  botDownloadCaps: {},
   agentTrustedCommands: [],
 };

@@ -10,6 +10,7 @@ import { ShellBubble } from './ShellBubble';
 import { shellApi } from '../../api/electronApi';
 import { StepProgressCard } from './StepProgressCard';
 import { TraceHeader } from './TraceHeader';
+import { TraceScroll } from './TraceScroll';
 import { AgentTraceRows } from '../AgentTraceRows';
 import { FlowBuildProgressView } from '../FlowBuildProgress';
 import { PROGRESS_ROW_STYLE, ProgressMark } from '../ProgressMark';
@@ -132,22 +133,23 @@ function PendingTurnBubbleInner({ turn, t }: PendingTurnBubbleProps) {
             <Text fz="var(--font-size-md)">{header}</Text>
           </Group>
         )}
-        {showDetail && shownPlan && hasPlan && (
+        {showDetail && (hasPlan || flowBuild || steps.length > 0) && (
           <Box pl={inset}>
-            <Text fz="var(--font-size-xs)" fw={500} c="dimmed">{t('agent.trace.plan')}</Text>
-            <PlanRows steps={shownPlan.steps} done={shownPlan.done} />
+            <TraceScroll follow>
+              <Stack gap={6}>
+                {shownPlan && hasPlan && (
+                  <Box>
+                    <Text fz="var(--font-size-xs)" fw={500} c="dimmed">{t('agent.trace.plan')}</Text>
+                    <PlanRows steps={shownPlan.steps} done={shownPlan.done} />
+                  </Box>
+                )}
+                {flowBuild && <FlowBuildProgressView state={flowBuild} />}
+                {steps.length > 0 && <AgentTraceRows trace={steps} />}
+              </Stack>
+            </TraceScroll>
           </Box>
         )}
-        {showDetail && flowBuild && (
-          <Box pl={inset}>
-            <FlowBuildProgressView state={flowBuild} />
-          </Box>
-        )}
-        {showDetail && steps.length > 0 ? (
-          <Box pl={inset}>
-            <AgentTraceRows trace={steps} />
-          </Box>
-        ) : progress && !liveView ? (
+        {!(showDetail && steps.length > 0) && progress && !liveView ? (
           <Text pl={inset} fz="var(--font-size-sm)" c="dimmed">{progress}</Text>
         ) : null}
       </Stack>

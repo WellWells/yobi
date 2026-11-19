@@ -21,6 +21,7 @@ import { createLineSelfAdmin, LINE_SELF_OWNER_ONLY_COMMANDS, type LineSelfAdmin,
 import { lineSelfChatContext } from './chatContext';
 import { defaultMediaPrompt, lineSelfMediaUnavailable, prepareLineSelfMedia } from './media';
 import { requestMedia, type LineSelfMediaRef } from './mediaRows';
+import { asksForAFile } from '../botChat/attachmentPlan';
 import { isLineDirectChat, isLineGroupChat } from './chats';
 import { createLineSelfSender, type LineSelfFileOptions, type LineSelfQuote, type LineSelfSender, type LineSelfSenderDeps } from './sender';
 import { addressedText, groupRequest, isYobiReply, menuPick, numberedMenu, withReplyPrefix } from './text';
@@ -230,7 +231,9 @@ export class LineSelfRuntime extends SocketBotRuntime<LineSelfTextEvent> {
     const download = service.downloadMessage?.bind(service);
     const sender = this.sender;
     const effective = targetUrl || (this.selfDeps.appModelUrl?.() ?? '');
-    const media = await prepareLineSelfMedia(ref, { chatId: event.lineChatId, userId: event.userId, targetUrl: effective }, {
+    // Only a request for a file (an MP3, subtitles…) has a video or a voice message fetched, for the run's tools.
+    const forTools = asksForAFile(event.text ?? '');
+    const media = await prepareLineSelfMedia(ref, { chatId: event.lineChatId, userId: event.userId, targetUrl: effective, forTools }, {
       ...(download ? { download } : {}),
       tokens: () => (sender ? sender.tokens() : this.selfDeps.scanTokens()),
       fallbackUrl: this.selfDeps.uploadFallbackUrl?.() ?? '',
@@ -720,7 +723,7 @@ export class LineSelfRuntime extends SocketBotRuntime<LineSelfTextEvent> {
     try {
       await sender.send(chatId, withReplyPrefix(text), options.replyTo ? { replyTo: options.replyTo } : {});
     } catch (err: unknown) {
-      this.deps.onLog(`[lineSelf] could not send to ${chatId}: ${err instanceof Error ? err.message : String(err)}`);
+      this.deps.onLog(`⚠️ [lineSelf] could not send to ${chatId}:${err instanceof Error ? err.message : String(err)}`);
       if (options.throwOnFailure) throw err;
     }
   }

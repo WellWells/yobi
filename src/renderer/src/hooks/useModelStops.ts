@@ -13,11 +13,12 @@ import { loginRequiredProviderForUrl } from '../../../shared/types';
 import { chooseGeminiModel } from '../components/chat/GeminiModelMenu';
 import { chooseClaudeModel } from '../components/chat/ClaudeModelMenu';
 import { chooseChatgptModel } from '../components/chat/ChatgptModelMenu';
+import { choosePerplexityModel } from '../components/chat/PerplexityModelMenu';
 
 type AppStoreState = ReturnType<typeof useAppStore.getState>;
 
 function stopSources(
-  state: Pick<AppStoreState, 'byokModels' | 'byokGroupModels' | 'geminiModels' | 'claudeModels' | 'chatgptModels' | 'accountStatuses'>,
+  state: Pick<AppStoreState, 'byokModels' | 'byokGroupModels' | 'geminiModels' | 'claudeModels' | 'chatgptModels' | 'perplexityModels' | 'accountStatuses'>,
   hidden: ReturnType<typeof selectHiddenSources>,
 ): ModelStopSources {
   return {
@@ -25,6 +26,7 @@ function stopSources(
     geminiModels: state.geminiModels,
     claudeModels: state.claudeModels,
     chatgptModels: state.chatgptModels,
+    perplexityModels: state.perplexityModels,
     needsLogin: (url) => {
       const provider = loginRequiredProviderForUrl(url);
       return provider !== null && state.accountStatuses[provider] === false;
@@ -43,7 +45,7 @@ export function modelStopSources(state: AppStoreState): ModelStopSources {
  */
 export function chooseModelStop(stop: ModelStop): void {
   if (!stop.sub) return;
-  const { geminiModels, claudeModels, chatgptModels } = useAppStore.getState();
+  const { geminiModels, claudeModels, chatgptModels, perplexityModels } = useAppStore.getState();
   const { id } = stop.sub;
   switch (stop.sub.provider) {
     case 'gemini':
@@ -54,6 +56,9 @@ export function chooseModelStop(stop: ModelStop): void {
       return;
     case 'chatgpt':
       if (chatgptModels?.choice.modelId !== id) chooseChatgptModel({ modelId: id });
+      return;
+    case 'perplexity':
+      if (perplexityModels?.choice.modelId !== id) choosePerplexityModel({ modelId: id });
       return;
   }
 }
@@ -71,6 +76,7 @@ export function useModelStops(activeUrl: string): ModelStops {
     geminiModels: s.geminiModels,
     claudeModels: s.claudeModels,
     chatgptModels: s.chatgptModels,
+    perplexityModels: s.perplexityModels,
     accountStatuses: s.accountStatuses,
   })));
   const hidden = useAppStore(useShallow(selectHiddenSources));

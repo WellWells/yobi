@@ -4,16 +4,25 @@ import type { AccountStatus, AuthProvider, HiddenSources, OutputFile, Provider, 
 import type { GeminiModelState } from '../../../shared/geminiModels';
 import type { ClaudeModelState } from '../../../shared/claudeModels';
 import type { ChatgptModelState } from '../../../shared/chatgptModels';
+import type { PerplexityModelState } from '../../../shared/perplexityModels';
 import type { StepProgress } from '../../../shared/stepProgress';
 import { parseMarkdownBlocks, conversationAliases } from '../utils/parseMarkdownBlocks';
 import type { MarkdownBlocks } from '../utils/parseMarkdownBlocks';
 import { parseConversationDoc } from '../../../shared/conversationDoc';
 import { rememberLastActivity } from '../utils/lastActivity';
+import { keepUnchangedFiles, sameKeys, sameOutputFile } from './outputFileIdentity';
 import { notionConversation } from '../../../shared/notion/notionDoc';
 import type { ConversationDoc } from '../../../shared/conversationDoc';
 import { DEFAULT_MODEL_URL } from '../config/models';
 import type { ModelOption } from '../config/models';
 import type { LogLevel } from '../components/logFormat';
+
+/** What another view asks the log panel to open on: levels, and optionally one flow's lines. */
+export interface LogFilterRequest {
+  levels: LogLevel[];
+  /** A log `[scope]` root, e.g. a flow's trace name. */
+  scope?: string;
+}
 
 export function selectHiddenSources(s: {
   hiddenProviders: Provider[];
@@ -130,10 +139,19 @@ interface AppState {
   currentView: View;
   /** The chat or flow view last shown: where Settings' back button returns. */
   lastMainView: MainView;
-  /** One-shot: a level filter another view asked the log panel to open with. */
-  logLevelRequest: LogLevel[] | null;
+  /** One-shot: a filter another view asked the log panel to open with. */
+  logLevelRequest: LogFilterRequest | null;
   /** One-shot: the settings category another view asked Settings to open on. */
   settingsCategoryRequest: string | null;
+  /** One-shot: a knowledge base Settings asked the chat to start a new conversation with. */
+  knowledgeChatRequest: string | null;
+  /** The knowledge base whose page is open in the chat (in a new chat's place, over its composer); null = none. */
+  openKnowledgeId: string | null;
+  /**
+   * One-shot: the knowledge base page asked the composer to answer from these of its documents only
+   * (`kbFiles` in the conversation marker); an empty list = the whole base again.
+   */
+  knowledgeAskRequest: { kbId: string; files: string[] } | null;
 
   layoutMode: LayoutMode;
   markdownZoom: number;
@@ -156,6 +174,7 @@ interface AppState {
   claudeModels: ClaudeModelState | null;
   /** What this ChatGPT account offers (models and effort steps, or the thinking toggle) and the one ChatGPT setting. */
   chatgptModels: ChatgptModelState | null;
+  perplexityModels: PerplexityModelState | null;
   hiddenProviders: Provider[];
   hiddenByokIds: string[];
   hiddenByokGroupIds: string[];
@@ -179,7 +198,14 @@ interface AppState {
   setView: (view: View) => void;
   /** Closes the Settings dialog (with its Logs and About pages) back to the view behind it. */
   closeSettings: () => void;
-  openLogsFiltered: (levels: LogLevel[]) => void;
+  /** Opens a new chat with this knowledge base attached (the chat view reads the request). */
+  startKnowledgeChat: (kbId: string) => void;
+  /** Opens the knowledge base's page in the chat's main area; opening a conversation or a new chat closes it. */
+  openKnowledge: (kbId: string | null) => void;
+  clearKnowledgeChatRequest: () => void;
+  askKnowledgeFiles: (kbId: string, files: string[]) => void;
+  clearKnowledgeAskRequest: () => void;
+  openLogsFiltered: (levels: LogLevel[], scope?: string) => void;
   clearLogLevelRequest: () => void;
   openSettingsCategory: (category: string) => void;
   clearSettingsCategoryRequest: () => void;
@@ -201,6 +227,7 @@ interface AppState {
   setGeminiModels: (state: GeminiModelState) => void;
   setClaudeModels: (state: ClaudeModelState) => void;
   setChatgptModels: (state: ChatgptModelState) => void;
+  setPerplexityModels: (state: PerplexityModelState) => void;
   setHiddenSources: (next: HiddenSources) => void;
 }
 
@@ -224,6 +251,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   lastMainView: 'chat',
   logLevelRequest: null,
   settingsCategoryRequest: null,
+  knowledgeChatRequest: null,
+  openKnowledgeId: null,
+  knowledgeAskRequest: null,
   // Empty until bootstrap reads it: empty also means "off", so nothing advertises a combo early.
   hotkey: '',
   regionHotkey: '',
@@ -236,6 +266,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   geminiModels: null,
   claudeModels: null,
   chatgptModels: null,
+  perplexityModels: null,
   hiddenProviders: [],
   hiddenByokIds: [],
   hiddenByokGroupIds: [],
@@ -293,28 +324,34 @@ export const useAppStore = create<AppState>((set, get) => ({
         ? { selectedFile: null, fileContent: null, parsedBlocks: null, conversation: null }
         : {};
 
-      return { files, unreadFilePaths: nextUnread, ...cleared };
+      return {
+        files: keepUnchangedFiles(state.files, files),
+        unreadFilePaths: sameKeys(state.unreadFilePaths, nextUnread) ? state.unreadFilePaths : nextUnread,
+        ...cleared,
+      };
     });
   },
-  selectFile: (selectedFile) => set((state) => {
+  selectFile: (next) => set((state) => {
+    const selectedFile = next && state.selectedFile && sameOutputFile(state.selectedFile, next) ? state.selectedFile : next;
     const samePath = Boolean(selectedFile?.path) && selectedFile?.path === state.selectedFile?.path;
     const content = samePath
       ? { fileContent: state.fileContent, parsedBlocks: state.parsedBlocks, conversation: state.conversation }
       : { fileContent: null, parsedBlocks: null, conversation: null };
+    // Opening a conversation (or a new chat) leaves a knowledge base's page.
     if (!selectedFile?.path || !state.unreadFilePaths[selectedFile.path]) {
-      return { selectedFile, ...content };
+      return { selectedFile, ...content, openKnowledgeId: null };
     }
     const nextUnread = { ...state.unreadFilePaths };
     delete nextUnread[selectedFile.path];
-    return { selectedFile, ...content, unreadFilePaths: nextUnread };
+    return { selectedFile, ...content, unreadFilePaths: nextUnread, openKnowledgeId: null };
   }),
-  setFileContent: (fileContent) => set({
+  setFileContent: (fileContent) => set((state) => (fileContent === state.fileContent ? state : {
     fileContent,
     parsedBlocks: fileContent !== null ? parseMarkdownBlocks(fileContent) : null,
     conversation: fileContent !== null
       ? notionConversation(fileContent) ?? parseConversationDoc(fileContent, conversationAliases())
       : null,
-  }),
+  })),
   addPendingTurn: (conversationPath, turn) => set((state) => ({
     pendingTurns: {
       ...state.pendingTurns,
@@ -370,7 +407,28 @@ export const useAppStore = create<AppState>((set, get) => ({
     lastMainView: isMainView(currentView) ? currentView : state.lastMainView,
   })),
   closeSettings: () => set((state) => ({ currentView: state.lastMainView })),
-  openLogsFiltered: (logLevelRequest) => set({ currentView: 'logs', logLevelRequest }),
+  startKnowledgeChat: (knowledgeChatRequest) => set({ currentView: 'chat', lastMainView: 'chat', openKnowledgeId: null, knowledgeChatRequest }),
+  // The page takes a new chat's place, over the same composer: the sidebar marks the base, and
+  // what is sent there starts a saved conversation with it (so not a temporary chat).
+  openKnowledge: (openKnowledgeId) => set(openKnowledgeId
+    ? {
+      currentView: 'chat',
+      lastMainView: 'chat',
+      openKnowledgeId,
+      selectedFile: null,
+      fileContent: null,
+      parsedBlocks: null,
+      conversation: null,
+      tempChatMode: false,
+      tempChatContent: null,
+      tempChatBlocks: null,
+      tempChatConversation: null,
+    }
+    : { openKnowledgeId }),
+  clearKnowledgeChatRequest: () => set({ knowledgeChatRequest: null }),
+  askKnowledgeFiles: (kbId, files) => set({ knowledgeAskRequest: { kbId, files } }),
+  clearKnowledgeAskRequest: () => set({ knowledgeAskRequest: null }),
+  openLogsFiltered: (levels, scope) => set({ currentView: 'logs', logLevelRequest: { levels, scope } }),
   clearLogLevelRequest: () => set({ logLevelRequest: null }),
   openSettingsCategory: (settingsCategoryRequest) => set({ currentView: 'settings', settingsCategoryRequest }),
   clearSettingsCategoryRequest: () => set({ settingsCategoryRequest: null }),
@@ -405,6 +463,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   setGeminiModels: (geminiModels) => set({ geminiModels }),
   setClaudeModels: (claudeModels) => set({ claudeModels }),
   setChatgptModels: (chatgptModels) => set({ chatgptModels }),
+  setPerplexityModels: (perplexityModels) => set({ perplexityModels }),
   setHiddenSources: (next) => set({
     hiddenProviders: next.providers,
     hiddenByokIds: next.byokIds,

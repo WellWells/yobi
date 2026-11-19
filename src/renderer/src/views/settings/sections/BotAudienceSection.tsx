@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { ActionIcon, Badge, Button, Group, Menu, Pill, Stack, Text, Tooltip } from '@mantine/core';
-import { Check, ContactRound, Plus, ShieldOff, Trash } from 'lucide-react';
+import { Check, Plus, ShieldOff, Trash } from 'lucide-react';
 import { botApi } from '../../../api/electronApi';
 import { WebDialog } from '../../../components/WebDialog';
 import { Z_POPOVER } from '../../../config/zLayers';
@@ -8,7 +8,6 @@ import { useFormatTime } from '../../../hooks/useFormatTime';
 import { showAppNotice } from '../../../hooks/useUiNotifications';
 import { botGroupsNeedApproval } from '../../../../../shared/botPermissions';
 import type { BotGroupGrant } from '../../../../../shared/botPermissions';
-import { SectionTitle, SettingDivider } from '../components';
 import type { BotAudienceSnapshot, BotAudienceUser, BotContact, BotPlatform, TelegramChannel } from '../../../../../shared/types';
 import type { BotConnectorOption } from './botPermissionsView';
 import { GRANT_MENU_DROPDOWN_STYLE, GRANT_MENU_MIDDLEWARES } from './BotUserPermissions';
@@ -19,11 +18,9 @@ import {
 import type { BotChatRow } from './botAudienceView';
 import { fillTemplate } from '../../../../../shared/fillTemplate';
 
-interface Props {
-  platform: BotPlatform;
+interface GroupListProps {
+  audience: BotAudienceControls;
   connectors: readonly BotConnectorOption[];
-  /** Changes whenever the platform's snapshot is re-read, so the lists follow it. */
-  refreshKey: unknown;
   /** Telegram's flow recipients (channels and groups); merged into the group rows by chat id. */
   channels?: readonly TelegramChannel[];
   contacts?: readonly BotContact[];
@@ -124,7 +121,7 @@ const ChatRow: React.FC<{
             {row.unreachable && badge(t(`settings.telegram.reach.${row.unreachable}`), 'var(--mantine-color-warning)')}
           </Group>
           {detail && (
-            <Text fz="var(--font-size-sm)" c={row.channel && !row.channel.canPost ? 'var(--mantine-color-warning)' : 'dimmed'} truncate>
+            <Text fz="var(--font-size-sm)" c={row.channel && !row.channel.canPost ? 'var(--warning-text)' : 'dimmed'} truncate>
               {detail}
             </Text>
           )}
@@ -179,8 +176,9 @@ const UserRow: React.FC<{
         </Text>
       </Stack>
       <Group gap={4} wrap="nowrap">
-        {user.requested && (
-          <Button variant="light" size="compact-xs" leftSection={<Check size={12} />} onClick={onApprove}>
+        {/* Anyone listed may be let in from here, asked or not; a request is the one that stands out. */}
+        {!user.blocked && (
+          <Button variant={user.requested ? 'light' : 'subtle'} size="compact-xs" leftSection={<Check size={12} />} onClick={onApprove}>
             {t('settings.bot.users.approve')}
           </Button>
         )}
@@ -192,20 +190,22 @@ const UserRow: React.FC<{
   );
 };
 
+export interface BotAudienceControls {
+  platform: BotPlatform;
+  audience: BotAudienceSnapshot | null;
+  setGroup: (chatId: string, grants: BotGroupGrant[] | null) => Promise<void>;
+  setBlocked: (userId: string, blocked: boolean) => Promise<void>;
+  approve: (userId: string) => Promise<void>;
+}
+
 /**
- * A bot's channels and groups, each listed once — a group pending the owner's approval (the bot
- * does nothing there until allowed) or with what it grants everyone in it (paired or not), a
- * Telegram flow recipient removable from the list — then the unpaired people who addressed the
- * bot, with a block switch each. Read from main on open, after every change and whenever the
- * platform's snapshot is re-read.
+ * A bot's groups and the unpaired people who addressed it, read from main on open, after every
+ * change and whenever the platform's snapshot is re-read (`refreshKey`). One read feeds both
+ * lists, which sit in different parts of the card: the people next to the paired accounts, the
+ * groups in their own section.
  */
-export const BotAudienceSection: React.FC<Props> = ({
-  platform, connectors, refreshKey, channels = [], contacts = [], onForgetChannel, header, t,
-}) => {
+export function useBotAudience(platform: BotPlatform, refreshKey: unknown, t: (key: string) => string): BotAudienceControls {
   const [audience, setAudience] = useState<BotAudienceSnapshot | null>(null);
-  // Confirmed like the other permanent removals: forgetting a recipient drops it from the
-  // directory, and every flow that sends there stops knowing its name.
-  const [forgetting, setForgetting] = useState<BotChatRow | null>(null);
 
   const reload = useCallback(async () => {
     setAudience(await botApi.getAudience(platform).catch(() => ({ groups: [], users: [] })));
@@ -237,8 +237,21 @@ export const BotAudienceSection: React.FC<Props> = ({
     await reload();
   };
 
+  return { platform, audience, setGroup, setBlocked, approve };
+}
+
+/**
+ * A bot's channels and groups, each listed once — a group pending the owner's approval (the bot
+ * does nothing there until allowed) or with what it grants everyone in it (paired or not), a
+ * Telegram flow recipient removable from the list.
+ */
+export const BotGroupList: React.FC<GroupListProps> = ({
+  audience: { platform, audience, setGroup }, connectors, channels = [], contacts = [], onForgetChannel, header, t,
+}) => {
+  // Confirmed like the other permanent removals: forgetting a recipient drops it from the
+  // directory, and every flow that sends there stops knowing its name.
+  const [forgetting, setForgetting] = useState<BotChatRow | null>(null);
   const rows = mergeBotChats(audience?.groups ?? [], channels, contacts);
-  const users = audience?.users ?? [];
   const recipients = onForgetChannel !== undefined;
   const copy = groupCopy(platform);
   return (
@@ -264,25 +277,6 @@ export const BotAudienceSection: React.FC<Props> = ({
           ))}
       </Stack>
 
-      <SettingDivider my={16} />
-
-      {/* Its own section, with its icon: it was a bold line under the groups that read as a heading without one. */}
-      <SectionTitle icon={<ContactRound size={15} />} label={t('settings.bot.users.title')} />
-      <Stack gap={10}>
-        <Text fz="var(--font-size-sm)" c="dimmed" lh={1.6}>{t('settings.bot.users.hint')}</Text>
-        {users.length === 0
-          ? <Text fz="var(--font-size-sm)" c="dimmed">{t('settings.bot.users.none')}</Text>
-          : users.map((user) => (
-            <UserRow
-              key={user.id}
-              user={user}
-              onBlock={(blocked) => { void setBlocked(user.id, blocked); }}
-              onApprove={() => { void approve(user.id); }}
-              t={t}
-            />
-          ))}
-      </Stack>
-
       <WebDialog
         open={forgetting !== null}
         title={t('settings.telegram.channels.forget.title')}
@@ -298,5 +292,33 @@ export const BotAudienceSection: React.FC<Props> = ({
         onCancel={() => setForgetting(null)}
       />
     </>
+  );
+};
+
+/**
+ * The unpaired people who addressed the bot, each with a block switch and, when they asked to
+ * pair, "approve". It sits right under the paired accounts: after the groups,
+ * pairing would be split across the card.
+ */
+export const BotUserList: React.FC<{ audience: BotAudienceControls; t: (key: string) => string }> = ({
+  audience: { audience, setBlocked, approve }, t,
+}) => {
+  const users = audience?.users ?? [];
+  return (
+    <Stack gap={6}>
+      <Text fz="var(--font-size-sm)" fw={600} c="var(--mantine-color-default-color)">{t('settings.bot.users.title')}</Text>
+      <Text fz="var(--font-size-sm)" c="dimmed" lh={1.6}>{t('settings.bot.users.hint')}</Text>
+      {users.length === 0
+        ? <Text fz="var(--font-size-sm)" c="dimmed">{t('settings.bot.users.none')}</Text>
+        : users.map((user) => (
+          <UserRow
+            key={user.id}
+            user={user}
+            onBlock={(blocked) => { void setBlocked(user.id, blocked); }}
+            onApprove={() => { void approve(user.id); }}
+            t={t}
+          />
+        ))}
+    </Stack>
   );
 };

@@ -61,6 +61,7 @@ export function buildAnswerCaptureRequest(
       showTokens: false,
       width: style.width,
       margin: style.margin,
+      cardOpacity: style.cardOpacity,
       background: style.background,
       cardTheme: style.cardTheme,
       cardLayout: settings.cardLayout,

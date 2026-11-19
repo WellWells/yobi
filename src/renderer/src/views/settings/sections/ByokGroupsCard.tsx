@@ -6,6 +6,7 @@ import { useHiddenSources } from '../hooks/useHiddenSources';
 import { AppButton } from '../../../components/AppButton';
 import { WebDialog } from '../../../components/WebDialog';
 import { ByokGroupForm } from './ByokGroupForm';
+import { HiddenSourceBadge, sourceNameColor } from './HiddenSourceBadge';
 import type { useByokGroups } from '../hooks/useByokGroups';
 import type { ByokGroupSnapshot } from '../../../../../shared/types';
 import { fillTemplate } from '../../../../../shared/fillTemplate';
@@ -64,15 +65,17 @@ export const ByokGroupsCard: React.FC<Props> = ({ byokGroups, t, sectionGap }) =
                     wrap="nowrap"
                     flex={1}
                     miw={0}
-                    opacity={hiddenNow(group.id) ? 0.55 : 1}
                   >
-                    <Box c="var(--mantine-color-default-color)" mt={2} style={{ flexShrink: 0 }}>
+                    <Box c={sourceNameColor(hiddenNow(group.id))} mt={2} style={{ flexShrink: 0 }}>
                       <Layers size={16} />
                     </Box>
                     <Stack gap={6} miw={0}>
-                      <Text fz="var(--font-size-base)" fw={600} c="var(--mantine-color-default-color)" truncate>
-                        {group.name}
-                      </Text>
+                      <Group gap={8} wrap="nowrap" miw={0}>
+                        <Text fz="var(--font-size-base)" fw={600} c={sourceNameColor(hiddenNow(group.id))} truncate>
+                          {group.name}
+                        </Text>
+                        {hiddenNow(group.id) && <HiddenSourceBadge t={t} />}
+                      </Group>
                       <Group gap={6} wrap="wrap">
                         {group.memberIds.map((id) => (
                           <Badge key={id} variant="default" size="sm">
@@ -95,7 +98,7 @@ export const ByokGroupsCard: React.FC<Props> = ({ byokGroups, t, sectionGap }) =
                     <ActionIcon
                       variant="default"
                       size={30}
-                      c="red"
+                      c="var(--danger-text)"
                       aria-label={t('settings.byok.group.delete')}
                       onClick={() => setConfirmDelete(group)}
                     >

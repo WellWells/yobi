@@ -12,8 +12,8 @@ import { useYtdlToolsState, ytdlToolsUsable } from '../../../store/ytdlToolsStor
 import { useFormatTime } from '../../../hooks/useFormatTime';
 import { siteLabel } from '../../../../../shared/linkSites/rows';
 import { pausedSites } from '../../../../../shared/linkSites/siteChanged';
-import { DOWNLOADS_KEEP_CHOICES, isDownloadsKeep } from '../../../../../shared/downloads';
-import type { DownloadsKeep } from '../../../../../shared/downloads';
+import { BOT_DOWNLOAD_CAP_CHOICES, DOWNLOADS_KEEP_CHOICES, isBotDownloadCap, isDownloadsKeep } from '../../../../../shared/downloads';
+import type { BotDownloadCap, DownloadsKeep } from '../../../../../shared/downloads';
 import { BotAccessCaption } from './BotAccessCaption';
 import { anyBotEnabled, whoCanUse, whoCanUseText } from './botPermissionsView';
 import type { BotRoster } from './botPermissionsView';
@@ -32,7 +32,8 @@ interface Props {
  * state, a line per site whose downloads are paused, the update check, removal, and
  * (advanced) pointing at copies installed some other way. Main broadcasts every change, so nothing
  * here keeps its own copy of the state beyond the two path fields being typed. Also how long the
- * Yobi folder in Downloads keeps files, shown with or without the tools (not every download needs them).
+ * Yobi folder in Downloads keeps files, shown with or without the tools (not every download needs them),
+ * and, with a bot on, the largest file a bot user without the admin right may download.
  */
 export const YtdlToolsSetting: React.FC<Props> = ({ t, visible, sectionGap, roster }) => {
   const state = useYtdlToolsState();
@@ -41,6 +42,7 @@ export const YtdlToolsSetting: React.FC<Props> = ({ t, visible, sectionGap, rost
   const [ytdlpPath, setYtdlpPath] = useState('');
   const [ffmpegDir, setFfmpegDir] = useState('');
   const [keep, setKeep] = useState<DownloadsKeep | null>(null);
+  const [botCap, setBotCap] = useState<BotDownloadCap | null>(null);
 
   useEffect(() => {
     setYtdlpPath(state?.customPaths?.ytdlp ?? '');
@@ -48,6 +50,7 @@ export const YtdlToolsSetting: React.FC<Props> = ({ t, visible, sectionGap, rost
   }, [state?.customPaths?.ytdlp, state?.customPaths?.ffmpegDir]);
 
   useEffect(() => { void ytdlToolsApi.getDownloadsKeep().then(setKeep); }, []);
+  useEffect(() => { void ytdlToolsApi.getBotDownloadCap().then(setBotCap); }, []);
 
   if (!state) return null;
   const usable = ytdlToolsUsable(state);
@@ -87,7 +90,7 @@ export const YtdlToolsSetting: React.FC<Props> = ({ t, visible, sectionGap, rost
                   {fillTemplate(t('settings.ytdl.lastChecked'), { time: formatTime(state.lastCheckedAt) })}
                 </Text>
               )}
-              {failures.map((line) => <Text key={line} fz="xs" c="var(--mantine-color-warning)">{line}</Text>)}
+              {failures.map((line) => <Text key={line} fz="xs" c="var(--warning-text)">{line}</Text>)}
             </Stack>
             <Group gap="xs">
               {state.status === 'ready' && (
@@ -123,6 +126,7 @@ export const YtdlToolsSetting: React.FC<Props> = ({ t, visible, sectionGap, rost
             hint={t('settings.ytdl.keep.hint')}
             control={(
               <SelectDropdown
+                aria-label={t('settings.ytdl.keep')}
                 value={keep}
                 options={DOWNLOADS_KEEP_CHOICES.map((choice) => ({ value: choice, label: t(`settings.ytdl.keep.${choice}`) }))}
                 onChange={(value) => {
@@ -140,6 +144,7 @@ export const YtdlToolsSetting: React.FC<Props> = ({ t, visible, sectionGap, rost
           hint={t('settings.ytdl.nightly.hint')}
           control={(
             <ToggleSwitch
+              aria-label={t('settings.ytdl.nightly')}
               checked={state.nightly}
               disabled={state.status === 'custom'}
               onChange={(e) => { void ytdlToolsApi.setNightly(e.currentTarget.checked); }}
@@ -192,6 +197,23 @@ export const YtdlToolsSetting: React.FC<Props> = ({ t, visible, sectionGap, rost
         {anyBotEnabled(roster) && (
           <>
             <SettingDivider />
+            {botCap && (
+              <SettingRow
+                label={t('settings.ytdl.botCap')}
+                hint={t('settings.ytdl.botCap.hint')}
+                control={(
+                  <SelectDropdown
+                    aria-label={t('settings.ytdl.botCap')}
+                    value={botCap}
+                    options={BOT_DOWNLOAD_CAP_CHOICES.map((choice) => ({ value: choice, label: t(`settings.ytdl.botCap.${choice}`) }))}
+                    onChange={(value) => {
+                      if (isBotDownloadCap(value)) void ytdlToolsApi.setBotDownloadCap(value).then(setBotCap);
+                    }}
+                    w={150}
+                  />
+                )}
+              />
+            )}
             <BotAccessCaption text={whoCanUseText(whoCanUse(roster, 'download'), 'downloader', t)} />
           </>
         )}

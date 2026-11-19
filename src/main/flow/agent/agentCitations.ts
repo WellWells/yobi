@@ -14,10 +14,11 @@ const ANSWER_MARKER = /\[\\\[(\d{1,3})\\\]\]\(<[^>]*>\)|\[(\d{1,3})\](?!\()/g;
 /** Code is left alone: `[0]` there is an index, not a citation. */
 const CODE_SPAN = /(```[\s\S]*?```|`[^`\n]*`)/g;
 /**
- * A `sourcesLine` the model copied into its answer, with the blank lines before it. It is written for
- * the model; the user gets the list.
+ * A `sourcesLine` the model copied into its answer, with the blank lines before it — on one line, or
+ * as "SOURCES:" over one `[n] title` line each (seen in a BYOK finish after `kb_search`). It is
+ * written for the model; the user gets the list.
  */
-const COPIED_SOURCES_LINE = /\n*^[ \t]*SOURCES:[ \t]*\[\d{1,3}\][^\n]*$/gm;
+const COPIED_SOURCES_LINE = /\n*^[ \t]*SOURCES:[ \t]*(?:\[\d{1,3}\][^\n]*|(?:\n[ \t]*(?:[-*][ \t]+)?\[\d{1,3}\][^\n]*)+)$/gm;
 
 export interface ResearchSource {
   title: string;

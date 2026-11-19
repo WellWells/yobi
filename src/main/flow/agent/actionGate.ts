@@ -69,9 +69,6 @@ export function consentedBoundaries(answers: readonly string[]): ActionBoundary[
   return [...found];
 }
 
-/** Boundaries only an answer that names them may widen; see `CONSENT_WORDS`. */
-const NAMED_ONLY = new Set<ActionBoundary>(CONSENT_WORDS.map(([boundary]) => boundary));
-
 /**
  * This run was held back for crossing `boundary` before it paused for the answer it resumes with:
  * a resume restores what it did into the ledger's prior actions under the same run id. Only those
@@ -87,21 +84,19 @@ function heldBackBeforeAnswer(input: GateInput, boundary: ActionBoundary): boole
 }
 
 /**
- * What the user's answers widen for a call that would cross `boundary`. A draft or an edit has no
- * word of its own ("建立", "記在…", a folder name), so once this run was held back for exactly that
- * — and so told to ask — the latest answer, the one this invocation resumed with, allows it unless it
- * refuses, keeps, defers or limits. An earlier yes never outweighs a later no. A send or a delete
- * still needs an answer that names it. Program-owned approvals (shell, connector, flow) are not
- * answers here, so after such a resume the latest model-question answer may predate the block; those
- * pauses are bot-only, where every change is still confirmed call by call.
+ * What the user's answers widen for a call that would cross `boundary`. Once this run was held back
+ * for exactly that — and so told to ask, offering the agreeing choice first — the latest answer, the
+ * one this invocation resumed with, allows it when it picked that first choice. A pick, not words:
+ * a refusal reads differently in every language ("いいえ", "nein", "non"), and an answer without a
+ * refusal word was once read as a yes. An earlier pick never outweighs a later answer. Program-owned
+ * approvals (shell, connector, flow) are not answers here, so after such a resume the latest
+ * model-question answer may predate the block; those pauses are bot-only, where every change is
+ * still confirmed call by call.
  */
 function answeredBoundaries(input: GateInput, boundary: ActionBoundary | null): ActionBoundary[] {
-  const answers = input.answers ?? [];
-  const named = consentedBoundaries(answers);
-  if (!boundary || NAMED_ONLY.has(boundary) || named.includes(boundary)) return named;
-  const latest = answers.at(-1) ?? '';
-  const agreed = latest.trim() !== '' && !NOT_CONSENT.test(latest);
-  return agreed && heldBackBeforeAnswer(input, boundary) ? [...named, boundary] : named;
+  const named = consentedBoundaries(input.answers ?? []);
+  if (!boundary || named.includes(boundary)) return named;
+  return input.latestPickedFirst === true && heldBackBeforeAnswer(input, boundary) ? [...named, boundary] : named;
 }
 
 const BOUNDARY_WORDS: Record<ActionBoundary, string> = {
@@ -120,7 +115,9 @@ export interface GateInput {
   intent: GoalIntent | null;
   /** The user's answers to this run's questions; see `answeredBoundaries`. */
   answers?: readonly string[];
-  /** Which earlier records are this run's own, for an answer widening a draft or an edit. */
+  /** The latest answer picked the first of its question's choices; see `answeredBoundaries`. */
+  latestPickedFirst?: boolean;
+  /** Which earlier records are this run's own, for a picked answer widening a boundary. */
   runId?: string;
   blockedSoFar: number;
   signature: string;
@@ -201,14 +198,13 @@ export function decideAction(input: GateInput): GateDecision {
   const declared = input.intent?.change ?? DEFAULT_CHANGE;
   const allowed = allowedBoundaries({ change: [...declared, ...answeredBoundaries(input, boundary)], content: 'none' });
   if (boundary && !allowed.has(boundary)) {
-    const answer = NAMED_ONLY.has(boundary) ? `an answer that says to ${boundary}` : 'an answer that agrees';
     return {
       verdict: 'blocked',
       transient: false,
       boundary,
       reasons: [{
         code: 'boundary_exceeded',
-        message: `This call would ${BOUNDARY_WORDS[boundary]}, and the GOAL did not ask for that. Do only what the GOAL asks; if you believe it should, ask the user first — ${answer} allows it.`,
+        message: `This call would ${BOUNDARY_WORDS[boundary]}, and the GOAL did not ask for that. Do only what the GOAL asks; if you believe it should, ask the user first with "choices", the FIRST one agreeing to it — only the user picking that one allows it.`,
       }],
     };
   }

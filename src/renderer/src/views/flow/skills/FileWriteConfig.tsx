@@ -45,7 +45,7 @@ export const FileWriteConfig: React.FC<SkillConfigProps> = ({ step, onChange, t 
           mono
         />
       </FieldPair>
-      {folderUnused && <Text fz="xs" c="var(--mantine-color-warning)">{t('flow.skill.file_write.folderUnused')}</Text>}
+      {folderUnused && <Text fz="xs" c="var(--warning-text)">{t('flow.skill.file_write.folderUnused')}</Text>}
       <Text fz="xs" c="dimmed">{t('flow.skill.file_write.hint')}</Text>
     </Stack>
   );

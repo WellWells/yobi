@@ -8,6 +8,7 @@ import { clipboardApi, systemApi } from '../api/electronApi';
 import { PanelToolbar, ToolbarIconButton, ToolbarSearchInput } from './PanelToolbar';
 import { EmptyState } from './EmptyState';
 import { CopyIconButton } from './CopyIconButton';
+import { MIN_TARGET_PX } from './a11y';
 import { Check, Copy, FolderOpen, ScrollText, Trash, Upload } from 'lucide-react';
 import {
   LOG_LEVELS,
@@ -26,10 +27,10 @@ import styles from './LogPanel.module.css';
 import { useShortcutAction } from '../shortcuts/useShortcutAction';
 
 const toneTextColor: Record<LogTone, string> = {
-  error: 'var(--mantine-color-error)',
-  warning: 'var(--mantine-color-warning)',
-  success: 'var(--mantine-color-success)',
-  active: 'var(--mantine-color-accent)',
+  error: 'var(--error-text)',
+  warning: 'var(--warning-text)',
+  success: 'var(--success-text)',
+  active: 'var(--mantine-color-accent-text)',
   plain: 'var(--text-secondary)',
 };
 
@@ -38,6 +39,9 @@ const levelTagClass: Record<LogLevel, string> = {
   warning: styles.levelWarning,
   info: styles.levelInfo,
 };
+
+/** The xs chip is 23px tall; the level filters are pointer targets in a row, so they get 24 (WCAG 2.5.8). */
+const LEVEL_CHIP_VARS = (): { root: Record<string, string> } => ({ root: { '--chip-size': `${MIN_TARGET_PX}px` } });
 
 const levelLabelKey: Record<LogLevel, string> = {
   error: 'log.level.error',
@@ -107,7 +111,7 @@ export const LogEntry = React.memo<LogEntryProps>(({
         >
           {splitLogUrls(text).map((segment, i) => (segment.href ? (
             <Tooltip key={i} label={segment.href} inline multiline>
-              <Anchor href={segment.href} inherit c="var(--mantine-color-accent)" underline={tone === 'active' ? 'always' : 'hover'} onClick={openLogLink}>
+              <Anchor href={segment.href} inherit c="var(--mantine-color-accent-text)" underline="always" onClick={openLogLink}>
                 {segment.text}
               </Anchor>
             </Tooltip>
@@ -117,7 +121,7 @@ export const LogEntry = React.memo<LogEntryProps>(({
         </Text>
       </Flex>
       <Box className={styles.copyEntry}>
-        <CopyIconButton value={log} copyLabel={t('log.copy.entry')} copiedLabel={t('common.copied')} size={22} />
+        <CopyIconButton value={log} copyLabel={t('log.copy.entry')} copiedLabel={t('common.copied')} size={MIN_TARGET_PX} />
       </Box>
     </Flex>
   );
@@ -144,12 +148,13 @@ export const LogPanel = React.memo(() => {
   const [scope, setScope] = useState('');
 
   // Arriving from another view that asked for a specific level, e.g. the failure count in
-  // the statistics page. Consumed once so the filter stays the user's after that.
+  // the statistics page, or one failing step's flow. Consumed once so the filter stays the
+  // user's after that.
   useEffect(() => {
     if (!logLevelRequest) return;
-    setLevels([...logLevelRequest]);
+    setLevels([...logLevelRequest.levels]);
     setQuery('');
-    setScope('');
+    setScope(logLevelRequest.scope ?? '');
     clearLogLevelRequest();
   }, [logLevelRequest, clearLogLevelRequest]);
 
@@ -252,6 +257,7 @@ export const LogPanel = React.memo(() => {
         <Group gap={4} wrap="nowrap" className={styles.levels} style={{ flexShrink: 0 }}>
           <Chip
             size="xs"
+            vars={LEVEL_CHIP_VARS}
             variant="outline"
             color="brand"
             checked={allLevels}
@@ -263,6 +269,7 @@ export const LogPanel = React.memo(() => {
             <Chip
               key={level}
               size="xs"
+              vars={LEVEL_CHIP_VARS}
               variant="outline"
               color="brand"
               checked={!allLevels && levels.includes(level)}
@@ -275,7 +282,7 @@ export const LogPanel = React.memo(() => {
 
         {scope && (
           <Pill
-            size="sm"
+            size="md"
             withRemoveButton
             onRemove={handleScopeClear}
             removeButtonProps={{ 'aria-label': t('log.scope.clear') }}

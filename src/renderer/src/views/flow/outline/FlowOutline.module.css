@@ -1,6 +1,5 @@
 /* The flow's outline: the sidebar rows' vocabulary (flat, transparent, accent-dim when selected,
-   default-hover under the pointer), denser, with a reading-position rail as its own element at
-   the left edge (never a border on the row: `edgeBars`). */
+   default-hover under the pointer), denser. */
 .list {
   outline: none;
 }
@@ -34,7 +33,7 @@
 }
 
 .row:focus-visible {
-  outline: 2px solid var(--mantine-primary-color-filled);
+  outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }
 
@@ -44,21 +43,32 @@
   padding-bottom: 1px;
 }
 
-.rail {
+/* A block's line: every row inside it draws its part over its whole height, so the line is
+   unbroken from under the block's chevron to the corner of its end. */
+.guide {
   position: absolute;
-  left: 2px;
-  top: 2px;
-  bottom: 2px;
+  top: 0;
+  bottom: 0;
   width: 2px;
-  border-radius: 1px;
-  background: color-mix(in srgb, var(--text-muted) 40%, transparent);
+  background: color-mix(in srgb, var(--text-muted) 45%, transparent);
+  pointer-events: none;
+}
+
+.corner {
+  position: absolute;
+  top: 0;
+  bottom: 50%;
+  width: 12px;
+  border-left: 2px solid color-mix(in srgb, var(--text-muted) 45%, transparent);
+  border-bottom: 2px solid color-mix(in srgb, var(--text-muted) 45%, transparent);
+  pointer-events: none;
 }
 
 .number {
   flex-shrink: 0;
   width: 22px;
-  font-size: 11px;
-  line-height: 18px;
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
   text-align: right;

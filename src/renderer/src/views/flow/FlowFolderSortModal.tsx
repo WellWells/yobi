@@ -327,9 +327,9 @@ export const FlowFolderSortModal: React.FC<Props> = ({ open, flows, unfiledCount
                   ? count('flow.folder.sort.done', applied.moved, { folders: applied.folders.toLocaleString(locale) })
                   : t('flow.folder.sort.none')}
             </Text>
-            {undone === false && <Text fz="var(--font-size-sm)" c="var(--mantine-color-warning)">{t('flow.folder.sort.undoFailed')}</Text>}
-            {applied.skipped > 0 && <Text fz="var(--font-size-sm)" c="var(--mantine-color-warning)">{count('flow.folder.sort.skipped', applied.skipped)}</Text>}
-            {applied.failed > 0 && <Text fz="var(--font-size-sm)" c="var(--mantine-color-warning)">{count('flow.folder.sort.failedItems', applied.failed)}</Text>}
+            {undone === false && <Text fz="var(--font-size-sm)" c="var(--warning-text)">{t('flow.folder.sort.undoFailed')}</Text>}
+            {applied.skipped > 0 && <Text fz="var(--font-size-sm)" c="var(--warning-text)">{count('flow.folder.sort.skipped', applied.skipped)}</Text>}
+            {applied.failed > 0 && <Text fz="var(--font-size-sm)" c="var(--warning-text)">{count('flow.folder.sort.failedItems', applied.failed)}</Text>}
             <Group justify="flex-end" gap="xs" mt={4}>
               {applied.undoable && undone === null && (
                 <AppButton variant="default" size="xs" leftSection={<Undo2 size={13} />} loading={busy} onClick={() => { void undo(); }}>

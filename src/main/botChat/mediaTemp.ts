@@ -21,7 +21,13 @@ export function botMediaTempDir(): string {
 // SECURITY: the incoming name is attacker-controlled. Always generate the stem, and keep the
 // sender's extension only when it is a picture or document type: traversal and control characters
 // stay impossible, and nothing a double-click would run (.exe, .bat, .lnk…) is ever written.
-const KEPT_EXTENSIONS: ReadonlySet<string> = new Set([...UPLOADABLE_EXTENSIONS, 'txt']);
+// Videos and recordings fetched for a conversion keep theirs too: FFmpeg reads the container by it,
+// and a double-click opens a player, never runs anything.
+export const TOOL_MEDIA_EXTENSIONS: readonly string[] = [
+  'mp4', 'm4v', 'mov', 'mkv', 'webm', 'avi', 'wmv', 'flv', '3gp', 'mpg', 'mpeg',
+  'mp3', 'm4a', 'aac', 'wav', 'flac', 'ogg', 'oga', 'opus', 'wma', 'amr',
+];
+const KEPT_EXTENSIONS: ReadonlySet<string> = new Set([...UPLOADABLE_EXTENSIONS, 'txt', ...TOOL_MEDIA_EXTENSIONS]);
 
 export function safeLocalFileName(originalName: string | undefined, fallbackExt: string): string {
   const raw = (originalName ?? '').trim().toLowerCase();

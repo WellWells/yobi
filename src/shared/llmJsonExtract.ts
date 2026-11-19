@@ -235,6 +235,24 @@ function sweep(body: string, consider: Picker): unknown | null {
   return null;
 }
 
+const MARKDOWN_HARD_BREAK = /\\(?=\r?\n)/g;
+const NUMERIC_ENTITY = /&#(?:x([0-9a-f]{1,6})|(\d{1,7}));/gi;
+
+/**
+ * An unfenced reply copied out of a chat page as Markdown: the serializer writes each line break as
+ * a hard break (a backslash at the line end) and each leading space as `&#x20;`. Undone only when
+ * the hard breaks are there, so text that merely mentions an entity is left alone.
+ */
+export function undoMarkdownCopy(body: string): string | null {
+  if (!/\\\r?\n/.test(body)) return null;
+  return body
+    .replace(MARKDOWN_HARD_BREAK, '')
+    .replace(NUMERIC_ENTITY, (_, hex: string | undefined, dec: string | undefined) => {
+      const code = hex ? Number.parseInt(hex, 16) : Number(dec);
+      return code > 0 && code <= 0x10_ffff ? String.fromCodePoint(code) : _;
+    });
+}
+
 function candidateBodies(body: string): string[] {
   const bodies: string[] = [];
   for (const fence of body.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)) {
@@ -242,6 +260,8 @@ function candidateBodies(body: string): string[] {
     if (content) bodies.push(content);
   }
   bodies.push(body);
+  const copied = undoMarkdownCopy(body);
+  if (copied !== null) bodies.push(copied);
   if (/[“”]/.test(body)) bodies.push(body.replace(/[“”]/g, '"'));
   return bodies;
 }

@@ -4,6 +4,7 @@ import { COMMON_CURRENCIES } from '../../../../shared/currencies';
 import { PROVIDER_URLS } from '../../../../shared/types';
 import type { FlowDefinition, FlowVariable, FlowVariableOption, SkillInstance, SkillType, TriggerConfig } from '../../../../shared/types';
 import { DEFAULT_SKILL_CONFIG } from '../../../../shared/flowSkillSchema';
+import { APP_WATCH_KIND_CODE, currencyPartCode, TESTFLIGHT_STATUS_CODE } from '../../../../shared/flowTemplateCode';
 import {
   languageDisplayName,
   promptLanguageName,
@@ -340,6 +341,13 @@ function selectVar(key: string, t: Translate, options: FlowVariableOption[], val
   };
 }
 
+/** The currency a `/cur` without a target converts into: the interface language's own. */
+function homeCurrencyFor(locale: string): string {
+  if (locale === 'zh-TW') return 'TWD';
+  if (locale === 'zh-CN') return 'CNY';
+  return 'USD';
+}
+
 function currencyOptions(t: Translate): FlowVariableOption[] {
   return COMMON_CURRENCIES.map((code) => ({ value: code, label: `${code} — ${t(`flow.currency.${code}`)}` }));
 }
@@ -351,6 +359,8 @@ export const FOREX_GATE_CODE = [
   'if (!isFinite(rate) || !isFinite(target)) return "";',
   'return (risingAlert ? rate >= target : rate <= target) ? "hit" : "";',
 ].join('\n');
+
+export { APP_WATCH_KIND_CODE, currencyPartCode, TESTFLIGHT_STATUS_CODE };
 
 /**
  * The page change alert's message: the summary, "" when the model found only noise (its marker
@@ -1222,6 +1232,127 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
     }),
   },
   {
+    key: 'app_watch',
+    category: 'follow',
+    titleKey: 'flow.templates.appWatch',
+    descKey: 'flow.templates.appWatch.desc',
+    primarySkill: 'app_store',
+    hue: 'pink',
+    setupCount: 2,
+    build: (t): FlowDefinition => ({
+      id: makeId(),
+      name: t('flow.templates.appWatch'),
+      description: t('flow.templates.appWatch.desc'),
+      enabled: false,
+      // One store page read per run, no AI: cheap enough to catch a short free-for-a-day sale.
+      trigger: intervalCron(3, 'hours'),
+      variables: [textVar('appQuery', t), chatVar(t)],
+      // One app per flow: on_change keeps one value per step, so inside a loop every app would
+      // be compared with the previous app instead of with itself.
+      steps: [
+        recipientGuard(t),
+        step('app_store', { query: '{{var.appQuery}}', store: '', country: '' }, t('flow.templates.appWatch.step.read'), 'app_1'),
+        step('text', { text: t('flow.templates.appWatch.watched') }, t('flow.templates.appWatch.step.watched'), 'watch_1'),
+        step('on_change', { value: '{{watch_1}}', withDiff: 'true' }, t('flow.templates.appWatch.step.compare'), 'changed_1'),
+        step('stop', { value: '{{changed_1}}' }, t('flow.templates.appWatch.step.stopSame')),
+        step('js', { code: APP_WATCH_KIND_CODE }, t('flow.templates.appWatch.step.kind'), 'kind_1'),
+        step('if', { left: '{{kind_1}}', operator: 'equals', right: 'first' }, t('flow.templates.appWatch.step.ifFirst')),
+        step('bot', { chatId: '{{var.chatId}}', message: t('flow.templates.appWatch.message.first'), attachment: '', attachmentType: 'auto', emitFailFlag: 'false' }, t('flow.templates.step.bot'), 'bot_1'),
+        step('end_if', {}, t('flow.skill.end_if')),
+        step('if', { left: '{{kind_1}}', operator: 'equals', right: 'version' }, t('flow.templates.appWatch.step.ifVersion')),
+        step('bot', { chatId: '{{var.chatId}}', message: t('flow.templates.appWatch.message.version'), attachment: '', attachmentType: 'auto', emitFailFlag: 'false' }, t('flow.templates.step.bot'), 'bot_2'),
+        step('end_if', {}, t('flow.skill.end_if')),
+        step('if', { left: '{{kind_1}}', operator: 'equals', right: 'price' }, t('flow.templates.appWatch.step.ifPrice')),
+        step('bot', { chatId: '{{var.chatId}}', message: t('flow.templates.appWatch.message.price'), attachment: '', attachmentType: 'auto', emitFailFlag: 'false' }, t('flow.templates.step.bot'), 'bot_3'),
+        step('end_if', {}, t('flow.skill.end_if')),
+      ],
+      ...timestamps(),
+    }),
+  },
+  {
+    key: 'price_watch',
+    category: 'follow',
+    titleKey: 'flow.templates.priceWatch',
+    descKey: 'flow.templates.priceWatch.desc',
+    primarySkill: 'price_search',
+    hue: 'orange',
+    setupCount: 4,
+    build: (t): FlowDefinition => ({
+      id: makeId(),
+      name: t('flow.templates.priceWatch'),
+      description: t('flow.templates.priceWatch.desc'),
+      enabled: false,
+      // The shops are read in code, no AI: a few reads a day cost nothing and stay well under any
+      // shop's patience.
+      trigger: intervalCron(6, 'hours'),
+      variables: [
+        textVar('priceQuery', t),
+        textVar('priceExclude', t, false),
+        textVar('priceMin', t, false),
+        { ...chatVar(t), hint: t('flow.templates.priceWatch.var.chatId.hint') },
+      ],
+      // No recipient guard: a blank chat means a desktop notification. The step remembers the
+      // lowest price itself, so nothing here compares numbers: `news` is "first" on the first
+      // run (the user sees what is being watched), "drop" when the lowest fell, and blank
+      // otherwise, which is where the run stops.
+      steps: [
+        step('price_search', {
+          ...DEFAULT_SKILL_CONFIG.price_search,
+          query: '{{var.priceQuery}}',
+          exclude: '{{var.priceExclude}}',
+          minPrice: '{{var.priceMin}}',
+          track: 'true',
+        }, t('flow.templates.priceWatch.step.search'), 'price_1'),
+        step('stop', { value: '{{price_1.news}}' }, t('flow.templates.priceWatch.step.stopSame')),
+        step('text', { text: t('flow.templates.priceWatch.message') }, t('flow.templates.priceWatch.step.message'), 'msg'),
+        step('if', { left: '{{var.chatId}}', operator: 'is_empty', right: '' }, t('flow.templates.priceWatch.step.ifDesktop')),
+        step('notify', {
+          title: `${t('flow.templates.priceWatch.notify.title')} · {{var.priceQuery}}`,
+          body: '{{msg}}',
+        }, t('flow.templates.priceWatch.step.notify')),
+        step('stop', { value: '{{var.chatId}}' }, t('flow.templates.priceWatch.step.stopDesktop')),
+        step('end_if', {}, t('flow.skill.end_if')),
+        step('bot', { chatId: '{{var.chatId}}', message: '{{msg}}', attachment: '', attachmentType: 'auto', emitFailFlag: 'false' }, t('flow.templates.step.bot'), 'bot_1'),
+      ],
+      ...timestamps(),
+    }),
+  },
+  {
+    key: 'testflight_watch',
+    category: 'follow',
+    titleKey: 'flow.templates.testflightWatch',
+    descKey: 'flow.templates.testflightWatch.desc',
+    primarySkill: 'on_change',
+    hue: 'pink',
+    setupCount: 2,
+    build: (t): FlowDefinition => ({
+      id: makeId(),
+      name: t('flow.templates.testflightWatch'),
+      description: t('flow.templates.testflightWatch.desc'),
+      enabled: false,
+      // Open places on a public beta go within minutes; one small page read, no AI.
+      trigger: intervalCron(15),
+      variables: [textVar('tfUrl', t), chatVar(t)],
+      steps: [
+        recipientGuard(t),
+        // The js step answers with a code ("open", "closed", "invalid"), so nothing downstream
+        // depends on a language. Only a place opening is news; full and closed stay silent, and
+        // a dead link says so once, since watching it further is pointless.
+        step('js', { code: TESTFLIGHT_STATUS_CODE }, t('flow.templates.testflightWatch.step.read'), 'tf_1'),
+        step('stop', { value: '{{tf_1}}' }, t('flow.templates.testflightWatch.step.stopUnread')),
+        step('on_change', { value: '{{tf_1}}' }, t('flow.templates.testflightWatch.step.compare'), 'changed_1'),
+        step('stop', { value: '{{changed_1}}' }, t('flow.templates.testflightWatch.step.stopSame')),
+        step('if', { left: '{{tf_1}}', operator: 'equals', right: 'open' }, t('flow.templates.testflightWatch.step.ifOpen')),
+        step('bot', { chatId: '{{var.chatId}}', message: t('flow.templates.testflightWatch.message.open'), attachment: '', attachmentType: 'auto', emitFailFlag: 'false' }, t('flow.templates.step.bot'), 'bot_1'),
+        step('end_if', {}, t('flow.skill.end_if')),
+        step('if', { left: '{{tf_1}}', operator: 'equals', right: 'invalid' }, t('flow.templates.testflightWatch.step.ifInvalid')),
+        step('bot', { chatId: '{{var.chatId}}', message: t('flow.templates.testflightWatch.message.invalid'), attachment: '', attachmentType: 'auto', emitFailFlag: 'false' }, t('flow.templates.step.bot'), 'bot_2'),
+        step('end_if', {}, t('flow.skill.end_if')),
+      ],
+      ...timestamps(),
+    }),
+  },
+  {
     key: 'web_monitor',
     category: 'follow',
     titleKey: 'flow.templates.webMonitor',
@@ -1405,6 +1536,61 @@ export const FLOW_TEMPLATES: FlowTemplate[] = [
           step('stock', { symbol: '{{input}}' }, t('flow.templates.step.stock'), 'stock_1'),
           step('llm', llmConfig(stockQuotePrompt(locale)), t('flow.templates.step.explain'), 'llm_1'),
           replyStep(t),
+        ],
+        ...timestamps(),
+      };
+    },
+  },
+  {
+    key: 'cmd_currency',
+    category: 'command',
+    titleKey: 'flow.templates.cmdCurrency',
+    descKey: 'flow.templates.cmdCurrency.desc',
+    primarySkill: 'forex',
+    hue: 'cyan',
+    command: 'cur',
+    setupCount: 1,
+    build: (t, locale): FlowDefinition => {
+      const { trigger, extraTriggers } = commandTriggers('cur', 'flow.templates.cmdCurrency.desc', t);
+      const reply = (message: string, outputKey: string): SkillInstance => step('bot', {
+        chatId: '{{bot.triggerChatId}}',
+        message,
+        attachment: '',
+        attachmentType: 'auto',
+        emitFailFlag: 'true',
+      }, t('flow.templates.step.reply'), outputKey);
+      return {
+        id: makeId(),
+        name: t('flow.templates.cmdCurrency'),
+        description: t('flow.templates.cmdCurrency.desc'),
+        enabled: false,
+        trigger,
+        extraTriggers,
+        // Filled in already, so the command works as soon as it is added.
+        variables: [{ ...selectVar('homeCurrency', t, currencyOptions(t), homeCurrencyFor(locale)), required: false }],
+        // No AI: the numbers come from the exchange-rate step, the reply is a fixed sentence.
+        steps: [
+          step('js', { code: currencyPartCode('amount') }, t('flow.templates.cmdCurrency.step.amount'), 'cur_amount'),
+          step('js', { code: currencyPartCode('base') }, t('flow.templates.cmdCurrency.step.base'), 'cur_base'),
+          step('js', { code: currencyPartCode('target') }, t('flow.templates.cmdCurrency.step.target'), 'cur_target'),
+          step('if', { left: '{{cur_base}}', operator: 'is_empty', right: '' }, t('flow.templates.cmdCurrency.step.ifUnreadable')),
+          reply(t('flow.templates.cmdCurrency.usage'), 'bot_usage'),
+          step('end_if', {}, t('flow.skill.end_if')),
+          step('stop', { value: '{{cur_base}}' }, t('flow.templates.cmdCurrency.step.stopUnreadable')),
+          step('forex', {
+            base: '{{cur_base}}',
+            target: '{{cur_target}}',
+            amount: '{{cur_amount}}',
+            precision: '4',
+            period: '',
+            date: '',
+          }, t('flow.templates.step.forex'), 'fx_1'),
+          step('if', { left: '{{fx_1.isFailed}}', operator: 'equals', right: '1' }, t('flow.templates.cmdCurrency.step.ifUnknown')),
+          reply(t('flow.templates.cmdCurrency.unknown'), 'bot_unknown'),
+          step('end_if', {}, t('flow.skill.end_if')),
+          step('if', { left: '{{fx_1.isFailed}}', operator: 'not_equals', right: '1' }, t('flow.templates.cmdCurrency.step.ifKnown')),
+          reply(t('flow.templates.cmdCurrency.message'), 'bot_1'),
+          step('end_if', {}, t('flow.skill.end_if')),
         ],
         ...timestamps(),
       };

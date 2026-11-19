@@ -1,6 +1,7 @@
 import { t } from '../i18n';
 import { BOT_PLATFORM_NAMES, BUILTIN_NEW_COMMAND } from '../../shared/types';
 import { linkCommandFor } from '../../shared/builtinFlows';
+import { builtinFlowRight } from '../../shared/builtinFlowRight';
 import { pageAnalyzeLink } from '../../shared/pageAnalyzeLine';
 import { linkRequestText } from './wakeWord';
 import { builtinCommandGrant } from '../../shared/botPermissions';
@@ -65,6 +66,7 @@ export class BotChatRouter<E extends BotChatEvent> {
       ...(deps.canChat ? { canChat: deps.canChat } : {}),
       ...(deps.canUseBuiltin ? { canUseBuiltin: deps.canUseBuiltin } : {}),
       ...(deps.canUseDownloader ? { canUseDownloader: deps.canUseDownloader } : {}),
+      ...(deps.canAnalyze ? { canAnalyze: deps.canAnalyze } : {}),
       ...(deps.isFlowAdmin ? { isFlowAdmin: deps.isFlowAdmin } : {}),
     });
   }
@@ -132,9 +134,11 @@ export class BotChatRouter<E extends BotChatEvent> {
     // Someone not let in who may not talk here: their pick goes the way their typing would (a
     // request told once, or nothing), never a refusal per pick from the owner's own account (LINE PC).
     const stranger = !this.deps.isPairedUser(event.userId) && !(await this.access.mayChat(event.chatId, event.userId));
-    if (isLink && !analyzes && !pending && !stranger && this.deps.canUseDownloader && !(await this.access.mayDownload(event.chatId, event.userId))) {
-      this.deps.onLog(`${this.tag} downloader button refused for ${event.userId} — no download grant`);
-      await this.reply(typed, botAccessDeniedText(this.deps.getStrings(), 'download'));
+    // The right the line asks for: the analysis for one that sums up (a page's too), else the downloader.
+    const right = analyzes ? 'analyze' : isLink ? builtinFlowRight(linkCommandFor(text)?.flowId ?? '', text) : null;
+    if (right && !pending && !stranger && this.deps.canUseDownloader && !(await this.access.mayRunBuiltin(right, event.chatId, event.userId))) {
+      this.deps.onLog(`${this.tag} ${right} button refused for ${event.userId} — no ${right} grant`);
+      await this.reply(typed, botAccessDeniedText(this.deps.getStrings(), right));
       return;
     }
     await this.dispatch([typed]);
@@ -590,8 +594,9 @@ export class BotChatRouter<E extends BotChatEvent> {
     const allows = event.fromMenu ? undefined : this.deps.linkSites?.();
     const linkFlow = this.deps.onFlowCommand ? linkCommandFor(linkRequestText(event.text), allows) : null;
     if (!linkFlow || !this.deps.canUseDownloader) return linkFlow;
-    if (await this.access.mayDownload(event.chatId, event.userId)) return linkFlow;
-    this.deps.onLog(`${this.tag} link from ${event.userId} left to the agent — no download grant`);
+    const right = builtinFlowRight(linkFlow.flowId, linkRequestText(event.text)) ?? 'download';
+    if (await this.access.mayRunBuiltin(right, event.chatId, event.userId)) return linkFlow;
+    this.deps.onLog(`${this.tag} link from ${event.userId} left to the agent — no ${right} grant`);
     return null;
   }
 

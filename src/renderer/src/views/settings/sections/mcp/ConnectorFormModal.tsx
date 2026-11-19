@@ -101,6 +101,7 @@ export const ConnectorFormModal: React.FC<Props> = ({ mcp, t }) => {
             hint={t('settings.mcp.agentEnabled.hint')}
             control={
               <ToggleSwitch
+                aria-label={t('settings.mcp.agentEnabled')}
                 checked={form.agentEnabled}
                 onChange={(e) => mcp.updateForm({ agentEnabled: e.currentTarget.checked })}
               />
@@ -111,12 +112,13 @@ export const ConnectorFormModal: React.FC<Props> = ({ mcp, t }) => {
             hint={t('settings.mcp.autoApprove.hint')}
             control={
               <ToggleSwitch
+                aria-label={t('settings.mcp.autoApprove')}
                 checked={form.autoApproveWrites}
                 onChange={(e) => mcp.updateForm({ autoApproveWrites: e.currentTarget.checked })}
               />
             }
           />
-          {mcp.error && <Text fz="var(--font-size-sm)" c="var(--mantine-color-error)">{mcp.error}</Text>}
+          {mcp.error && <Text fz="var(--font-size-sm)" c="var(--error-text)">{mcp.error}</Text>}
           <Group justify="flex-end" gap={8} mt={4} wrap="nowrap">
             <AppButton variant="default" size="xs" onClick={mcp.closeForm} disabled={mcp.saving}>
               {t('dialog.cancel')}

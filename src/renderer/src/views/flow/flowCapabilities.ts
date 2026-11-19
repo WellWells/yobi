@@ -213,6 +213,8 @@ const SUMMARY_KEYS: Partial<Record<SkillType, string[]>> = {
   mail_fetch: ['from', 'keywords'],
   almanac: ['date', 'activity'],
   tw_invoice: ['numbers', 'period'],
+  app_store: ['query', 'store', 'country'],
+  price_search: ['query', 'exclude', 'minPrice', 'maxPrice'],
   loop: ['input'],
   if: ['left', 'operator', 'right'],
   on_change: ['value'],

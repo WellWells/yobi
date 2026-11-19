@@ -9,7 +9,7 @@
  */
 import { PUBLIC_DATA_CONNECTOR_IDS, readsAnyPage } from './builtinConnectors';
 
-export type BotCapabilityKey = 'chat' | 'web' | 'download' | 'preview' | 'agent' | 'local' | 'shell' | 'admin' | 'connectors';
+export type BotCapabilityKey = 'chat' | 'web' | 'download' | 'preview' | 'analyze' | 'agent' | 'local' | 'shell' | 'admin' | 'manage' | 'connectors';
 
 export interface BotCapability {
   /** The "me" mark implies it. */
@@ -34,12 +34,18 @@ export interface BotCapability {
  * - preview: a pasted video link brings a low-quality copy of a short video before the menu (with
  *   download only). A choice even for "me", so never implied; a group cannot grant it, while an
  *   account's own grant still works in one.
+ * - analyze: the analysis buttons under a pasted post, video or page — each one a model call on
+ *   the owner's account, so it is given by name: an account's own grant, or a group's for everyone
+ *   in it (never ticked when a group is allowed). The downloader alone does not bring it.
  * - agent: the full kit acts on the owner's computer and accounts (LLM steps, notifications,
  *   connector calls), so a group never grants it; a paired account's own grant still works there.
  * - local, shell: this computer; private chats only. shell is never implied, not even by "me".
  * - admin: managing accounts and groups from the chat and the flow commands kept for admins (on
  *   Telegram also /status, /restart) — the owner's bot and data, so private chats only. Telegram,
  *   LINE and LINE PC (`ADMIN_PLATFORMS`).
+ * - manage: control Yobi itself (settings, flows, conversations, statistics, updates, restarts)
+ *   through the Yobi connector, every change asked in the chat. The owner's by the mark; anyone
+ *   else only by the owner's grant. Private chats only, on every platform.
  * - connectors: the owner's own data; private chats only. A connector of public data alone
  *   (`publicDataConnector`) is the exception.
  */
@@ -48,10 +54,12 @@ export const BOT_CAPABILITIES: Readonly<Record<BotCapabilityKey, BotCapability>>
   web: { owner: true, paired: false, inGroups: true, groupGrantable: true, groupPreselected: false },
   download: { owner: true, paired: false, inGroups: true, groupGrantable: true, groupPreselected: false },
   preview: { owner: false, paired: false, inGroups: true, groupGrantable: false, groupPreselected: false },
+  analyze: { owner: true, paired: false, inGroups: true, groupGrantable: true, groupPreselected: false },
   agent: { owner: true, paired: false, inGroups: true, groupGrantable: false, groupPreselected: false },
   local: { owner: true, paired: false, inGroups: false, groupGrantable: false, groupPreselected: false },
   shell: { owner: false, paired: false, inGroups: false, groupGrantable: false, groupPreselected: false },
   admin: { owner: false, paired: false, inGroups: false, groupGrantable: false, groupPreselected: false },
+  manage: { owner: true, paired: false, inGroups: false, groupGrantable: false, groupPreselected: false },
   connectors: { owner: true, paired: false, inGroups: false, groupGrantable: false, groupPreselected: false },
 };
 
@@ -68,5 +76,6 @@ export function connectorCapability(serverId: string): BotCapability {
 }
 
 /** The capabilities (besides public-data connectors) a group may grant — the table's `groupGrantable`. */
-export type BotGroupCapability = 'chat' | 'web' | 'download';
-export const GROUP_CAPABILITIES: readonly BotGroupCapability[] = ['chat', 'web', 'download'];
+export type BotGroupCapability = 'chat' | 'web' | 'download' | 'analyze';
+/** In the order the group cards number them: a capability added later goes last. */
+export const GROUP_CAPABILITIES: readonly BotGroupCapability[] = ['chat', 'web', 'download', 'analyze'];

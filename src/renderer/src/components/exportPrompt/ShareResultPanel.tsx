@@ -60,7 +60,7 @@ export const ShareResultPanel: React.FC<Props> = ({ title, state, onAction, onHe
               </Tooltip>
             )}
           />
-          <Group gap={6} c="var(--accent)">
+          <Group gap={6} c="var(--accent-text)">
             <Check size={13} />
             <Text fz="var(--font-size-sm)">{state.strings.copied}</Text>
           </Group>

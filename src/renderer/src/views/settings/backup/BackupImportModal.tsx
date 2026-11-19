@@ -152,12 +152,12 @@ export const BackupImportModal: React.FC<Props> = ({ open, t, onClose, onImporte
               {t('settings.backup.import.choose')}
             </AppButton>
           </Group>
-          {error && <Text fz="xs" c="var(--mantine-color-error)" ta="center">{error}</Text>}
+          {error && <Text fz="xs" c="var(--error-text)" ta="center">{error}</Text>}
         </Stack>
       ) : (
         <Stack gap="md">
           <Text fz="xs" c="dimmed">{metaLine}</Text>
-          <Text fz="sm" c="var(--mantine-color-error)">{t('settings.backup.import.warningDesc')}</Text>
+          <Text fz="sm" c="var(--error-text)">{t('settings.backup.import.warningDesc')}</Text>
 
           <Stack gap={10}>
             {inspect.items.map((item) => (
@@ -168,7 +168,7 @@ export const BackupImportModal: React.FC<Props> = ({ open, t, onClose, onImporte
                 label={
                   <Stack gap={0}>
                     <Text fz="sm">{t(`settings.backup.category.${item.id}`)}</Text>
-                    <Text fz="xs" c={item.id === 'outputs' ? 'var(--mantine-color-error)' : 'dimmed'}>
+                    <Text fz="xs" c={item.id === 'outputs' ? 'var(--error-text)' : 'dimmed'}>
                       {backupImpactLabel(t, item.id, item.incomingCount, item.currentCount)}
                     </Text>
                   </Stack>
@@ -194,7 +194,7 @@ export const BackupImportModal: React.FC<Props> = ({ open, t, onClose, onImporte
               {t('settings.backup.import.submit')}
             </AppButton>
           </Group>
-          {error && <Text fz="xs" c="var(--mantine-color-error)">{error}</Text>}
+          {error && <Text fz="xs" c="var(--error-text)">{error}</Text>}
         </Stack>
       )}
     </AppModal>

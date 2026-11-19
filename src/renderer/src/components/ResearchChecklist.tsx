@@ -68,8 +68,8 @@ export function researchSummary(progress: ResearchProgress, t: Translate): strin
 }
 
 function PhaseIcon({ status }: { status: ResearchPhase['status'] }) {
-  if (status === 'done') return <Check size={11} color="var(--mantine-color-success)" />;
-  if (status === 'failed') return <X size={11} color="var(--mantine-color-error)" />;
+  if (status === 'done') return <Check size={11} color="var(--success-text)" />;
+  if (status === 'failed') return <X size={11} color="var(--error-text)" />;
   if (status === 'running') return <Loader size={10} />;
   return <Circle size={9} color="var(--mantine-color-dimmed)" />;
 }

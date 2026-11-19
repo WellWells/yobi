@@ -1,4 +1,6 @@
+import { DEFAULT_CARD_OPACITY, clampCardOpacity } from '../../../shared/types';
 import type { CardTheme } from '../../../shared/types';
+import { contrastRatio, hexToRgba, lerpHex } from '../theme/colorUtils';
 
 export {
   CAPTURE_PALETTES,
@@ -8,7 +10,8 @@ export {
 export type { CaptureDirection, CaptureBackgroundStyle } from '../../../shared/capturePalettes';
 
 export interface CaptureCardTokens {
-  cardBg: string;
+  /** The card's own colour; how opaque it is comes from the request (`cardOpacity`). */
+  cardBase: string;
   cardBorder: string;
   cardShadow: string;
   title: string;
@@ -34,7 +37,7 @@ export interface CaptureCardTokens {
 
 export const CAPTURE_CARD_TOKENS: Record<CardTheme, CaptureCardTokens> = {
   dark: {
-    cardBg: 'rgba(13, 17, 23, 0.94)',
+    cardBase: '#0d1117',
     cardBorder: 'rgba(201, 209, 217, 0.2)',
     cardShadow: '0 14px 42px rgba(0, 0, 0, 0.36)',
     title: '#f0f6fc',
@@ -58,7 +61,7 @@ export const CAPTURE_CARD_TOKENS: Record<CardTheme, CaptureCardTokens> = {
     inlineCodeText: '#7ee787',
   },
   light: {
-    cardBg: 'rgba(255, 255, 255, 0.94)',
+    cardBase: '#ffffff',
     cardBorder: 'rgba(15, 23, 42, 0.12)',
     cardShadow: '0 14px 42px rgba(15, 23, 42, 0.18)',
     title: '#0f172a',
@@ -84,7 +87,7 @@ export const CAPTURE_CARD_TOKENS: Record<CardTheme, CaptureCardTokens> = {
 };
 
 const CARD_TOKEN_CSS_VARS: Record<keyof CaptureCardTokens, string> = {
-  cardBg: '--cap-card-bg',
+  cardBase: '--cap-card-bg',
   cardBorder: '--cap-card-border',
   cardShadow: '--cap-card-shadow',
   title: '--cap-title',
@@ -108,13 +111,70 @@ const CARD_TOKEN_CSS_VARS: Record<keyof CaptureCardTokens, string> = {
   inlineCodeText: '--cap-code-text',
 };
 
-export function captureCardCssVars(theme: CardTheme): Record<string, string> {
+/** WCAG AA for body-size text: every word printed on a card must reach it. */
+export const CARD_TEXT_MIN_CONTRAST = 4.5;
+
+/** Coloured text that gives way when the background behind a see-through card washes it out. */
+const YIELDING_TEXT: ReadonlyArray<keyof CaptureCardTokens> = [
+  'muted', 'link', 'inlineCodeText', 'quoteText', 'chipText', 'textSecondary',
+];
+
+/**
+ * Every colour a card's background CSS paints with. The alpha of an `#rrggbbaa` sheen is dropped:
+ * drawn solid it is the extreme it can only approach, so a check against it holds for the real one.
+ */
+export function backgroundColours(css: string): string[] {
+  return [...css.matchAll(/#([0-9a-f]{8}|[0-9a-f]{6}|[0-9a-f]{3})(?![0-9a-f])/gi)].map(([, hex]) => {
+    const six = hex.length === 3 ? [...hex].map((digit) => digit + digit).join('') : hex.slice(0, 6);
+    return `#${six.toLowerCase()}`;
+  });
+}
+
+/** What the card shows over each background colour at this opacity: the shades its text sits on. */
+export function cardSurfaces(theme: CardTheme, opacity: number, background: string): string[] {
+  const base = CAPTURE_CARD_TOKENS[theme].cardBase;
+  const under = backgroundColours(background);
+  if (under.length === 0) return [base];
+  return under.map((colour) => lerpHex(colour, base, clampCardOpacity(opacity) / 100));
+}
+
+/** The first colour that reads on every surface; the body text colour is the last resort. */
+function readableOn(surfaces: readonly string[], candidates: readonly string[]): string {
+  const fits = candidates.find((colour) => surfaces.every((surface) => contrastRatio(colour, surface) >= CARD_TEXT_MIN_CONTRAST));
+  return fits ?? candidates[candidates.length - 1];
+}
+
+export interface CardLook {
+  /** Percent, MIN_CARD_OPACITY–100; absent = the default. */
+  opacity?: number;
+  /** The background CSS behind the card, read for the colours it paints with. */
+  background?: string;
+}
+
+/**
+ * The card's CSS variables. A see-through card lets the background into the text's contrast, so
+ * each coloured text (grey, link, inline code, quote, chip, secondary) falls back to the secondary
+ * and then the body colour until it reads at 4.5:1 over the brightest or darkest colour behind it;
+ * the body text itself is kept readable by MIN_CARD_OPACITY.
+ */
+export function captureCardCssVars(theme: CardTheme, look: CardLook = {}): Record<string, string> {
   const tokens = CAPTURE_CARD_TOKENS[theme];
+  const opacity = clampCardOpacity(look.opacity ?? DEFAULT_CARD_OPACITY);
+  const surfaces = cardSurfaces(theme, opacity, look.background ?? '');
+  const resolved: CaptureCardTokens = { ...tokens, cardBase: cardBackground(theme, opacity) };
+  for (const key of YIELDING_TEXT) {
+    resolved[key] = readableOn(surfaces, [tokens[key], tokens.textSecondary, tokens.text]);
+  }
   const vars: Record<string, string> = {};
   for (const key of Object.keys(CARD_TOKEN_CSS_VARS) as Array<keyof CaptureCardTokens>) {
-    vars[CARD_TOKEN_CSS_VARS[key]] = tokens[key];
+    vars[CARD_TOKEN_CSS_VARS[key]] = resolved[key];
   }
   return vars;
+}
+
+/** The card's fill at this opacity (also what the quick-export schematic paints). */
+export function cardBackground(theme: CardTheme, opacity: number | undefined): string {
+  return hexToRgba(CAPTURE_CARD_TOKENS[theme].cardBase, clampCardOpacity(opacity ?? DEFAULT_CARD_OPACITY) / 100);
 }
 
 /**

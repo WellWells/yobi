@@ -3,6 +3,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { DOWNLOADS_KEEP_MS } from '../../shared/downloads';
 import type { VideoSiteId } from '../../shared/linkSites/types';
+import { isChatDestination } from '../../shared/ytdl';
 import type { DownloadKind, YtdlDestination } from '../../shared/ytdl';
 import { currentDownloadsKeepMs, recordDownloads } from '../downloadsCache';
 import { isInsideDir, ytdlDataDir } from '../youtubeDownload/paths';
@@ -32,6 +33,13 @@ export interface DownloadJobRecord {
   /** The video's lines (`720`), or the MP3's bitrate in kbps (`128`). */
   quality: number;
   destination: YtdlDestination;
+  /**
+   * Made the same way whatever the destination (H.264 + stereo AAC where offered,
+   * the MP3 by its bitrate), so a computer download is sent to a chat as is and the other way
+   * round. Absent on older records: a computer download then was any codec, often VP9/AV1 in an
+   * .mkv a chat cannot play, so it serves only the computer again (`servesAnyDestination`).
+   */
+  anyDestination?: true;
   /** The whole video, in the downloads folder whatever the destination. */
   filePath: string;
   sizeBytes: number;
@@ -108,6 +116,7 @@ function asRecord(value: unknown): DownloadJobRecord | null {
   if (r.variant !== undefined && typeof r.variant !== 'string') return null;
   if (r.kind !== undefined && typeof r.kind !== 'string') return null;
   if (r.audio !== undefined && r.audio !== 'low') return null;
+  if (r.anyDestination !== undefined && r.anyDestination !== true) return null;
   if (typeof r.videoId !== 'string' || typeof r.quality !== 'number' || typeof r.filePath !== 'string') return null;
   if (typeof r.sizeBytes !== 'number' || typeof r.savedLocally !== 'boolean') return null;
   if (r.destination !== 'telegram' && r.destination !== 'lineSelf' && r.destination !== 'local') return null;
@@ -129,7 +138,10 @@ async function recordFilesIntact(record: DownloadJobRecord): Promise<boolean> {
   return stat.isFile() && stat.size === record.sizeBytes;
 }
 
-/** What tells one download from another: the site, the video, which file of it, video or MP3, its audio, quality, destination. */
+/**
+ * What tells one download from another: the site, the video, which file of it, video or MP3, its
+ * audio, quality — and the destination only for an older computer download (`servesAnyDestination`).
+ */
 export type DownloadJobMatch = Pick<DownloadJobRecord, 'site' | 'videoId' | 'variant' | 'kind' | 'audio' | 'quality' | 'destination'> & {
   /** Only a download saved in this folder counts. */
   folder?: string;
@@ -145,15 +157,26 @@ export function downloadJobKey(r: Pick<DownloadJobRecord, 'site' | 'videoId' | '
   return JSON.stringify(r.audio ? [...key, r.audio] : key);
 }
 
+/**
+ * Whether a record's file may go to a destination other than the one it was made for: one marked
+ * `anyDestination`, or an older chat download (always H.264 + AAC MP4, which plays everywhere).
+ * An older computer download may not — it may be a VP9/AV1 .mkv.
+ */
+function servesAnyDestination(record: DownloadJobRecord): boolean {
+  return record.anyDestination === true || isChatDestination(record.destination);
+}
+
 function sameDownload(record: DownloadJobRecord, match: DownloadJobMatch): boolean {
   if (downloadJobKey(record) !== downloadJobKey(match)) return false;
-  if (record.quality !== match.quality || record.destination !== match.destination) return false;
+  if (record.quality !== match.quality) return false;
+  if (record.destination !== match.destination && !servesAnyDestination(record)) return false;
   return match.folder === undefined || path.dirname(path.resolve(record.filePath)) === path.resolve(match.folder);
 }
 
 /**
- * A finished download of this video (and part), as a video or an MP3, at this quality for this
- * destination whose file is still there at the size it was written (a file moved, deleted or
+ * A finished download of this video (and part), as a video or an MP3, at this quality — made for
+ * any destination (the computer's 720p is the one a chat gets, and the other way round), except an
+ * older computer download, which only the computer reuses — whose file is still there at the size it was written (a file moved, deleted or
  * replaced does not count). Newest first; no older than Downloads/Yobi keeps downloads (the
  * setting, so a longer one does not save a second copy beside the kept file). A hit is reused, so
  * its folder is touched for the job cleanup and its files are noted again in the Downloads/Yobi

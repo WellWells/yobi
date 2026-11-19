@@ -67,6 +67,7 @@ export const ExternalEditorSetting: React.FC<Props> = ({ t, visible, sectionGap 
           hint={fillTemplate(t('settings.editor.hint'), { shortcut })}
           control={(
             <FitSelectDropdown
+              aria-label={t('settings.editor.title')}
               value={settings.choice}
               options={editorOptions(settings, t)}
               onDropdownOpen={() => { void load(); }}

@@ -109,7 +109,7 @@ export const MailAccountField: React.FC<Props> = ({ value, onChange, purpose, t 
     return (
       <Stack gap={4}>
         <Group gap={8} wrap="nowrap" align="center">
-          <Text fz="sm" c={fallback ? undefined : 'var(--mantine-color-warning)'} style={{ flex: 1 }}>
+          <Text fz="sm" c={fallback ? undefined : 'var(--warning-text)'} style={{ flex: 1 }}>
             {fallback ? fillTemplate(t(copy.one), { address: fallback.user }) : t(copy.none)}
           </Text>
           {settingsButton}

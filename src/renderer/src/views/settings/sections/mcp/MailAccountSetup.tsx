@@ -299,7 +299,7 @@ export const MailAccountSetup: React.FC<Props> = ({ t, onSaved }) => {
                     <Text fz="var(--font-size-sm)" fw={600} c="var(--mantine-color-default-color)" truncate>{account.user}</Text>
                     {several && isDefault && <Badge size="xs" variant="light">{t('settings.mail.account.default')}</Badge>}
                   </Group>
-                  <Text fz="xs" c={microsoft && !account.hasPassword ? 'var(--mantine-color-warning)' : 'dimmed'} truncate>
+                  <Text fz="xs" c={microsoft && !account.hasPassword ? 'var(--warning-text)' : 'dimmed'} truncate>
                     {t(statusKey)}
                   </Text>
                 </Stack>
@@ -330,7 +330,7 @@ export const MailAccountSetup: React.FC<Props> = ({ t, onSaved }) => {
                   <ActionIcon
                     variant="default"
                     size={26}
-                    c="red"
+                    c="var(--danger-text)"
                     aria-label={t('settings.mail.account.remove')}
                     onClick={() => setConfirmRemove(account)}
                   >

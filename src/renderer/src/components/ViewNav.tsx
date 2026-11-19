@@ -56,11 +56,12 @@ function SwitchLabel({ icon: Icon, label, alert }: { icon: React.ComponentType<{
  * the user sits in Chat.
  */
 export const ViewSwitch: React.FC = () => {
-  const { currentView, setView } = useAppStore(useShallow((s) => ({ currentView: s.currentView, setView: s.setView })));
+  // Only which of the two is chosen: opening Settings over either must not redraw the switch.
+  const { onFlow, setView } = useAppStore(useShallow((s) => ({ onFlow: s.currentView === 'flow', setView: s.setView })));
   const t = useI18nStore((s) => s.t);
   const flowBroken = hasAnyFlowIssue(useFlowIssues());
   const backToFlowHome = useRef(false);
-  const value: MainView = currentView === 'flow' ? 'flow' : 'chat';
+  const value: MainView = onFlow ? 'flow' : 'chat';
   return (
     <Box px={10} pb={8} style={{ flexShrink: 0 }}>
       <AppSegmentedControl

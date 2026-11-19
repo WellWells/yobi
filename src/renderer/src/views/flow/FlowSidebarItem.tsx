@@ -8,6 +8,7 @@ import { SwipeRow } from '../../components/SwipeRow';
 import { menuAnchorUnderRow, swipeAnchorElement } from '../../utils/rowSwipe';
 import { flowTrailingActions } from '../../utils/rowSwipeActions';
 import type { FlowDefinition } from '../../../../shared/types';
+import { fillTemplate } from '../../../../shared/fillTemplate';
 import type { FlowIssue } from '../../../../shared/flowIssues';
 import { describeFlowIssue } from './flowIssueText';
 import type { FlowRowStatus } from './flowRowStatus';
@@ -35,6 +36,8 @@ export interface FlowSidebarItemProps {
   onToggleEnabled: (enabled: boolean) => void;
   /** The context menu's delete path (asks first). */
   onDelete: () => void;
+  /** The row is the tree's Tab stop: its switch is the next stop (other rows' switches are not stops). */
+  tabStop?: boolean;
 }
 
 function issueId(issue: FlowIssue): string {
@@ -42,8 +45,8 @@ function issueId(issue: FlowIssue): string {
 }
 
 const STATUS_COLOR: Record<FlowRowStatus['tone'], string> = {
-  error: 'var(--mantine-color-error)',
-  warning: 'var(--mantine-color-warning)',
+  error: 'var(--error-text)',
+  warning: 'var(--warning-text)',
   dimmed: 'dimmed',
 };
 
@@ -79,7 +82,7 @@ const RowStatusText: React.FC<{ status: FlowRowStatus }> = ({ status }) => {
 
 export const FlowSidebarItem: React.FC<FlowSidebarItemProps> = ({
   flow, indented = false, selected, isRunning, issues, status = null, t, selectMode, checked, onToggleSelect,
-  onRowClick, onContextMenu, onOpenMenuAt, menuOpen, onToggleEnabled, onDelete,
+  onRowClick, onContextMenu, onOpenMenuAt, menuOpen, onToggleEnabled, onDelete, tabStop = true,
 }) => {
   const rowRef = useRef<HTMLDivElement | null>(null);
   // Left swipe (macOS): More, Delete. Right is reserved for pin.
@@ -134,6 +137,7 @@ export const FlowSidebarItem: React.FC<FlowSidebarItemProps> = ({
               menuOpen={menuOpen}
               onOpen={onOpenMenuAt}
               className={styles.rowMore}
+              pointerOnly
             />
           )}
           {issues.length > 0 && (
@@ -156,7 +160,7 @@ export const FlowSidebarItem: React.FC<FlowSidebarItemProps> = ({
                 aria-label={issues.map((issue) => describeFlowIssue(issue, t)).join(' ')}
                 style={{ display: 'inline-flex' }}
               >
-                <TriangleExclamationPoint size={13} color="var(--mantine-color-warning)" />
+                <TriangleExclamationPoint size={13} color="var(--warning-text)" />
               </Box>
             </Tooltip>
           )}
@@ -171,7 +175,8 @@ export const FlowSidebarItem: React.FC<FlowSidebarItemProps> = ({
                 <ToggleSwitch
                   size="xs"
                   checked={flow.enabled}
-                  aria-label={t('flow.enabled')}
+                  tabIndex={tabStop ? undefined : -1}
+                  aria-label={fillTemplate(t('a11y.b.enableFlow'), { name: flow.name || t('flow.flowName') })}
                   onChange={(e) => {
                     e.stopPropagation();
                     onToggleEnabled(e.currentTarget.checked);

@@ -127,12 +127,12 @@ async function readVideoCached(
   partialOk = false,
 ): Promise<CachedRead<VideoInfo>> {
   if (isPlaylist(ref)) throw playlistRefused(ref.site);
-  const { signIn } = readAccessOf(config);
+  const { signIn, interactive } = readAccessOf(config);
   const read = await readThrough(
     videoReads,
     videoReadKey(ref, signIn),
     VIDEO_READ_TTL_MS,
-    () => withReadingNotice(ref.site, onProgress, () => VIDEO_SITES[ref.site].info(ref, signal, { signIn })),
+    () => withReadingNotice(ref.site, onProgress, () => VIDEO_SITES[ref.site].info(ref, signal, { signIn, interactive })),
     { keep: (info) => !info.partial },
   );
   if (read.cached) sendLog(`♻️ [${siteLabel(ref.site)}] ${ref.id}: read a moment ago — not asking the site again`);
@@ -599,7 +599,9 @@ function downloadEnvelope(video: DownloadedVideo, destination: YtdlDestination, 
 /**
  * The same video at the same quality (or its MP3 at the same bitrate), finished within the time
  * Downloads/Yobi keeps it and still in the folder this step saves to: used as is instead of
- * downloading it again — the person deleted the sent video and pressed the button again. Reusing
+ * downloading it again — the person deleted the sent video and pressed the button again, or the
+ * computer already downloaded the 720p a Telegram chat now asks for (any destination's download
+ * serves the others, `findYtdlJob`). Reusing
  * it starts its time in Downloads/Yobi again (`findYtdlJob`).
  */
 async function reuseDownload(
@@ -628,20 +630,24 @@ export async function execYoutubeDownload(
 /**
  * A step with `progress: "brief"` (a link pasted alone, answered in the background) says
  * "working" once, the first time it has anything to report, and nothing after: no reading, no
- * quality, no bar, no sending.
+ * quality, no bar, no sending. `progress: "preview"` is the same one line for the preview's own
+ * download, naming it: "preparing the preview". The bar is for a download the person picked.
  */
 function briefly(
   config: Readonly<Record<string, string>>,
   onProgress: ((progress: StepProgress) => void) | undefined,
 ): ((progress: StepProgress) => void) | undefined {
-  if (!onProgress || config.progress !== 'brief') return onProgress;
+  const phase = ONE_LINE_PHASES[config.progress ?? ''];
+  if (!onProgress || !phase) return onProgress;
   let told = false;
   return () => {
     if (told) return;
     told = true;
-    onProgress(phaseOnly('working', ''));
+    onProgress(phaseOnly(phase, ''));
   };
 }
+
+const ONE_LINE_PHASES: Readonly<Record<string, StepProgress['phase'] | undefined>> = { brief: 'working', preview: 'preview' };
 
 async function youtubeDownload(
   config: Record<string, string>,
@@ -739,7 +745,8 @@ async function youtubeDownload(
     const finalPath = await saveIntoFolder(result.filePath, folder, fileName);
     sendLog(`💾 [${label}] Saved ${finalPath} (${formatMegabytes(result.sizeBytes)})`);
     await removeJobContents(jobDir);
-    const record: YtdlJobRecord = { ...match, filePath: finalPath, sizeBytes: result.sizeBytes, savedLocally: !sent };
+    // Every destination now downloads the same file, so any of them may reuse this one.
+    const record: YtdlJobRecord = { ...match, anyDestination: true, filePath: finalPath, sizeBytes: result.sizeBytes, savedLocally: !sent };
     // The folder stays (as long as the downloads) only to remember where this copy went.
     keepJobDir = await writeYtdlJobRecord(jobDir, record).then(() => true, () => false);
     if (sent) sending(result.sizeBytes);

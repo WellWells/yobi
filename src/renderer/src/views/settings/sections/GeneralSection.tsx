@@ -41,12 +41,12 @@ export const GeneralSection: React.FC<Props> = ({
         <SettingRow
           label={isMac ? t('settings.tray.closeToTray.mac') : t('settings.tray.closeToTray')}
           hint={isMac ? t('settings.tray.closeToTray.hint.mac') : t('settings.tray.closeToTray.hint')}
-          control={<ToggleSwitch checked={system.closeToTray} onChange={() => { void system.handleToggleCloseToTray(); }} />}
+          control={<ToggleSwitch aria-label={isMac ? t('settings.tray.closeToTray.mac') : t('settings.tray.closeToTray')} checked={system.closeToTray} onChange={() => { void system.handleToggleCloseToTray(); }} />}
         />
         <SettingRow
           label={t('settings.tray.launchAtStartup')}
           hint={t('settings.tray.launchAtStartup.hint')}
-          control={<ToggleSwitch checked={system.launchAtStartup} onChange={() => { void system.handleToggleLaunchAtStartup(); }} />}
+          control={<ToggleSwitch aria-label={t('settings.tray.launchAtStartup')} checked={system.launchAtStartup} onChange={() => { void system.handleToggleLaunchAtStartup(); }} />}
         />
       </Stack>
     </SectionCard>
@@ -63,6 +63,7 @@ export const GeneralSection: React.FC<Props> = ({
         control={(
           <Group gap={6} wrap="nowrap">
             <SelectDropdown
+              aria-label={t('settings.language')}
               value={locale}
               options={availableLocales.map((l) => ({ value: l, label: getLocaleLabel(l) }))}
               onChange={(nextLocale) => { void onSetLocale(nextLocale); }}

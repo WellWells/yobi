@@ -1,6 +1,10 @@
 import { DEEPSEEK_ANSWER_CONTENT_SELECTOR } from './deepseekSendScript';
 
 export const DEEPSEEK_LEFT_CONVERSATION = 'DEEPSEEK_LEFT_CONVERSATION';
+/** The page drew the user's row, then refused it (e.g. too many messages) and never answered. */
+export const DEEPSEEK_SEND_REFUSED = 'DEEPSEEK_SEND_REFUSED';
+/** The retry control a refused user row gains; a design-system class, unlike the notice text. */
+const DEEPSEEK_REFUSED_MARK_SELECTOR = '.ds-button--warning';
 
 /** How long the text must sit still, stop control gone, before an answer without its action row counts as done. */
 const QUIET_MS = 3_000;
@@ -102,6 +106,29 @@ export const DEEPSEEK_READ_JS = `
     });
   }
 
+  /**
+   * This send's user row once the page refused it: it carries the retry control, no answer came
+   * and nothing is generating. Returns the page's notice (localized, quoted back as-is) or null.
+   */
+  function dsRefusalAfter(baseline) {
+    if (dsAnswerAfter(baseline) || dsIsGenerating()) return null;
+    var rows = document.querySelectorAll(DS_TURN);
+    for (var i = 0; i < rows.length; i++) {
+      var key = dsTurnKey(rows[i]);
+      if (key >= 0 || -key <= baseline) continue;
+      if (!rows[i].querySelector(${JSON.stringify(DEEPSEEK_REFUSED_MARK_SELECTOR)})) continue;
+      var bubble = rows[i].querySelector('.ds-message');
+      var spans = rows[i].querySelectorAll('span');
+      for (var j = 0; j < spans.length; j++) {
+        if (bubble && bubble.contains(spans[j])) continue;
+        var text = (spans[j].innerText || spans[j].textContent || '').trim();
+        if (text) return text;
+      }
+      return '';
+    }
+    return null;
+  }
+
   function dsConversationPath() {
     return /^\\/a\\/chat\\/s\\/[^/]+/.test(location.pathname) ? location.pathname : '';
   }
@@ -132,13 +159,19 @@ export const DEEPSEEK_READ_JS = `
       if (leftConversation()) throw new Error('${DEEPSEEK_LEFT_CONVERSATION}: DeepSeek page moved to another conversation');
     }
 
-    // waitFor swallows a throw from its condition, so leaving ends the wait and is raised after it.
+    // waitFor swallows a throw from its condition, so leaving or a refusal ends the wait and is raised after it.
     var left = false;
+    var refusal = null;
     await waitFor(function() {
       if (leftConversation()) { left = true; return true; }
+      refusal = dsRefusalAfter(baseline);
+      if (refusal !== null) return true;
       return dsAnswerAfter(baseline);
     }, 'new DeepSeek response', TIMEOUT, 250);
     if (left) checkConversation();
+    if (refusal !== null) {
+      throw new Error('${DEEPSEEK_SEND_REFUSED}: DeepSeek refused the message' + (refusal ? ' — ' + refusal : ''));
+    }
 
     var lastLen = -1;
     var lastChange = Date.now();

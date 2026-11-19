@@ -64,7 +64,7 @@ export function FlowBuildProgressView({ state }: { state: FlowBuildState }) {
               </Text>
             )}
             {phase === 'discover' && state.blocked.length > 0 && (
-              <Text component="span" pl={LABEL_OFFSET} style={{ ...SUB_STYLE, color: 'var(--mantine-color-warning)' }}>
+              <Text component="span" pl={LABEL_OFFSET} style={{ ...SUB_STYLE, color: 'var(--warning-text)' }}>
                 {fillTemplate(t('flow.build.tools.blocked'), { names: state.blocked.map((entry) => t(`flow.build.need.${entry.need}`)).join('、') })}
               </Text>
             )}

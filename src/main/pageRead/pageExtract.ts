@@ -86,6 +86,32 @@ function authorName(value: unknown): string {
   return first && typeof first === 'object' ? asText((first as { name?: unknown }).name) : '';
 }
 
+/**
+ * JSON-LD text with its character references (`&rsquo;`, `&#8217;`, The Verge's older articles)
+ * read as the characters they stand for. A textarea's content is not markup, so an article that
+ * quotes `<div>` keeps it.
+ */
+function withReferencesRead(text: string): string {
+  if (!/&(?:#\d+|#x[\da-f]+|[a-z]+\d*);/i.test(text)) return text;
+  return load(`<textarea>${text.replace(/<\/textarea/gi, '&lt;/textarea')}</textarea>`)('textarea').text();
+}
+
+function saysNotFree(node: unknown): boolean {
+  return !!node && typeof node === 'object' && String((node as Record<string, unknown>).isAccessibleForFree).toLowerCase() === 'false';
+}
+
+/**
+ * The page says part of it is for subscribers: it is marked not free and names the hidden part
+ * (`hasPart`), or gives no body to show it is all there. The Verge marks every article not free and
+ * names no part, its whole text in `articleBody` (a metered wall); the Atlantic, WSJ, the Washington
+ * Post and CommonWealth name the part.
+ */
+function keepsPartForSubscribers(node: Record<string, unknown>): boolean {
+  if (!saysNotFree(node)) return false;
+  const parts: unknown[] = Array.isArray(node.hasPart) ? node.hasPart : [node.hasPart];
+  return parts.some(saysNotFree) || !asText(node.articleBody);
+}
+
 function isArticleNode(node: Record<string, unknown>): boolean {
   const type = node['@type'];
   return (Array.isArray(type) ? type : [type]).some((entry) => typeof entry === 'string' && /Article|BlogPosting|Report/.test(entry));
@@ -120,10 +146,10 @@ function structuredArticle($: CheerioAPI): StructuredArticle | null {
     }
     for (const node of structuredNodes(parsed).filter(isArticleNode)) {
       const article: StructuredArticle = {
-        headline: asText(node.headline),
-        body: asText(node.articleBody),
+        headline: withReferencesRead(asText(node.headline)),
+        body: withReferencesRead(asText(node.articleBody)),
         author: authorName(node.author),
-        subscriberOnly: String(node.isAccessibleForFree).toLowerCase() === 'false',
+        subscriberOnly: keepsPartForSubscribers(node),
       };
       if (!best || article.body.length > best.body.length) best = article;
     }
@@ -221,6 +247,16 @@ function withinCap(page: PageText): PageText {
   return { ...page, text: page.text.slice(0, MAX_CONTENT_CHARS), truncated: true };
 }
 
+/** The block a row's outlet puts where the rest of a subscribers' story would be. */
+function showsPaywall($: CheerioAPI, site: PageSite | null): boolean {
+  if (!site?.paywall) return false;
+  try {
+    return $(site.paywall).length > 0;
+  } catch {
+    return false;
+  }
+}
+
 function saysItIsArticle($: CheerioAPI, site: PageSite | null, structured: StructuredArticle | null, method: PageReadMethod): boolean {
   if (method === 'discussion' || method === 'whole page') return false;
   return callsItselfArticle($, structured) || (site !== null && method === 'site');
@@ -237,7 +273,7 @@ export function extractPageText(html: string, url: string, site: PageSite | null
     author: structured?.author ?? '',
     publishedAt: extractPublishedAt(html),
     text: body.text,
-    preview: structured?.subscriberOnly ?? false,
+    preview: (structured?.subscriberOnly ?? false) || showsPaywall($, site),
     method: body.method,
     siteName: asText($('meta[property="og:site_name"]').attr('content')),
     truncated: body.truncated === true,

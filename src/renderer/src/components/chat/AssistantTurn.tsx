@@ -31,7 +31,6 @@ import { READING_TEXT_STYLE } from '../../styles/readingText';
 import { TranslationBlock } from './translate/TranslationBlock';
 import { TurnTranslateControls } from './translate/TurnTranslateControls';
 import { useTurnTranslation } from './translate/useTurnTranslation';
-import { translationOnly } from '../../store/translateStore';
 import { fillTemplate } from '../../../../shared/fillTemplate';
 
 const CAPTURE_ACTIONS = [
@@ -111,7 +110,6 @@ export const AssistantTurn = React.memo<AssistantTurnProps>(({
     : awaiting ? t('chat.edit.lockedQuestion')
       // Saved against the answer it was made from: an edit in the meantime would make it a conflict.
       : translation.busy ? t('chat.edit.lockedTranslating') : null;
-  const hideOriginal = translationOnly(translation);
 
   // A pasted link's built-in, or a drawn picture, was not a command anyone typed: no `/…` badge.
   const commandLabel = meta.c && !isUntypedBuiltinCommand(meta.c)
@@ -230,15 +228,13 @@ export const AssistantTurn = React.memo<AssistantTurnProps>(({
         />
       ) : (
         <>
-        {postCard && !hideOriginal && <PostCardView card={postCard} t={t} />}
+        {postCard && <PostCardView card={postCard} t={t} />}
         <Box
           className="md-content md-response"
           data-find-scope
           // The card stands for the answer's opening block, which stays on the page (hidden) so a
           // selection still maps onto the Markdown.
           data-post-card={postCard ? '' : undefined}
-          // "Translation only" hides the answer rather than swapping its text: selection and find map onto it.
-          display={hideOriginal ? 'none' : undefined}
           style={{ ...READING_TEXT_STYLE, lineHeight: 1.75, color: 'var(--text-primary)' }}
         >
           <MessageMarkdown citationChips>{response}</MessageMarkdown>
@@ -255,7 +251,11 @@ export const AssistantTurn = React.memo<AssistantTurnProps>(({
           translation={translation.translation}
           outdated={translation.outdated}
           job={translation.job}
-          view={translation.view}
+          replace={editable ? {
+            turnCount,
+            editedAt: typeof meta.ed === 'string' ? meta.ed : null,
+            blocked: editBlockedReason,
+          } : null}
           t={t}
         />
       )}
@@ -264,7 +264,7 @@ export const AssistantTurn = React.memo<AssistantTurnProps>(({
       {/* Nor while it is being translated: the translation is saved against the answer it started from. */}
       {justSaved && !editing && !editLocked && !translation.busy && (
         <Group gap={6} mt={8}>
-          <Check size={14} color="var(--mantine-color-success)" />
+          <Check size={14} color="var(--success-text)" />
           <Text fz="var(--font-size-sm)" c="var(--text-secondary)">{t('chat.edit.saved')}</Text>
           <AppButton size="compact-xs" variant="subtle" onClick={() => { void undoAnswerEdit(response); }}>
             {t('chat.edit.undo')}

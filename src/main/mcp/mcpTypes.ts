@@ -9,11 +9,19 @@ export type McpTool = Tool;
  */
 export const PICTURES_META_KEY = 'yobi/pictures';
 
+/**
+ * Where a built-in connector lists the files a call wrote that the user should get with the answer
+ * (an edited spreadsheet), absolute paths in the output folder. Read only from built-in connectors.
+ */
+export const DOCUMENTS_META_KEY = 'yobi/documents';
+
 export interface McpToolResult {
   text: string;
   isError: boolean;
   /** Pictures a built-in connector saved for the answer (the metro map), absolute paths; never from a remote server. */
   pictures?: string[];
+  /** Files a built-in connector's call wrote for the answer, absolute paths; never from a remote server. */
+  documents?: string[];
 }
 
 export interface McpAuthRecord {

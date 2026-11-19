@@ -67,6 +67,7 @@ export const YoutubeSubsConfig: React.FC<SkillConfigProps> = ({ step, onChange, 
         hint={t('flow.skill.youtube_subs.skipShorts.hint')}
         control={
           <ToggleSwitch
+            aria-label={t('flow.skill.youtube_subs.skipShorts')}
             checked={skipShorts}
             onChange={(e) => onChange({ ...step.config, skipShorts: e.currentTarget.checked ? 'true' : 'false' })}
           />

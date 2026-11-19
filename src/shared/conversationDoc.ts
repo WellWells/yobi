@@ -34,6 +34,21 @@ export interface ThreadMeta {
    */
   mcp?: string[];
   /**
+   * Knowledge base ids attached to this conversation (`kb_search` searches them first). Kept apart
+   * from `mcp` for the same reason as `web`: those are server ids.
+   */
+  kb?: string[];
+  /**
+   * Answers come only from `kb` ("knowledge base only": `kb_search` is the run's one tool). Only
+   * `true` is written; absent means the full agent with the bases searched first.
+   */
+  kbOnly?: boolean;
+  /**
+   * With `kbOnly`, the documents of each base the answers are limited to (`KnowledgeFileScope`);
+   * read through `readKnowledgeFileScope`. Absent = every document of the attached bases.
+   */
+  kbFiles?: Record<string, string[]>;
+  /**
    * The "web" capability for this conversation: `true` on, `false` switched off by the user,
    * absent the default (the agent may turn it on itself). Kept out of `mcp` deliberately: that
    * array is server ids, and a sentinel id in it would be looked up as a server downstream.

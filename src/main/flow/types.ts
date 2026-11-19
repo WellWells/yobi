@@ -64,6 +64,8 @@ export interface FlowExecutorDeps {
       width?: number;
       /** Blank = the card's built-in padding. */
       margin?: number;
+      /** Blank = Settings › Card style's opacity. */
+      cardOpacity?: number;
       /** Blank = 1x. */
       pixelRatio?: number;
       zip?: boolean;

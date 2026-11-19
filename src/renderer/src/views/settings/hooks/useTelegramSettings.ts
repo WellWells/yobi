@@ -67,6 +67,15 @@ export function useTelegramSettings() {
     });
   }, [runBusy, loadTelegramSettings]);
 
+  const handleToggleTelegramReplaceLinkMessage = useCallback(async () => {
+    const snapshot = telegramSettingsRef.current;
+    if (!snapshot) return;
+    await runBusy(async () => {
+      await telegramApi.updateReplaceLinkMessage(!snapshot.replaceLinkMessage);
+      await loadTelegramSettings();
+    });
+  }, [runBusy, loadTelegramSettings]);
+
   const handleUpdateTelegramLlmDirect = useCallback(async (patch: Partial<BotLlmDirectConfig>) => {
     const current = telegramSettingsRef.current?.llmDirect;
     if (!current) return;
@@ -143,6 +152,7 @@ export function useTelegramSettings() {
     loadTelegramSettings,
     handleToggleTelegramEnabled,
     handleToggleTelegramGroupCommands,
+    handleToggleTelegramReplaceLinkMessage,
     handleUpdateTelegramLlmDirect,
     handleSaveTelegramToken,
     handleGeneratePairingCode,

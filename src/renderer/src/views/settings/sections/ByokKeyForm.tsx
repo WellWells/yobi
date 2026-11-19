@@ -124,7 +124,7 @@ export const ByokKeyForm: React.FC<Props> = ({ byok, t, mt }) => {
           <Text fz="var(--font-size-sm)" c="dimmed" mt={4}>{t('settings.byok.model.loadEmpty')}</Text>
         )}
         {byok.modelsError && byok.modelsError !== 'EMPTY' && (
-          <Text fz="var(--font-size-sm)" c="var(--mantine-color-error)" mt={4}>{byok.modelsError}</Text>
+          <Text fz="var(--font-size-sm)" c="var(--error-text)" mt={4}>{byok.modelsError}</Text>
         )}
         {byok.models.length > 0 && (
           <Text fz="var(--font-size-sm)" c="dimmed" mt={4}>

@@ -4,7 +4,7 @@ import { AppTextInput } from '../../../components/AppTextInput';
 import { AppNumberInput } from '../../../components/AppNumberInput';
 import { ToggleSwitch } from '../../../components/ToggleSwitch';
 import { SettingRow } from '../../../components/SettingRow';
-import { isValidXPostUrlOrVar, postSiteOf } from './validation';
+import { isAppStoreLink, isValidXPostUrlOrVar, postSiteOf } from './validation';
 import { XSignInNotice, type PostSignInSite } from './XSignInNotice';
 import type { SkillConfigProps } from './types';
 import { fillTemplate } from '../../../../../shared/fillTemplate';
@@ -43,7 +43,7 @@ export const XThreadConfig: React.FC<SkillConfigProps> = ({ step, onChange, t })
         onChange={(e) => onChange({ ...step.config, url: e.currentTarget.value })}
         size="sm"
         mono
-        error={urlError ? t('flow.skill.x_thread.url.error') : undefined}
+        error={urlError ? t(isAppStoreLink(url) ? 'flow.skill.x_thread.url.appStore' : 'flow.skill.x_thread.url.error') : undefined}
       />
 
       <AppNumberInput
@@ -63,6 +63,7 @@ export const XThreadConfig: React.FC<SkillConfigProps> = ({ step, onChange, t })
         hint={fillTemplate(t('flow.skill.x_thread.emitFailFlag.hint'), { flag: `{{${step.outputKey}.isFailed}}` })}
         control={
           <ToggleSwitch
+            aria-label={t('flow.skill.x_thread.emitFailFlag')}
             checked={step.config.emitFailFlag === 'true'}
             onChange={(e) => onChange({ ...step.config, emitFailFlag: e.currentTarget.checked ? 'true' : 'false' })}
           />

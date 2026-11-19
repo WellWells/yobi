@@ -253,8 +253,8 @@ export function lowAacEstimateBytes(durationS: number): number | null {
 
 /**
  * The largest file a download may be for the person and the place it goes, in bytes; null = none
- * (this computer). The download skills work it out (`ytdlAccess.ts`: 100 MB without the admin
- * right, else what Telegram takes right now); left out, it is the Bot API's own upload limit.
+ * (this computer). The download skills work it out (`ytdlAccess.ts`: the owner's cap without the
+ * admin right, and what the chat takes right now); left out, it is the Bot API's own upload limit.
  */
 export type SizeLimit = number | null;
 
@@ -349,8 +349,11 @@ export function buildYtdlChoices(
   for (const [quality, group] of byQuality) {
     const h264 = group.filter(isH264);
     const telegramPlayable = h264.length > 0 && aac.length > 0;
-    const video = isChatDestination(destination) && h264.length > 0 ? largest(h264) : largest(group);
-    const audio = isChatDestination(destination) && aac.length > 0 ? largest(aac) : largest(audios);
+    // Every destination downloads the same file — H.264 + stereo AAC first, so it plays on an
+    // iPhone or anywhere; a quality with no H.264 (1440p and up) its largest
+    // format — so every menu prices that one: the computer's and a chat's sizes agree.
+    const video = h264.length > 0 ? largest(h264) : largest(group);
+    const audio = aac.length > 0 ? largest(aac) : largest(audios);
     if (!video) continue;
     const videoBytes = lengthOf(video);
     const audioBytes = audio ? lengthOf(audio) : 0;

@@ -12,17 +12,21 @@ import type { FlowIssue } from '../../../../shared/flowIssues';
 import type { FlowFolder } from '../../../../shared/flowFolders';
 import { categoryAiSource } from '../../../../shared/aiName';
 import type { AiNameSource } from '../../../../shared/aiName';
-import { FlowSidebarItem } from './FlowSidebarItem';
+import { MemoFlowSidebarItem, type FlowRowHandlers } from './MemoFlowSidebarItem';
 import { FlowAttentionMark } from './FlowAttentionMark';
 import { useFlowIssues } from '../../hooks/useFlowIssues';
 import { useFlowLastRuns, useFlowNextRuns } from './useFlowRowFacts';
 import { flowRowStatus } from './flowRowStatus';
 import {
-  FLOWS_SECTION_DROP_ID, attentionOf, dragOutcome, flowFolderDropId, folderOfFlow, isFlowDropTargetId,
+  FLOWS_SECTION_DROP_ID, attentionOf, dragOutcome, flowFolderDropId, folderOfDropId, folderOfFlow, isFlowDropTargetId,
 } from './flowSidebarRows';
 import type { FlowSectionKey, FlowSidebarRow } from './flowSidebarRows';
 import { useScrollEdgeFade } from '../../hooks/useScrollEdgeFade';
-import { useFlowSensors } from './dnd';
+import { useDndAccessibility, useFlowSensors } from './dnd';
+import { flowRowKey, flowTreeKeys, handleFlowTreeKey } from './flowSidebarKeys';
+import { useRovingRow } from '../../components/sidebar/useRovingRow';
+import { folderRowKey } from '../../utils/sidebarOrder';
+import { sectionRowKey } from '../../utils/timeGroups';
 import { EmptyState } from '../../components/EmptyState';
 import { SectionRow } from '../../components/sidebar/SectionRow';
 import { FolderRow } from '../../components/sidebar/FolderRow';
@@ -140,16 +144,28 @@ const SortableFlowRow: React.FC<{
   flow: FlowDefinition;
   renderItem: (flow: FlowDefinition, inFolder?: string) => React.ReactNode;
   inFolder?: string;
-}> = ({ flow, renderItem, inFolder }) => {
+  /** The tree's one Tab stop (roving focus). */
+  tabbable: boolean;
+  selected: boolean;
+  registerItemRef: (key: string, node: HTMLDivElement | null) => void;
+}> = ({ flow, renderItem, inFolder, tabbable, selected, registerItemRef }) => {
+  // A tree item (not dnd-kit's default role="button", which may not hold the row's switch: axe
+  // nested-interactive), still the sortable's handle.
   const {
     attributes, listeners, setNodeRef, transform, transition, isDragging,
-  } = useSortable({ id: flow.id });
+  } = useSortable({ id: flow.id, attributes: { role: 'treeitem', tabIndex: tabbable ? 0 : -1 } });
+  const ref = useCallback((node: HTMLDivElement | null) => {
+    setNodeRef(node);
+    registerItemRef(flowRowKey(flow.id), node);
+  }, [setNodeRef, registerItemRef, flow.id]);
   // While dragged, the row stays in its list as the placeholder; the copy in the overlay moves.
   return (
     <Box
-      ref={setNodeRef}
+      ref={ref}
       {...attributes}
       {...listeners}
+      aria-selected={selected}
+      aria-level={inFolder ? 3 : 2}
       className={styles.sortableWrap}
       style={{
         transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
@@ -176,7 +192,30 @@ export const FlowSidebarList: React.FC<FlowSidebarListProps> = ({
   selectMode, isSelected, onToggleSelect,
   onRowClick, onContextMenu, onOpenMenuAt, menuFlowId, onToggleEnabled, onDelete, onReorder,
 }) => {
-  const sensors = useFlowSensors({ delay: LONG_PRESS_MS });
+  const sensors = useFlowSensors({ delay: LONG_PRESS_MS, enterOpens: true });
+  // Drag announcements name a flow, a category, or the "Flows" heading — never a raw id.
+  const dragNameOf = useCallback((id: string): string | null => {
+    if (id === FLOWS_SECTION_DROP_ID) return t('flow.section.flows');
+    const folder = folderOfDropId(id);
+    if (folder !== null) return folder;
+    return flows.find((flow) => flow.id === id)?.name ?? null;
+  }, [flows, t]);
+  const dndAccessibility = useDndAccessibility(dragNameOf, t);
+  // Rows by key, for the tree's keys and its roving Tab stop.
+  const itemRefs = useRef(new Map<string, HTMLElement>());
+  const registerItemRef = useCallback((key: string, node: HTMLElement | null) => {
+    if (node) itemRefs.current.set(key, node);
+    else itemRefs.current.delete(key);
+  }, []);
+  const treeKeys = useMemo(() => flowTreeKeys(rows), [rows]);
+  const rowKeyOf = useCallback((node: Element): string | null => {
+    const item = node.closest('[role="treeitem"]');
+    for (const [key, el] of itemRefs.current.entries()) if (el === item) return key;
+    return null;
+  }, []);
+  const roving = useRovingRow(treeKeys, selectedFlowId ? flowRowKey(selectedFlowId) : null, rowKeyOf);
+  // While selecting, every row stays a stop (the checkboxes carry the keys then).
+  const isTabStop = (key: string): boolean => selectMode || roving.tabKey === key;
   const listRef = useRef<HTMLDivElement>(null);
   const fadeClass = useScrollEdgeFade(listRef);
   const [overId, setOverId] = useState<string | null>(null);
@@ -197,8 +236,12 @@ export const FlowSidebarList: React.FC<FlowSidebarListProps> = ({
     (id) => runningFlowIds.includes(id),
   ), [flows, issues, lastRuns, runningFlowIds, t]);
 
+  const handlers = useRef<FlowRowHandlers>({ onToggleSelect, onRowClick, onContextMenu, onOpenMenuAt, onToggleEnabled, onDelete });
+  handlers.current = { onToggleSelect, onRowClick, onContextMenu, onOpenMenuAt, onToggleEnabled, onDelete };
+
   const renderItem = (flow: FlowDefinition, inFolder?: string): React.ReactNode => (
-    <FlowSidebarItem
+    <MemoFlowSidebarItem
+      handlers={handlers}
       flow={flow}
       indented={Boolean(inFolder)}
       selected={selectedFlowId === flow.id}
@@ -208,13 +251,8 @@ export const FlowSidebarList: React.FC<FlowSidebarListProps> = ({
       t={t}
       selectMode={selectMode}
       checked={isSelected(flow.id)}
-      onToggleSelect={() => onToggleSelect(flow.id)}
-      onRowClick={(mods) => onRowClick(flow.id, mods)}
-      onContextMenu={(e) => onContextMenu(e, flow.id)}
-      onOpenMenuAt={(at) => onOpenMenuAt(flow.id, at)}
       menuOpen={menuFlowId === flow.id}
-      onToggleEnabled={(enabled) => onToggleEnabled(flow, enabled)}
-      onDelete={() => onDelete(flow.id)}
+      tabStop={isTabStop(flowRowKey(flow.id))}
     />
   );
 
@@ -241,6 +279,8 @@ export const FlowSidebarList: React.FC<FlowSidebarListProps> = ({
             )
             : undefined}
           onToggle={folderUi.onToggleSection}
+          registerItemRef={registerItemRef}
+          tabbable={isTabStop(sectionRowKey(row.key))}
         />
       </Box>
     );
@@ -284,6 +324,8 @@ export const FlowSidebarList: React.FC<FlowSidebarListProps> = ({
             onToggle={() => folderUi.onToggleFolder(folder.name)}
             onOpenMenu={(e) => { if (!selectMode) folderUi.openMenu(e, folder, flowIds); }}
             onOpenMenuAt={(_, at) => folderUi.openMenuAt(folder, flowIds, at)}
+            registerItemRef={registerItemRef}
+            tabbable={isTabStop(folderRowKey(folder.name))}
           />
         </Box>
       </DropZone>
@@ -322,10 +364,27 @@ export const FlowSidebarList: React.FC<FlowSidebarListProps> = ({
   const renderBlocks = (): React.ReactNode => blocks.map((block, index) => {
     if ('flows' in block) {
       const items = block.flows.map((flow) => flow.id);
-      if (selectMode) return block.flows.map((flow) => <React.Fragment key={flow.id}>{renderItem(flow, block.inFolder)}</React.Fragment>);
+      // While selecting, the row's checkbox is the stop; the row is still the tree's item.
+      if (selectMode) {
+        return block.flows.map((flow) => (
+          <Box key={flow.id} role="treeitem" aria-level={block.inFolder ? 3 : 2} aria-selected={isSelected(flow.id)}>
+            {renderItem(flow, block.inFolder)}
+          </Box>
+        ));
+      }
       return (
         <SortableContext key={block.key} items={items} strategy={verticalListSortingStrategy}>
-          {block.flows.map((flow) => <SortableFlowRow key={flow.id} flow={flow} inFolder={block.inFolder} renderItem={renderItem} />)}
+          {block.flows.map((flow) => (
+            <SortableFlowRow
+              key={flow.id}
+              flow={flow}
+              inFolder={block.inFolder}
+              renderItem={renderItem}
+              tabbable={isTabStop(flowRowKey(flow.id))}
+              selected={selectedFlowId === flow.id}
+              registerItemRef={registerItemRef}
+            />
+          ))}
         </SortableContext>
       );
     }
@@ -335,7 +394,25 @@ export const FlowSidebarList: React.FC<FlowSidebarListProps> = ({
   });
 
   return (
-    <Box ref={listRef} flex={1} className={fadeClass} style={{ overflowY: 'auto', padding: '4px 0' }}>
+    <Box
+      ref={listRef}
+      flex={1}
+      className={fadeClass}
+      style={{ overflowY: 'auto', padding: '4px 0' }}
+      // A tree (WCAG 1.3.1, 4.1.2), one Tab stop whose arrows walk it (2.1.1, 2.4.3).
+      role={rows.length > 0 ? 'tree' : undefined}
+      aria-label={rows.length > 0 ? t('a11y.c.flowList') : undefined}
+      aria-multiselectable={(rows.length > 0 && selectMode) || undefined}
+      onFocus={roving.onFocus}
+      onKeyDown={selectMode ? undefined : (e) => handleFlowTreeKey(e, {
+        rows,
+        refs: itemRefs.current,
+        dragging: activeId !== null,
+        openFlow: (flowId) => onRowClick(flowId, { ctrlKey: false, metaKey: false, shiftKey: false }),
+        openFlowMenu: onOpenMenuAt,
+        openFolderMenu: folderUi.openMenuAt,
+      })}
+    >
       {rows.length === 0 ? (
         <EmptyState icon={Workflow} label={t('flow.flowList.empty')} />
       ) : selectMode ? (
@@ -343,6 +420,7 @@ export const FlowSidebarList: React.FC<FlowSidebarListProps> = ({
       ) : (
         <DndContext
           sensors={sensors}
+          accessibility={dndAccessibility}
           collisionDetection={collision}
           modifiers={[restrictToVerticalAxis]}
           onDragStart={(e) => setActiveId(String(e.active.id))}

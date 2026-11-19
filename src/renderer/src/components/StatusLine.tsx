@@ -6,9 +6,9 @@ export type StatusTone = 'success' | 'error' | 'warning';
 
 const ICONS = { success: CircleCheck, error: CircleX, warning: TriangleExclamationPoint } as const;
 const ICON_COLOR = {
-  success: 'var(--mantine-color-success)',
-  error: 'var(--mantine-color-error)',
-  warning: 'var(--mantine-color-warning)',
+  success: 'var(--success-text)',
+  error: 'var(--error-text)',
+  warning: 'var(--warning-text)',
 } as const;
 const TEXT_COLOR = {
   ...ICON_COLOR,

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AppWindow, LogOut } from 'lucide-react';
 import { Modal, Button, Group, Text, Checkbox, Box, Flex, Loader } from '@mantine/core';
 import { TitleBar } from './components/TitleBar';
+import { AppBackdrop } from './components/AppBackdrop';
 import { AgentConfirmDialog } from './components/AgentConfirmDialog';
 import { TextContextMenu } from './components/textContextMenu/TextContextMenu';
 import { ViewBoundary } from './components/ViewBoundary';
@@ -12,10 +13,11 @@ import { SettingsDialog } from './components/SettingsDialog';
 import { Z_MODAL_CONFIRM } from './config/zLayers';
 import { drawnView, isMainView, useAppStore } from './store/appStore';
 import { useI18nStore } from './store/i18nStore';
-import { useAppBootstrap } from './hooks/useAppBootstrap';
+import { reloadSettingsFromConfig, useAppBootstrap } from './hooks/useAppBootstrap';
 import { useUiNotifications } from './hooks/useUiNotifications';
 import { useShortcutDispatcher } from './shortcuts/useShortcutDispatcher';
-import { ipcEvents, windowApi } from './api/electronApi';
+import { useRegionCycle } from './shortcuts/useRegionCycle';
+import { ipcEvents, settingsApi, windowApi } from './api/electronApi';
 import { MarkdownLabelsContext } from './utils/markdownConfig';
 import { buildMarkdownLabels } from '../../shared/markdownLabels';
 
@@ -28,17 +30,31 @@ const importFlowView = () => import('./views/FlowView');
 const MemoSettingsView = React.memo(React.lazy(() => importSettingsView().then((m) => ({ default: m.SettingsView }))));
 const MemoFlowView = React.memo(React.lazy(() => importFlowView().then((m) => ({ default: m.FlowView }))));
 
-export const App: React.FC = () => {
-  const { shown, settingsOpen, closeSettings } = useAppStore(useShallow((s) => ({
-    shown: drawnView(s),
+/**
+ * Settings over the view. Its own component, the one place that follows whether it is open: were
+ * App to read that, opening and closing Settings would redraw App and the whole chat view under it.
+ */
+const SettingsHost = React.memo(({ settingsEpoch }: { settingsEpoch: number }) => {
+  const { settingsOpen, closeSettings } = useAppStore(useShallow((s) => ({
     settingsOpen: !isMainView(s.currentView),
     closeSettings: s.closeSettings,
   })));
+  return (
+    <SettingsDialog opened={settingsOpen} onClose={closeSettings}>
+      <ViewBoundary><MemoSettingsView key={settingsEpoch} /></ViewBoundary>
+    </SettingsDialog>
+  );
+});
+SettingsHost.displayName = 'SettingsHost';
+
+export const App: React.FC = () => {
+  const shown = useAppStore(drawnView);
   const { isReady, t } = useI18nStore(useShallow((s) => ({ isReady: s.isReady, t: s.t })));
   const [showCloseDialog, setShowCloseDialog] = useState(false);
   const [closeRemember, setCloseRemember] = useState(false);
 
   useAppBootstrap();
+  useRegionCycle();
   useShortcutDispatcher();
   useUiNotifications();
 
@@ -54,6 +70,14 @@ export const App: React.FC = () => {
       void importFlowView();
     });
   }, [isReady]);
+
+  // Settings changed by the Yobi connector: the page is drawn again from scratch, since each of its
+  // sections keeps what it read when it mounted. Rare (an /agent or bot change), so the cost is fine.
+  const [settingsEpoch, setSettingsEpoch] = useState(0);
+  useEffect(() => settingsApi.onSettingsChanged(() => {
+    void reloadSettingsFromConfig();
+    setSettingsEpoch((epoch) => epoch + 1);
+  }), []);
 
   useEffect(() => {
     const unsub = ipcEvents.onShowCloseDialog(() => {
@@ -76,7 +100,9 @@ export const App: React.FC = () => {
 
   return (
     <MarkdownLabelsContext.Provider value={markdownLabels}>
-    <Flex direction="column" h="100vh" bg="var(--mantine-color-body)" pos="relative" style={{ overflow: 'hidden' }}>
+    <Flex direction="column" h="100vh" bg="var(--mantine-color-body)" pos="relative" style={{ overflow: 'hidden', isolation: 'isolate' }}>
+      {/* Behind the views (z-index -1 inside this stacking context), over the page colour. */}
+      <AppBackdrop />
       <Flex flex={1} style={{ overflow: 'hidden' }}>
         <Box display={shown === 'chat' ? 'flex' : 'none'} flex={1} style={{ overflow: 'hidden' }}>
           <ChatView />
@@ -89,9 +115,7 @@ export const App: React.FC = () => {
       <TitleBar />
 
       {/* Settings, Logs and About: a dialog over the view above, which stays drawn behind it. */}
-      <SettingsDialog opened={settingsOpen} onClose={closeSettings}>
-        <ViewBoundary><MemoSettingsView /></ViewBoundary>
-      </SettingsDialog>
+      <SettingsHost settingsEpoch={settingsEpoch} />
 
       <AgentConfirmDialog />
 

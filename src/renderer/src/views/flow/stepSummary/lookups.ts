@@ -166,6 +166,21 @@ const twInvoice: Summarizer = (step, ctx) => {
   return bad >= 0 ? flagged(summary, 'error', t(ctx, 'flow.summary.invoice.badNumber', { number: bad + 1 })) : summary;
 };
 
+const appStore: Summarizer = (step, ctx) => {
+  const query = value(step, 'query');
+  if (!query) return unset(ctx, 'app_store', ['query']);
+  const country = value(step, 'country');
+  return named(step, ctx, query, country ? `App Store ${country.toUpperCase()}` : undefined);
+};
+
+const priceSearch: Summarizer = (step, ctx) => {
+  const query = value(step, 'query');
+  if (!query) return unset(ctx, 'price_search', ['query']);
+  const min = value(step, 'minPrice');
+  const max = value(step, 'maxPrice');
+  return named(step, ctx, query, min || max ? `NT${min || '0'}–${max}` : undefined);
+};
+
 const calendar: Summarizer = (step, ctx) => {
   const id = value(step, 'calendar');
   const range = value(step, 'range') || 'today';
@@ -244,6 +259,6 @@ const mcp: Summarizer = (step, ctx) => {
 };
 
 export const LOOKUP_SUMMARIES = {
-  gmap_reviews: gmapReviews, stock, forex, weather, air_quality: airQuality, almanac, tw_invoice: twInvoice,
+  gmap_reviews: gmapReviews, stock, forex, weather, air_quality: airQuality, almanac, tw_invoice: twInvoice, app_store: appStore, price_search: priceSearch,
   calendar, mail_fetch: mailFetch, mcp,
 } as const;

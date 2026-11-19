@@ -11,6 +11,8 @@ import { GroupHeader } from '../../components/GroupHeader';
 import { ToolbarIconButton, ToolbarSearchInput } from '../../components/PanelToolbar';
 import { Z_POPOVER } from '../../config/zLayers';
 import { useScrollEdgeFade } from '../../hooks/useScrollEdgeFade';
+import { useFlowStore } from '../../store/useFlowStore';
+import { homeGroupKey, useFlowFolderStore } from '../../store/flowFolderStore';
 import type { FlowTemplate } from './examples';
 import { FlowTemplateGallery } from './FlowTemplateGallery';
 import { FlowCard, TRIGGER_ICON, TemplateCard } from './FlowHomeCards';
@@ -19,6 +21,8 @@ import {
 } from './flowHomeModel';
 import type { FlowHomeFilter, FlowHomeSort, FlowHomeStatus } from './flowHomeModel';
 import { flowRowStatus } from './flowRowStatus';
+import { attentionOf } from './flowSidebarRows';
+import { FlowHomeGroupHeader } from './FlowHomeGroupHeader';
 import { useFlowLastRuns, useFlowNextRuns } from './useFlowRowFacts';
 
 type HomeTab = 'flows' | 'templates';
@@ -37,6 +41,12 @@ interface FlowHomeProps {
   /** Opens 智慧分類 (the sidebar's ✨ beside 新增分類); unset while every flow is in a category. */
   onSmartSort?: () => void;
   onOpenFlow: (flowId: string) => void;
+  /** A card's ▶ and its stop while it runs. */
+  onRunFlow: (flowId: string) => void;
+  onStopFlow: (flowId: string) => void;
+  /** A category's 「全部執行」 (asks first) and its stop. */
+  onRunFolder: (name: string) => void;
+  onStopFolder: (name: string) => void;
   onBlank: () => void;
   onGenerate: (seed: string) => void;
   onImport: () => void;
@@ -49,7 +59,8 @@ interface FlowHomeProps {
  * none yet, a way to start blank and six templates to start from.
  */
 export const FlowHome: React.FC<FlowHomeProps> = ({
-  flows, folders, t, locale, onSmartSort, onOpenFlow, onBlank, onGenerate, onImport, onPickTemplate,
+  flows, folders, t, locale, onSmartSort, onOpenFlow, onRunFlow, onStopFlow, onRunFolder, onStopFolder,
+  onBlank, onGenerate, onImport, onPickTemplate,
 }) => {
   const [tab, setTab] = useState<HomeTab>('flows');
   // Each tab searches its own list.
@@ -62,6 +73,10 @@ export const FlowHome: React.FC<FlowHomeProps> = ({
   const fadeClass = useScrollEdgeFade(scrollRef);
   const lastRuns = useFlowLastRuns();
   const nextRuns = useFlowNextRuns();
+  const runningFlowIds = useFlowStore((s) => s.runningFlowIds);
+  const homeClosed = useFlowFolderStore((s) => s.homeClosed);
+  const toggleHomeClosed = useFlowFolderStore((s) => s.toggleHomeClosed);
+  const folderRuns = useFlowFolderStore((s) => s.runs);
   const query = queries[tab];
   // A tab whose search has words shows them: the list is never filtered by a box the user can't see.
   const showSearch = searchOpen || query !== '';
@@ -84,6 +99,8 @@ export const FlowHome: React.FC<FlowHomeProps> = ({
   const kinds = useMemo(() => [...new Set(flows.flatMap(triggerKindsOf))], [flows]);
   const featured = useMemo(() => featuredTemplates(), []);
   const filtered = filter.status !== 'all' || filter.kinds.length > 0;
+  // A search or filter shows every match: a closed group never hides what was asked for.
+  const allOpen = queries.flows.trim() !== '' || filtered;
   const shownCount = groups.reduce((sum, group) => sum + group.flows.length, 0);
 
   const setQuery = (value: string): void => setQueries((current) => ({ ...current, [tab]: value }));
@@ -213,24 +230,49 @@ export const FlowHome: React.FC<FlowHomeProps> = ({
       return <Text fz="sm" c="var(--text-muted)" ta="center" py="xl">{t('flow.home.noMatch')}</Text>;
     }
     const grouped = groups.some((group) => group.name !== null);
+    const isRunning = (flowId: string): boolean => runningFlowIds.includes(flowId);
+    const isProblem = (flowId: string): boolean => ['error', 'warning'].includes(flowRowStatus({ last: lastRuns[flowId] }, t)?.tone ?? '');
     return (
       <Stack gap="lg">
-        {groups.map((group) => (
-          <Stack key={group.name ?? ''} gap="sm">
-            {grouped && <GroupHeader variant="plain" label={group.name ?? t('flow.home.uncategorized')} />}
-            <SimpleGrid type="container" cols={{ base: 1, [TWO_CARDS_FROM]: 2 }} spacing={10} verticalSpacing={10}>
-              {group.flows.map((flow) => (
-                <FlowCard
-                  key={flow.id}
-                  flow={flow}
-                  status={flowRowStatus({ last: lastRuns[flow.id], next: nextRuns[flow.id] }, t)}
+        {groups.map((group) => {
+          const { name } = group;
+          const open = !grouped || allOpen || !homeClosed.has(homeGroupKey(name));
+          // The whole category runs, not only the cards a search or filter left.
+          const folder = name === null ? undefined : folders.find((each) => each.name === name);
+          const run = name === null ? null : folderRuns[homeGroupKey(name)] ?? null;
+          return (
+            <Stack key={name ?? ''} gap="sm">
+              {grouped && (
+                <FlowHomeGroupHeader
+                  label={name ?? t('flow.home.uncategorized')}
+                  count={group.flows.length}
+                  open={open}
+                  attention={attentionOf(group.flows.map((flow) => flow.id), group.flows, isProblem, isRunning)}
+                  run={run}
                   t={t}
-                  onOpen={() => onOpenFlow(flow.id)}
+                  onToggle={() => toggleHomeClosed(name)}
+                  {...(folder ? { onRun: () => onRunFolder(folder.name), onStop: () => onStopFolder(folder.name) } : {})}
                 />
-              ))}
-            </SimpleGrid>
-          </Stack>
-        ))}
+              )}
+              {open && (
+                <SimpleGrid type="container" cols={{ base: 1, [TWO_CARDS_FROM]: 2 }} spacing={10} verticalSpacing={10}>
+                  {group.flows.map((flow) => (
+                    <FlowCard
+                      key={flow.id}
+                      flow={flow}
+                      status={flowRowStatus({ last: lastRuns[flow.id], next: nextRuns[flow.id] }, t)}
+                      running={isRunning(flow.id)}
+                      t={t}
+                      onOpen={() => onOpenFlow(flow.id)}
+                      onRun={() => onRunFlow(flow.id)}
+                      onStop={() => onStopFlow(flow.id)}
+                    />
+                  ))}
+                </SimpleGrid>
+              )}
+            </Stack>
+          );
+        })}
       </Stack>
     );
   };
@@ -241,7 +283,7 @@ export const FlowHome: React.FC<FlowHomeProps> = ({
         <Title order={1} fz="var(--font-size-3xl)" fw={700} c="var(--mantine-color-text)" mb={16}>
           {t('nav.flow')}
         </Title>
-        <Group justify="space-between" wrap="nowrap" gap="sm" mb={12}>
+        <Group justify="space-between" wrap="wrap" gap="sm" mb={12}>
           <AppSegmentedControl
             size="xs"
             quiet

@@ -1,4 +1,5 @@
-import { DEFAULT_CAPTURE_WIDTH, DEFAULT_SHARE_INSTANCE, MAX_CAPTURE_WIDTH, MIN_CAPTURE_WIDTH, SHARE_EXPIRE_VALUES, clampCaptureMargin, defaultQuickExportHotkey, normalizeShareExpireList } from '../shared/types';
+import { normalizeKnowledgeBases } from '../shared/knowledgeBase';
+import { DEFAULT_CAPTURE_WIDTH,DEFAULT_SHARE_INSTANCE, MAX_CAPTURE_WIDTH, MIN_CAPTURE_WIDTH, SHARE_EXPIRE_VALUES, clampCaptureMargin, clampCardOpacity, defaultQuickExportHotkey, normalizeShareExpireList } from '../shared/types';
 import type { BotBuiltinCommand, BotBuiltinCommands, BotByokCommands, BotLlmDirectConfig, BotProviderCommand, ByokGroup, ByokProviderType, CaptureFormat, CaptureSettings, QuickExportFormat, QuickExportSettings, HiddenSources, LinePairedUser, LinePairingState, McpServerConfig, NotifyEventPrefs, PendingPairingCode, Provider, PromptLength, PromptPreferences, PromptTone, ShareExpire, ShareExpireCache, ShareSettings, SocketBotPlatform, TelegramChannel, TelegramChatKind, TelegramPairedUser, TelegramPairingState } from '../shared/types';
 import {
   AGENT_ASK_TTL_MAX_MINUTES,
@@ -15,12 +16,13 @@ import { isThemePreference } from '../shared/themes';
 import { bySiteFlag } from '../shared/siteConnectors';
 import { normalizeReadingFont } from '../shared/readingPrefs';
 import { normalizeSidebarView } from '../shared/sidebarView';
-import { normalizeDownloadsKeep } from '../shared/downloads';
+import { normalizeBotDownloadCap, normalizeBotDownloadCaps, normalizeDownloadsKeep } from '../shared/downloads';
 import { normalizeTrustedCommands } from '../shared/trustedCommands';
 import { normalizeLinkRecognition } from '../shared/linkRecognition';
 import type { LinkAnalysisPreferences } from '../shared/types';
 import type { GeminiModelCatalog, GeminiModelChoice, GeminiModelInfo } from '../shared/geminiModels';
 import { isGeminiUpsellModeId, withModelNameFirst } from './providers/geminiModelScript';
+import type { PerplexityModelCatalog, PerplexityModelChoice, PerplexityModelInfo } from '../shared/perplexityModels';
 import type {
   ClaudeModelCatalog,
   ClaudeModelChoice,
@@ -30,11 +32,11 @@ import type {
 } from '../shared/claudeModels';
 import type { ChatgptModelCatalog, ChatgptModelChoice, ChatgptModelInfo } from '../shared/chatgptModels';
 import { slugifyCommandName } from '../shared/mcpCommand';
+import { currentMcpUrl } from '../shared/mcpCatalog';
 import {
-  CAPTURE_BACKGROUND_STYLES,
+  captureBackgroundStyleOf,
   DEFAULT_CAPTURE_BACKGROUND_STYLE,
   DEFAULT_CAPTURE_PALETTE,
-  type CaptureBackgroundStyle,
 } from '../shared/capturePalettes';
 import { defaultStored } from './configTypes';
 import { LEGACY_MAIL_ACCOUNT_ID } from './mail/mailIds';
@@ -121,13 +123,17 @@ export function normalizeConfig(raw: unknown): Config {
     xConnectorEnabled: obj.xConnectorEnabled === true,
     taiwanRailEnabled: typeof obj.taiwanRailEnabled === 'boolean' ? obj.taiwanRailEnabled : null,
     pttConnectorEnabled: typeof obj.pttConnectorEnabled === 'boolean' ? obj.pttConnectorEnabled : null,
+    taiwanLawEnabled: obj.taiwanLawEnabled === true,
     translateConnectorEnabled: obj.translateConnectorEnabled !== false,
     pageConnectorEnabled: obj.pageConnectorEnabled !== false,
+    officeConnectorEnabled: obj.officeConnectorEnabled === true,
+    yobiConnectorEnabled: obj.yobiConnectorEnabled !== false,
     linkRecognition: normalizeLinkRecognition(obj.linkRecognition),
     ...bySiteFlag((row) => obj[row.flag] === true),
     notifyEvents: normalizeNotifyEvents(obj.notifyEvents),
     youtubePrompt: typeof obj.youtubePrompt === 'string' ? obj.youtubePrompt : defaultStored.youtubePrompt,
     theme: isThemePreference(obj.theme) ? obj.theme : defaultStored.theme,
+    backdropMotion: obj.backdropMotion !== false,
     layoutMode: obj.layoutMode === 'side-by-side' ? 'side-by-side' : 'stacked',
     markdownZoom: clampedZoom,
     readingFont: normalizeReadingFont(obj.readingFont),
@@ -155,6 +161,7 @@ export function normalizeConfig(raw: unknown): Config {
     byokInstances: normalizeByokInstances(obj.byokInstances),
     byokGroups: normalizeByokGroups(obj.byokGroups),
     mcpServers: normalizeMcpServers(obj.mcpServers),
+    knowledgeBases: normalizeKnowledgeBases(obj.knowledgeBases),
     hiddenProviders: hidden.providers,
     hiddenByokIds: hidden.byokIds,
     hiddenByokGroupIds: hidden.byokGroupIds,
@@ -164,7 +171,11 @@ export function normalizeConfig(raw: unknown): Config {
     claudeModelCatalog: normalizeClaudeModelCatalog(obj.claudeModelCatalog),
     chatgptModel: normalizeChatgptModelChoice(obj.chatgptModel),
     chatgptModelCatalog: normalizeChatgptModelCatalog(obj.chatgptModelCatalog),
+    perplexityModel: normalizePerplexityModelChoice(obj.perplexityModel),
+    perplexityModelCatalog: normalizePerplexityModelCatalog(obj.perplexityModelCatalog),
     downloadsKeep: normalizeDownloadsKeep(obj.downloadsKeep),
+    botDownloadCap: normalizeBotDownloadCap(obj.botDownloadCap),
+    botDownloadCaps: normalizeBotDownloadCaps(obj.botDownloadCaps),
     agentTrustedCommands: normalizeTrustedCommands(obj.agentTrustedCommands, process.platform),
   };
 }
@@ -184,6 +195,28 @@ export function normalizeGeminiModelChoice(raw: unknown): GeminiModelChoice {
     modelId: typeof obj.modelId === 'string' ? obj.modelId.trim() : '',
     extendedThinking: typeof obj.extendedThinking === 'boolean' ? obj.extendedThinking : null,
   };
+}
+
+export function normalizePerplexityModelChoice(raw: unknown): PerplexityModelChoice {
+  const obj = (raw && typeof raw === 'object') ? (raw as Partial<PerplexityModelChoice>) : {};
+  return { modelId: cleanText(obj.modelId) };
+}
+
+/** A cache, so anything malformed is simply dropped: the next signed-in read fills it again. */
+export function normalizePerplexityModelCatalog(raw: unknown): PerplexityModelCatalog | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as Partial<PerplexityModelCatalog>;
+  const seen = new Set<string>();
+  const models: PerplexityModelInfo[] = [];
+  for (const entry of Array.isArray(obj.models) ? obj.models : []) {
+    const id = cleanText((entry as Partial<PerplexityModelInfo> | null)?.id);
+    const label = cleanText((entry as Partial<PerplexityModelInfo> | null)?.label);
+    if (!id || !label || seen.has(id)) continue;
+    seen.add(id);
+    models.push({ id, label });
+  }
+  if (models.length === 0) return null;
+  return { models, updatedAt: typeof obj.updatedAt === 'string' ? obj.updatedAt : '' };
 }
 
 function cleanText(raw: unknown): string {
@@ -210,6 +243,7 @@ export function normalizeGeminiModelCatalog(raw: unknown): GeminiModelCatalog | 
     models,
     thinking: thinkingLabel ? { label: thinkingLabel, sublabel: cleanText(obj.thinking?.sublabel) } : null,
     updatedAt: typeof obj.updatedAt === 'string' ? obj.updatedAt : '',
+    ...(typeof obj.rev === 'number' ? { rev: obj.rev } : {}),
   };
 }
 
@@ -355,7 +389,7 @@ export function normalizeMcpServers(raw: unknown): McpServerConfig[] {
   for (const item of raw) {
     const entry = (item && typeof item === 'object') ? (item as Partial<McpServerConfig>) : {};
     const id = typeof entry.id === 'string' ? entry.id.trim() : '';
-    const url = typeof entry.url === 'string' ? entry.url.trim() : '';
+    const url = typeof entry.url === 'string' ? currentMcpUrl(entry.url.trim()) : '';
     if (!id || !url || seen.has(id) || !/^https:\/\//i.test(url)) continue;
     seen.add(id);
     const headerName = typeof entry.headerName === 'string' && entry.headerName.trim() ? entry.headerName.trim() : undefined;
@@ -409,6 +443,7 @@ export function normalizeNotifyEvents(raw: unknown): NotifyEventPrefs {
     chatFailure: obj.chatFailure !== false,
     flowSuccess: obj.flowSuccess === true,
     flowFailure: obj.flowFailure !== false,
+    botRequests: obj.botRequests !== false,
   };
 }
 
@@ -651,9 +686,7 @@ export function normalizeCaptureSettings(raw: unknown): CaptureSettings {
   const validFormats: CaptureFormat[] = ['png', 'webp', 'pdf'];
   return {
     palette: typeof obj.palette === 'string' && obj.palette ? obj.palette : DEFAULT_CAPTURE_PALETTE,
-    backgroundStyle: CAPTURE_BACKGROUND_STYLES.includes(obj.backgroundStyle as CaptureBackgroundStyle)
-      ? (obj.backgroundStyle as CaptureBackgroundStyle)
-      : DEFAULT_CAPTURE_BACKGROUND_STYLE,
+    backgroundStyle: captureBackgroundStyleOf(obj.backgroundStyle) ?? DEFAULT_CAPTURE_BACKGROUND_STYLE,
     direction: typeof obj.direction === 'string' && obj.direction ? obj.direction : 'se',
     showPrompt: obj.showPrompt !== false,
     showProvider: obj.showProvider !== false,
@@ -664,6 +697,7 @@ export function normalizeCaptureSettings(raw: unknown): CaptureSettings {
     range: obj.range === 'last' ? 'last' : 'all',
     width: clampCaptureWidth(obj.width),
     margin: clampCaptureMargin(obj.margin),
+    cardOpacity: clampCardOpacity(obj.cardOpacity),
     pixelRatio: obj.pixelRatio === 2 ? 2 : 1,
     zip: obj.zip === true,
   };
@@ -760,6 +794,7 @@ export function deserializePairingConfig(raw: unknown, legacyAgentTarget = ''): 
     apiId: normalizeTelegramApiId(obj.apiId),
     apiHash: typeof obj.apiHash === 'string' ? obj.apiHash.trim() : '',
     allowGroupCommands: Boolean(obj.allowGroupCommands),
+    replaceLinkMessage: obj.replaceLinkMessage !== false,
     adminUserIds,
     llmDirect: normalizeLlmDirect(obj.llmDirect, legacyAgentTarget),
     pairing,

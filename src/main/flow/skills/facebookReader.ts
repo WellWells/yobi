@@ -7,7 +7,8 @@ import {
 } from '../../../shared/facebookLinks';
 import { FlowUserError } from '../userError';
 import {
-  ALL_COMMENTS, COMMENTS_QUERY, commentsRequestBody, isQueryError, readBundleUrls, readCommentPage, readCommentsQueryId, readPageTokens,
+  ALL_COMMENTS, COMMENTS_QUERY, commentsRequestBody, isQueryError, readBundleUrls, readCommentPage, readCommentsQuery, readPageTokens,
+  unknownProviders, type CommentsQuery,
 } from './facebookComments';
 import {
   photoPostId, postPhotoIds, readFacebookPage, readPhotoLinkPage, readPhotoPage, readPostPage, readVideoPage, type FacebookRead,
@@ -41,13 +42,13 @@ const MAX_BUNDLES = 40;
 /** How long a search that found no comments query is not repeated: each one downloads dozens of bundles. */
 const QUERY_MISS_RETRY_MS = 10 * 60_000;
 
-/** The comments query's id, found once a run of the app: it changes only when Facebook ships new code. */
-let commentsQueryId = '';
+/** The comments query, found once a run of the app: it changes only when Facebook ships new code. */
+let commentsQuery: CommentsQuery | null = null;
 let queryMissUntil = 0;
 
-/** Forgets the comments query's id and any recent miss, as a fresh start of the app does. */
+/** Forgets the comments query and any recent miss, as a fresh start of the app does. */
 export function resetFacebookCommentsQuery(): void {
-  commentsQueryId = '';
+  commentsQuery = null;
   queryMissUntil = 0;
 }
 
@@ -62,39 +63,41 @@ async function page(url: string, signedIn: boolean, signal: AbortSignal | undefi
   });
 }
 
-async function queryIdInBundles(html: string, signal: AbortSignal | undefined): Promise<string> {
+async function queryInBundles(html: string, signal: AbortSignal | undefined): Promise<CommentsQuery | null> {
   for (const url of readBundleUrls(html).slice(0, MAX_BUNDLES)) {
     try {
       const { status, text } = await fetchRawResponse(url, { headers: { 'User-Agent': userAgentForUrl(url) }, signal });
-      const id = status < 400 ? readCommentsQueryId(text) : '';
-      if (id) return id;
+      const query = status < 400 ? readCommentsQuery(text) : null;
+      if (query) return query;
     } catch {
       // One bundle that cannot be read leaves the others to search; a Stop ends the search.
       signal?.throwIfAborted();
     }
   }
-  return '';
+  return null;
 }
 
 /**
- * The comments query's id from the bundles this page loads, else from `fallbackUrl`'s: a reel page
+ * The comments query from the bundles this page loads, else from `fallbackUrl`'s: a reel page
  * loads its comments panel only when it opens, so none of its bundles defines the query, while the
  * same video's `/watch` page preloads it. The bundle list is public: the
  * fallback page is read signed out. A Stop throws before anything is remembered: it is not a miss.
  */
-async function findCommentsQueryId(html: string, fallbackUrl: string, signal: AbortSignal | undefined): Promise<string> {
-  if (commentsQueryId || Date.now() < queryMissUntil) return commentsQueryId;
-  let id = await queryIdInBundles(html, signal);
-  if (!id && fallbackUrl) {
+async function findCommentsQuery(html: string, fallbackUrl: string, signal: AbortSignal | undefined): Promise<CommentsQuery | null> {
+  if (commentsQuery || Date.now() < queryMissUntil) return commentsQuery;
+  let query = await queryInBundles(html, signal);
+  if (!query && fallbackUrl) {
     const fallback = await page(fallbackUrl, false, signal).catch(() => {
       signal?.throwIfAborted();
       return null;
     });
-    if (fallback && fallback.status < 400) id = await queryIdInBundles(fallback.text, signal);
+    if (fallback && fallback.status < 400) query = await queryInBundles(fallback.text, signal);
   }
-  commentsQueryId = id;
-  if (!id) queryMissUntil = Date.now() + QUERY_MISS_RETRY_MS;
-  return id;
+  commentsQuery = query;
+  if (!query) queryMissUntil = Date.now() + QUERY_MISS_RETRY_MS;
+  const unknown = query ? unknownProviders(query) : [];
+  if (unknown.length) sendLog(`📘 [Facebook] The comments query asks for variables Yobi has no value for, sent as false: ${unknown.join(', ')}`);
+  return query;
 }
 
 async function signedInUser(): Promise<string> {
@@ -116,8 +119,8 @@ async function readComments(source: CommentsSource, signedIn: boolean, signal: A
   const { html, feedbackId, postLink } = source;
   const tokens = readPageTokens(html);
   if (!feedbackId || !tokens.lsd) return [];
-  const queryId = await findCommentsQueryId(html, source.fallbackUrl, signal);
-  if (!queryId) {
+  const query = await findCommentsQuery(html, source.fallbackUrl, signal);
+  if (!query) {
     sendLog('📘 [Facebook] The comments query was not in the page\'s bundles — reading the post without comments');
     return [];
   }
@@ -140,7 +143,7 @@ async function readComments(source: CommentsSource, signedIn: boolean, signal: A
         },
         origin: ORIGIN,
         validateRedirectHost: stayOnFacebook,
-        post: { contentType: 'application/x-www-form-urlencoded', body: commentsRequestBody({ queryId, feedbackId, cursor, tokens, user, order }) },
+        post: { contentType: 'application/x-www-form-urlencoded', body: commentsRequestBody({ query, feedbackId, cursor, tokens, user, order }) },
         ...(signedIn ? { cookiesFrom: siteSession('facebook') } : {}),
         signal,
       }));
@@ -152,8 +155,11 @@ async function readComments(source: CommentsSource, signedIn: boolean, signal: A
     }
     const answer = readCommentPage(text, postLink);
     if (!answer) {
-      // Only the API refusing the query means Facebook replaced its id: found again next time.
-      if (isQueryError(text)) commentsQueryId = '';
+      // Only the API refusing the query means Facebook replaced it: found again next time.
+      if (isQueryError(text)) {
+        commentsQuery = null;
+        sendLog(`📘 [Facebook] The comments query was refused: ${text.slice(0, 200)}`);
+      }
       break;
     }
     if (pageIndex === 0 && order && answer.comments.length === 0 && !answer.cursor) {

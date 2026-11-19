@@ -1,9 +1,10 @@
 import React from 'react';
 import { Alert, Box, Group, Stack, Text } from '@mantine/core';
 import { PaletteSwatch } from '../capture/PalettePicker';
-import { CardSchematic } from './CardSchematic';
+import { CardPreview } from './CardPreview';
 import { ExpirySlider } from './ExpirySlider';
 import { MarginSlider } from '../capture/MarginSlider';
+import { CardOpacitySlider } from '../capture/CardOpacitySlider';
 import { Copy, Link2, Save, TriangleExclamationPoint } from 'lucide-react';
 import { AppTextInput } from '../AppTextInput';
 import { AppButton } from '../AppButton';
@@ -12,12 +13,15 @@ import { ToggleSwitch } from '../ToggleSwitch';
 import { PromptShell } from './PromptShell';
 import { ShareConsent } from './ShareConsent';
 import { ExportNameButton } from './ExportNameButton';
-import { clampCaptureMargin } from '../../../../shared/types';
+import {
+  captureTooTallNotice, checkCaptureHeight, clampCaptureMargin, clampCardOpacity,
+} from '../../../../shared/types';
 import { CAPTURE_PALETTES } from '../../../../shared/capturePalettes';
 import type { CaptureBackgroundStyle, CaptureDirection } from '../../../../shared/capturePalettes';
+import { documentCardRequest } from '../../../../shared/captureCard';
 import type {
-  CaptureExportAction, ExportNameResult, ExportPromptChoice, ExportPromptPayload, PanelHeight, QuickExportFormat,
-  ShareExpire,
+  CaptureExportAction, ExportNameResult, ExportPromptChoice, ExportPromptPayload, MarkdownCaptureRequest, PanelHeight,
+  QuickExportFormat, ShareExpire,
 } from '../../../../shared/types';
 
 const CAPTURE_FORMATS: { value: QuickExportFormat; label: string }[] = [
@@ -47,6 +51,8 @@ export const ExportPromptPanel: React.FC<Props> = ({ payload, onSubmit, onCancel
   const [palette, setPalette] = React.useState(payload.palette);
   const [backgroundStyle, setBackgroundStyle] = React.useState<CaptureBackgroundStyle>(payload.backgroundStyle);
   const [margin, setMargin] = React.useState(clampCaptureMargin(payload.margin));
+  const [cardOpacity, setCardOpacity] = React.useState(clampCardOpacity(payload.cardOpacity));
+  const [cardHeight, setCardHeight] = React.useState(0);
   const [nameModelUrl, setNameModelUrl] = React.useState(payload.naming?.modelUrl ?? '');
   const [naming, setNaming] = React.useState(false);
   const [nameError, setNameError] = React.useState('');
@@ -77,6 +83,36 @@ export const ExportPromptPanel: React.FC<Props> = ({ payload, onSubmit, onCancel
   const trimmed = name.trim();
   const ready = !busy && (sharing || !named || trimmed.length > 0);
 
+  // The card main will render, drawn for real in the preview. The format is not part of it: the
+  // card looks the same in all three, so switching format does not redraw the preview.
+  const shownPalette = hoveredPalette ?? palette;
+  const previewRequest = React.useMemo<MarkdownCaptureRequest | null>(() => {
+    const preview = payload.preview;
+    if (!preview) return null;
+    const look = {
+      palette: shownPalette, backgroundStyle, direction: payload.direction, width, margin, cardOpacity,
+      pixelRatio: payload.pixelRatio,
+    };
+    return {
+      ...documentCardRequest(preview.payload, look, { format: 'png', zip: false, action: 'copy' }),
+      markdownLabels: preview.markdownLabels,
+      readingFont: preview.readingFont,
+    };
+  }, [payload.preview, payload.direction, payload.pixelRatio, shownPalette, backgroundStyle, width, margin, cardOpacity]);
+
+  // The capture's own height guard, run on the preview's measurement: warned here, before the
+  // export, instead of after a render that came back too tall. Main still checks for itself.
+  const imageFormat = format === 'png' || format === 'webp' ? format : null;
+  const verdict = imageFormat && cardHeight > 0
+    ? checkCaptureHeight(imageFormat, cardHeight, payload.pixelRatio, width)
+    : null;
+  const tooTallWarning = verdict && !verdict.ok && imageFormat
+    ? captureTooTallNotice(verdict, imageFormat, payload.strings.tooTall)
+    : '';
+  const outputSize = imageFormat && cardHeight > 0
+    ? `${width * payload.pixelRatio} × ${Math.ceil(cardHeight * payload.pixelRatio)} px`
+    : '';
+
   const pickFormat = (next: QuickExportFormat): void => {
     if (next !== 'text') setLastCaptureFormat(next);
     setFormat(next);
@@ -93,7 +129,9 @@ export const ExportPromptPanel: React.FC<Props> = ({ payload, onSubmit, onCancel
       return;
     }
     setPending(action);
-    onSubmit({ kind: 'capture', fileName: trimmed, format, zip, width, margin, palette, backgroundStyle, action });
+    onSubmit({
+      kind: 'capture', fileName: trimmed, format, zip, width, margin, cardOpacity, palette, backgroundStyle, action,
+    });
   };
 
   const suggestName = async (providerUrl: string): Promise<void> => {
@@ -151,15 +189,15 @@ export const ExportPromptPanel: React.FC<Props> = ({ payload, onSubmit, onCancel
 
           <Group justify="space-between" wrap="nowrap" gap={12}>
             <Text fz="var(--font-size-sm)" c="var(--mantine-color-text)">{shareStrings.burn}</Text>
-            <ToggleSwitch size="sm" checked={burn} onChange={(event) => setBurn(event.currentTarget.checked)} />
+            <ToggleSwitch size="sm" aria-label={shareStrings.burn} checked={burn} onChange={(event) => setBurn(event.currentTarget.checked)} />
           </Group>
         </>
       ) : (
         <>
-          <Group align="stretch" gap={12} wrap="nowrap">
-            <Stack gap={10} flex={1} miw={0} onMouseLeave={() => setHoveredPalette(null)}>
+          <Group align="stretch" gap={12} wrap="wrap">
+            <Stack gap={10} style={{ flex: '1 1 14rem' }} miw={0} onMouseLeave={() => setHoveredPalette(null)}>
               <Stack gap={6}>
-                <Group justify="space-between" wrap="nowrap" gap={8}>
+                <Group justify="space-between" wrap="wrap" gap={8}>
                   <Text fz="var(--font-size-sm)" c="dimmed" style={{ flexShrink: 0 }}>{payload.strings.theme}</Text>
                   <AppSegmentedControl
                     value={backgroundStyle}
@@ -189,24 +227,50 @@ export const ExportPromptPanel: React.FC<Props> = ({ payload, onSubmit, onCancel
                 <Text fz="var(--font-size-sm)" c="dimmed">{payload.strings.margin}</Text>
                 <MarginSlider value={margin} onChange={setMargin} label={payload.strings.margin} />
               </Stack>
+              <Stack gap={2}>
+                <Text fz="var(--font-size-sm)" c="dimmed">{payload.strings.cardOpacity}</Text>
+                <CardOpacitySlider value={cardOpacity} onChange={setCardOpacity} label={payload.strings.cardOpacity} />
+              </Stack>
             </Stack>
 
-            <Box w={PREVIEW_WIDTH} style={{ flexShrink: 0 }}>
-              <CardSchematic
-                palette={hoveredPalette ?? palette}
-                backgroundStyle={backgroundStyle}
-                direction={payload.direction as CaptureDirection}
-                width={width}
-                margin={margin}
-                boxWidth={PREVIEW_WIDTH}
-              />
-            </Box>
+            <Stack w={PREVIEW_WIDTH} gap={4} style={{ flexShrink: 0 }}>
+              <Box style={{ flex: '1 1 0', minHeight: 0 }}>
+                <CardPreview
+                  request={previewRequest}
+                  onMeasure={setCardHeight}
+                  palette={shownPalette}
+                  backgroundStyle={backgroundStyle}
+                  direction={payload.direction as CaptureDirection}
+                  width={width}
+                  margin={margin}
+                  cardOpacity={cardOpacity}
+                  boxWidth={PREVIEW_WIDTH}
+                />
+              </Box>
+              {outputSize && (
+                <Text
+                  fz="var(--font-size-xs)"
+                  c={tooTallWarning ? 'var(--warning-text)' : 'var(--text-muted)'}
+                  ta="center"
+                  style={{ fontVariantNumeric: 'tabular-nums' }}
+                >
+                  {outputSize}
+                </Text>
+              )}
+            </Stack>
           </Group>
+
+          {tooTallWarning && (
+            <Text fz="var(--font-size-sm)" c="var(--warning-text)" style={{ wordBreak: 'break-word' }}>
+              {tooTallWarning}
+            </Text>
+          )}
 
           <Stack gap={6}>
             <Text fz="var(--font-size-sm)" c="dimmed">{payload.strings.fileName}</Text>
             <Group gap={8} wrap="nowrap" align="flex-start">
               <AppTextInput
+                aria-label={payload.strings.fileName}
                 flex={1}
                 miw={0}
                 value={name}
@@ -232,7 +296,7 @@ export const ExportPromptPanel: React.FC<Props> = ({ payload, onSubmit, onCancel
               )}
             </Group>
             {nameError && (
-              <Text fz="var(--font-size-sm)" c="var(--mantine-color-error)" style={{ wordBreak: 'break-word' }}>
+              <Text fz="var(--font-size-sm)" c="var(--error-text)" style={{ wordBreak: 'break-word' }}>
                 {nameError}
               </Text>
             )}
@@ -250,7 +314,7 @@ export const ExportPromptPanel: React.FC<Props> = ({ payload, onSubmit, onCancel
 
           <Group justify="space-between" wrap="nowrap" gap={12}>
             <Text fz="var(--font-size-sm)" c="var(--mantine-color-text)">{payload.strings.zip}</Text>
-            <ToggleSwitch size="sm" checked={zip} onChange={(event) => setZip(event.currentTarget.checked)} />
+            <ToggleSwitch size="sm" aria-label={payload.strings.zip} checked={zip} onChange={(event) => setZip(event.currentTarget.checked)} />
           </Group>
         </>
       )}

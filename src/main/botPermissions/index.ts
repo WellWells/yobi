@@ -15,14 +15,15 @@ export {
   pairedMenuAccess,
   botBuiltinAllowed,
   botChatAllowed,
+  botAnalyzeAllowed,
   botDownloadAllowed,
   botFlowAdminAllowed,
   botFlowAllowed,
   computeBotConnectorChanges,
   computeBotFlowAdmin,
 } from './rights';
-export { applyBotRunGrants, botChatApprovesConnectorChanges, botChatFlowBuilder, botChatRights } from './runGrants';
-export { botAccessDeniedText } from './denial';
+export { applyBotRunGrants, botChatApprovesConnectorChanges, botRunConnectorScope, botChatFlowBuilder, botChatRights } from './runGrants';
+export { botAccessDeniedText, botFlowDeniedText } from './denial';
 export { notifyBotGroupJoined } from './groupApproval';
 export {
   PAIRING_REQUEST_DAILY_CARDS,

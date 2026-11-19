@@ -1,6 +1,6 @@
 import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { Badge, Box, Flex, Group, Paper, Stack, Text } from '@mantine/core';
-import { ChevronRight, ListOrdered } from 'lucide-react';
+import { ChevronDown, ListOrdered } from 'lucide-react';
 import {
   closestCenter, DndContext, DragOverlay, type DragEndEvent, type DragStartEvent,
 } from '@dnd-kit/core';
@@ -12,7 +12,7 @@ import { AppButton } from '../../components/AppButton';
 import type { ProgressState } from '../../components/ProgressMark';
 import { ATOMIC_STEPS, StepCard, stepHasOutput } from './StepCard';
 import { AddStepMenu } from './AddStepMenu';
-import { DragHandle, useFlowSensors } from './dnd';
+import { DragHandle, useDndAccessibility, useFlowSensors } from './dnd';
 import { SKILL_ICON, skillHue } from './skills';
 import type { AvailableVarsInput } from './variableInsert';
 import { flowBotTrigger, stepVarInput } from './stepVarInput';
@@ -26,7 +26,8 @@ import { useFlowOutlineStore } from '../../store/useFlowOutlineStore';
 import { setStepExpander } from './outline/locateStep';
 import { collectStepIssues, withEndOfRunWarnings } from './outline/stepIssues';
 import { noteScopeChange } from './moveNotice';
-import { hiddenByFold, outlineRows } from './outline/outlineModel';
+import { guardBlocks, hiddenByFold, hiddenByGuards, outlineRows } from './outline/outlineModel';
+import { guardTexts } from './outline/guardText';
 import { stepDisplayName } from './stepSummary';
 import { useShallow } from 'zustand/react/shallow';
 import { findMatchingMarker } from '../../store/flowHelpers';
@@ -34,9 +35,54 @@ import type { FlowDefinition, FlowVariable, SkillInstance, SkillType, TriggerCon
 import { nestingDepths } from '../../../../shared/flowBlockStructure';
 
 const NO_VARIABLES: FlowVariable[] = [];
-const GUIDE = '2px dashed var(--mantine-color-default-border)';
+/**
+ * A block's bracket: one solid line from under its card down to the corner of its end. Solid and
+ * unbroken (each row draws its part over its whole height, the gap between cards included), so a
+ * nested step reads as inside; the dashed 0.6-opacity line it replaced was lost on dark themes.
+ */
+const GUIDE_COLOR = 'color-mix(in srgb, var(--text-muted) 55%, transparent)';
+const GUIDE_WIDTH = 2;
 const INDENT = 24;
+/** Space above an end's slim row, which has no arrow over it: the line runs down through it. */
+const END_GAP = 6;
 const ENDERS: SkillType[] = ['end_loop', 'end_if'];
+
+function guideLeft(level: number): number {
+  return level * INDENT + INDENT / 2 - GUIDE_WIDTH / 2;
+}
+
+function Guide({ level }: { level: number }) {
+  return (
+    <Box
+      aria-hidden
+      data-block-guide=""
+      style={{ position: 'absolute', left: guideLeft(level), top: 0, bottom: 0, width: GUIDE_WIDTH, background: GUIDE_COLOR, zIndex: 1 }}
+    />
+  );
+}
+
+/**
+ * Where a block's line ends: down to the middle of its end's row, then right into it. Placed in the
+ * end card's wrapper, so the turn follows the row's real height at any text size.
+ */
+function GuideCorner({ level }: { level: number }) {
+  return (
+    <Box
+      aria-hidden
+      data-block-corner=""
+      style={{
+        position: 'absolute',
+        left: guideLeft(level),
+        top: -END_GAP,
+        bottom: '50%',
+        width: INDENT / 2 + GUIDE_WIDTH / 2,
+        borderLeft: `${GUIDE_WIDTH}px solid ${GUIDE_COLOR}`,
+        borderBottom: `${GUIDE_WIDTH}px solid ${GUIDE_COLOR}`,
+        zIndex: 1,
+      }}
+    />
+  );
+}
 
 export interface FlowStepsCardProps {
   flow: FlowDefinition;
@@ -78,13 +124,19 @@ interface RowProps {
   onToggleBlock: (stepId: string) => void;
   /** The loops and conditions it is inside, by name, for the open card's header. */
   path?: string;
+  /** For an end marker: the name of the block it closes. */
+  ownerName?: string;
+  /** For a closed skip-only condition: what it does when it holds ("略過這一輪「…」"). */
+  guardText?: string;
+  /** Where its ＋ puts a new step: after a closed guard's hidden end, not inside it. */
+  insertAt?: number;
   t: (k: string) => string;
 }
 
 const SortableStepRow: React.FC<RowProps> = React.memo(({
   step, index, total, level, prevLevel, flowId, botTrigger, outputKeyError, varInputFor, flowVariables,
   expanded, onToggle, runState, runError, runNote, ownerId, selected, issue, issueTone, hidden, blockFolded, blockSize, onToggleBlock,
-  path, t,
+  path, ownerName, guardText, insertAt, t,
 }) => {
   const stepId = step.id;
   const varInput = useCallback(() => varInputFor(stepId), [varInputFor, stepId]);
@@ -93,6 +145,8 @@ const SortableStepRow: React.FC<RowProps> = React.memo(({
     attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging,
   } = useSortable({ id: step.id });
   const indentPx = level * INDENT;
+  // An end at the top level closes nothing (an unpaired end): it stays a plain row.
+  const closes = locked && level > 0;
 
   // The sortable hook draws this row again whenever the list's drag context does (every edit of
   // the flow); the handle stays the same element while its inputs do, so the card skips that pass.
@@ -114,23 +168,16 @@ const SortableStepRow: React.FC<RowProps> = React.memo(({
       }}
       data-block-hidden={hidden ? '' : undefined}
     >
-      {Array.from({ length: level }).map((_, lIdx) => (
-        <Box key={lIdx} style={{ position: 'absolute', left: `${(lIdx + 0.5) * INDENT}px`, top: 0, bottom: 0, width: 2, borderLeft: GUIDE, opacity: 0.6, zIndex: 1 }} />
-      ))}
+      {Array.from({ length: closes ? level - 1 : level }).map((_, lIdx) => <Guide key={lIdx} level={lIdx} />)}
 
-      {index > 0 && (
-        <Flex direction="column" align="center" py={2} gap={2} style={{ position: 'relative' }}>
-          {Array.from({ length: Math.min(level, prevLevel) }).map((_, lIdx) => (
-            <Box key={lIdx} style={{ position: 'absolute', left: `${(lIdx + 0.5) * INDENT}px`, top: 0, bottom: 0, width: 2, borderLeft: GUIDE, opacity: 0.6, zIndex: 1 }} />
-          ))}
-          <Box style={{ paddingLeft: `${Math.max(level, prevLevel) * INDENT}px`, zIndex: 2 }}>
-            <ChevronRight size={14} color="var(--mantine-color-dimmed)" style={{ transform: 'rotate(90deg)' }} />
-
-          </Box>
+      {index > 0 && !closes && (
+        <Flex justify="center" py={6} style={{ paddingLeft: `${Math.max(level, prevLevel) * INDENT}px` }}>
+          <ChevronDown size={14} color="var(--mantine-color-dimmed)" />
         </Flex>
       )}
 
-      <Box style={{ paddingLeft: `${indentPx}px`, zIndex: 2, position: 'relative' }}>
+      <Box style={{ paddingLeft: `${indentPx}px`, marginTop: closes ? END_GAP : undefined, zIndex: 2, position: 'relative' }}>
+        {closes && <GuideCorner level={level - 1} />}
         <StepCard
           step={step}
           index={index}
@@ -154,6 +201,10 @@ const SortableStepRow: React.FC<RowProps> = React.memo(({
           blockSize={blockSize}
           onToggleBlock={onToggleBlock}
           path={path}
+          ownerName={ownerName}
+          guardText={guardText}
+          insertAt={insertAt}
+          slim={closes}
           t={t}
         />
       </Box>
@@ -202,6 +253,13 @@ export const FlowStepsCard: React.FC<FlowStepsCardProps> = ({ flow, t, onAddStep
     const current = flowRef.current;
     return stepVarInput(current, current.steps.findIndex((s) => s.id === stepId));
   }, []);
+  // Drag announcements name the step as its card does (its own name, else the step type's).
+  const dragNameOf = useCallback((id: string): string | null => {
+    const step = flowRef.current.steps.find((s) => s.id === id);
+    if (!step) return null;
+    return step.label?.trim() || t(`flow.skill.${step.type}`);
+  }, [t]);
+  const dndAccessibility = useDndAccessibility(dragNameOf, t);
 
   // Checked here, against the steps before each: a renamed output redraws only the cards whose
   // verdict changes.
@@ -247,10 +305,13 @@ export const FlowStepsCard: React.FC<FlowStepsCardProps> = ({ flow, t, onAddStep
 
   // The outline's pick: which card it landed on, and opening that card's form.
   const selectedId = useFlowOutlineStore((s) => s.selected[flow.id]);
-  const { editorFolded, toggleEditorFold, unfoldEditor } = useFlowOutlineStore(useShallow((s) => ({
+  const { editorFolded, openGuardIds, toggleEditorFold, unfoldEditor, toggleGuard, openGuardsOf } = useFlowOutlineStore(useShallow((s) => ({
     editorFolded: s.editorFolded[flow.id],
+    openGuardIds: s.openGuards[flow.id],
     toggleEditorFold: s.toggleEditorFold,
     unfoldEditor: s.unfoldEditor,
+    toggleGuard: s.toggleGuard,
+    openGuardsOf: s.openGuardsOf,
   })));
   const rows = useMemo(() => outlineRows(flow.steps), [flow.steps]);
   useEffect(() => {
@@ -260,13 +321,41 @@ export const FlowStepsCard: React.FC<FlowStepsCardProps> = ({ flow, t, onAddStep
       const steps = useFlowStore.getState().flows.find((f) => f.id === flow.id)?.steps ?? [];
       const ancestors = outlineRows(steps).find((row) => row.step.id === stepId)?.ancestors ?? [];
       unfoldEditor(flow.id, ancestors);
+      openGuardsOf(flow.id, ancestors);
       if (expand) setAll([stepId], true);
     });
     return () => setStepExpander(null);
-  }, [setAll, unfoldEditor, flow.id]);
+  }, [setAll, unfoldEditor, openGuardsOf, flow.id]);
   const foldedBlocks = useMemo(() => new Set(editorFolded ?? []), [editorFolded]);
-  const hiddenIds = useMemo(() => hiddenByFold(rows, foldedBlocks), [rows, foldedBlocks]);
-  const onToggleBlock = useCallback((stepId: string) => toggleEditorFold(flow.id, stepId), [toggleEditorFold, flow.id]);
+  // A guard whose skip or end has a problem stays open: the problem is written on those cards.
+  const guards = useMemo(() => {
+    const all = guardBlocks(rows);
+    for (const [id, guard] of all) {
+      if (stepIssues.has(guard.action.id) || stepIssues.has(guard.endId)) all.delete(id);
+    }
+    return all;
+  }, [rows, stepIssues]);
+  const openGuards = useMemo(() => new Set(openGuardIds ?? []), [openGuardIds]);
+  const hiddenIds = useMemo(() => {
+    const hidden = hiddenByFold(rows, foldedBlocks);
+    hiddenByGuards(guards, openGuards).forEach((id) => hidden.add(id));
+    return hidden;
+  }, [rows, foldedBlocks, guards, openGuards]);
+  const guardsRef = useRef(guards);
+  guardsRef.current = guards;
+  const onToggleBlock = useCallback((stepId: string) => {
+    if (guardsRef.current.has(stepId)) toggleGuard(flow.id, stepId);
+    else toggleEditorFold(flow.id, stepId);
+  }, [toggleEditorFold, toggleGuard, flow.id]);
+  // Names, joined per row as strings: an end says which block it closes, a closed guard what it skips.
+  const ownerNames = useMemo(() => {
+    const byId = new Map(flow.steps.map((step) => [step.id, step]));
+    return rows.map((row) => {
+      const owner = row.owner ? byId.get(row.owner) : undefined;
+      return owner ? stepDisplayName(owner, t) : undefined;
+    });
+  }, [rows, flow.steps, t]);
+  const guardLines = useMemo(() => guardTexts(rows, guards, flow.steps, t), [rows, guards, flow.steps, t]);
   // Joined to a string per row: a card redraws only when the names of its blocks change.
   const paths = useMemo(() => {
     const byId = new Map(flow.steps.map((step) => [step.id, step]));
@@ -313,6 +402,7 @@ export const FlowStepsCard: React.FC<FlowStepsCardProps> = ({ flow, t, onAddStep
         ) : (
           <DndContext
             sensors={sensors}
+            accessibility={dndAccessibility}
             collisionDetection={closestCenter}
             modifiers={[restrictToVerticalAxis]}
             onDragStart={(e: DragStartEvent) => setActiveId(String(e.active.id))}
@@ -320,9 +410,11 @@ export const FlowStepsCard: React.FC<FlowStepsCardProps> = ({ flow, t, onAddStep
             onDragCancel={() => setActiveId(null)}
           >
             <SortableContext items={stepIds} strategy={verticalListSortingStrategy}>
-              <Stack gap="sm">
+              <Stack gap={0}>
                 {flow.steps.map((step, index) => {
                   const log = runByStep.get(step.id);
+                  const guard = guards.get(step.id);
+                  const guardClosed = guard !== undefined && !openGuards.has(step.id);
                   return (
                   <SortableStepRow
                     key={step.id}
@@ -346,15 +438,20 @@ export const FlowStepsCard: React.FC<FlowStepsCardProps> = ({ flow, t, onAddStep
                     issue={stepIssues.get(step.id)?.text}
                     issueTone={stepIssues.get(step.id)?.tone}
                     hidden={hiddenIds.has(step.id)}
-                    blockFolded={rows[index]?.childCount !== undefined ? foldedBlocks.has(step.id) : undefined}
+                    blockFolded={rows[index]?.childCount !== undefined ? (guard ? guardClosed : foldedBlocks.has(step.id)) : undefined}
                     blockSize={rows[index]?.childCount}
                     onToggleBlock={onToggleBlock}
                     path={paths[index] || undefined}
+                    ownerName={ENDERS.includes(step.type) ? ownerNames[index] : undefined}
+                    guardText={guardClosed ? guardLines.get(step.id) : undefined}
+                    insertAt={guardClosed ? index + 3 : undefined}
                     t={t}
                   />
                   );
                 })}
-                <AddStepMenu position="bottom" t={t} onAdd={onAddStep} />
+                <Box mt="sm">
+                  <AddStepMenu position="bottom" t={t} onAdd={onAddStep} />
+                </Box>
               </Stack>
             </SortableContext>
             <DragOverlay modifiers={[restrictToVerticalAxis]}>

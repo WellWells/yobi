@@ -65,7 +65,7 @@ export const ShellConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) =
         mono
       />
       {hidden && (
-        <Text fz="xs" c="var(--mantine-color-warning)" data-shell-hidden="">
+        <Text fz="xs" c="var(--warning-text)" data-shell-hidden="">
           {fillTemplate(t('flow.skill.shell.command.hidden'), { code: hidden })}
         </Text>
       )}

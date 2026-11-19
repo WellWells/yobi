@@ -2,7 +2,8 @@
  * Someone who is not paired writes to the bot in a private chat (anything but `/start <code>` and
  * `/init`, which pair as before): they are told the managers were asked, and — for a new request,
  * within the day's allowance (`noteBotPairingRequest`) — every manager gets the request's card.
- * With no manager at all there is nobody to ask, so they get the pairing tip as before.
+ * With no manager to message they are still told so when the bot is in use (the owner answers on
+ * the computer); only a bot nobody is paired with yet gives the pairing tip.
  */
 import { t } from '../i18n';
 import { actorEnv, offerPairingRequest } from './accountAdmin';
@@ -61,7 +62,11 @@ export async function handlePairingRequest(ctx: TelegramContext, options: Pairin
     return false;
   });
   if (managers.length === 0) {
-    await ctx.reply(t(s, 'telegram.cmd.pairingTip'));
+    // Nobody to message in Telegram, yet the request is on the computer (its notification, the
+    // settings page's "Allow"): a bot someone already uses has an owner there to answer it. Only
+    // a bot nobody is paired with yet is the owner setting it up, who needs the code.
+    const inUse = await deps.listAccounts().then((accounts) => accounts.some((account) => account.state === 'paired'), () => false);
+    await ctx.reply(t(s, inUse ? 'telegram.users.request.sent' : 'telegram.cmd.pairingTip'));
     return;
   }
   await ctx.reply(t(s, 'telegram.users.request.sent'));

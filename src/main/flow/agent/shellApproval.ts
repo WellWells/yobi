@@ -66,6 +66,32 @@ export function shellTextDenyReason(config: Record<string, string>, platform: No
   return `refused: "shell" must be one of ${[...KNOWN_UNIX_SHELLS].join(', ')} (a name or a path to one), or blank for the default. To run another program, call it inside the command.`;
 }
 
+/** Longer than this, a wait in a command is "do it later", which a run cannot hold out for. */
+export const SHELL_WAIT_MAX_SECONDS = 30;
+
+const WAIT_PATTERNS: ReadonlyArray<{ re: RegExp; seconds: (match: RegExpExecArray) => number }> = [
+  { re: /\bstart-sleep\b(?:\s+-s(?:econds)?)?\s+(\d+(?:\.\d+)?)/gi, seconds: (m) => Number(m[1]) },
+  { re: /\bstart-sleep\s+-m(?:illiseconds)?\s+(\d+)/gi, seconds: (m) => Number(m[1]) / 1_000 },
+  { re: /\bsleep\s+(\d+(?:\.\d+)?)([smhd]?)\b/gi, seconds: (m) => Number(m[1]) * ({ '': 1, s: 1, m: 60, h: 3_600, d: 86_400 }[m[2].toLowerCase()] ?? 1) },
+  { re: /\btimeout(?:\.exe)?\s+\/t\s+(\d+)/gi, seconds: (m) => Number(m[1]) },
+];
+
+/**
+ * Why this command is refused as a long wait, or null. Asked to send a LINE message in
+ * five minutes, a model runs `Start-Sleep -Seconds 300` — the run sits blocked, and "tomorrow at 8"
+ * cannot be waited out at all. Later work is a one-time flow, which survives the run and a restart.
+ */
+export function shellWaitDenyReason(command: string): string | null {
+  for (const { re, seconds } of WAIT_PATTERNS) {
+    for (const match of command.matchAll(re)) {
+      if (seconds(match) > SHELL_WAIT_MAX_SECONDS) {
+        return `refused: the command waits ${match[0].trim()}, and a run cannot wait that long. To do something LATER, save a one-time flow with "build_flow" (put the time in the goal) — it runs by itself at that moment.`;
+      }
+    }
+  }
+  return null;
+}
+
 /** The fence for a command: longer than any backtick run inside it, so the command cannot close it. */
 export function fencedCommand(command: string): string {
   const longestRun = Math.max(0, ...(command.match(/`+/g) ?? []).map((run) => run.length));
@@ -144,7 +170,8 @@ function readChoices(config: Record<string, string>): string[] {
 }
 
 /**
- * Whether the answer approves the command (or the connector change). Strict on purpose: only the
+ * Whether the answer approves the command (or the connector change, or — for a model's question
+ * after a held-back call — the boundary it was held back for). Strict on purpose: only the
  * first choice — pressed, typed out, or picked by number where the choices were shown numbered
  * ("1" arrives here as "1. Run" only then, `applyAnswer`). A bare "1" never approves: under
  * buttons the user saw no numbers, so it may be anything. Anything else — "2", "no", "use

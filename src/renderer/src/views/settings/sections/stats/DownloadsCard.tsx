@@ -6,7 +6,7 @@ import { siteLabel } from '../../../../../../shared/linkSites/rows';
 import { Figure, HelpDot, LegendItem, ShareBar } from './parts';
 import { formatShare } from './aggregate';
 import type { StatsAggregate } from './aggregate';
-import { OUTCOME_COLORS } from './colors';
+import { OUTCOME_COLORS, OUTCOME_TEXT } from './colors';
 import classes from './stats.module.css';
 
 interface Props {
@@ -44,7 +44,7 @@ export const DownloadsCard: React.FC<Props> = ({ stats, t, onInspectFailures }) 
             <Text
               fz="var(--font-size-3xl)"
               fw={700}
-              c={failure === 0 ? OUTCOME_COLORS.success : 'var(--mantine-color-text)'}
+              c={failure === 0 ? OUTCOME_TEXT.success : 'var(--mantine-color-text)'}
               style={{ fontVariantNumeric: 'tabular-nums' }}
             >
               {formatShare(success, total)}
@@ -85,7 +85,7 @@ export const DownloadsCard: React.FC<Props> = ({ stats, t, onInspectFailures }) 
                 <Text
                   fz="var(--font-size-sm)"
                   fw={600}
-                  c={row.counts.failure > 0 ? OUTCOME_COLORS.failure : 'dimmed'}
+                  c={row.counts.failure > 0 ? OUTCOME_TEXT.failure : 'dimmed'}
                   style={{ minWidth: 56, textAlign: 'right' }}
                 >
                   {`${t('settings.stats.failure')} ${row.counts.failure.toLocaleString()}`}

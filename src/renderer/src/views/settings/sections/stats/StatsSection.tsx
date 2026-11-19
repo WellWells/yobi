@@ -1,5 +1,6 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { Box, Group, Stack, Text } from '@mantine/core';
+import { Group, Stack, Text } from '@mantine/core';
+import { SearchSection } from '../../FreezeWhileHidden';
 import { ChartLine, Trash } from 'lucide-react';
 import { SectionCard, SettingRow, ToggleSwitch } from '../../components';
 import { AppButton } from '../../../../components/AppButton';
@@ -9,7 +10,7 @@ import { WebDialog } from '../../../../components/WebDialog';
 import { useAppStore } from '../../../../store/appStore';
 import { useSavedFlows } from '../../../../store/useSavedFlows';
 import { TAG_SETS } from '../../hooks/useSettingsNav';
-import type { useMetrics } from '../../hooks/useMetrics';
+import { useMetrics } from '../../hooks/useMetrics';
 import { DEFAULT_RANGE_DAYS, RANGE_DAYS, SCOPES, aggregateStats, hasStoredStats } from './aggregate';
 import type { StatsScope } from './aggregate';
 import { ActivityCard } from './ActivityCard';
@@ -19,6 +20,8 @@ import { KeysCard } from './KeysCard';
 import { ConversationCard } from './ConversationCard';
 import { DownloadsCard } from './DownloadsCard';
 import { FlowHealthCard, StepIssuesCard, aggregateFlowStats } from './flow';
+import type { StepRow } from './flow/aggregate';
+import { flowTraceName } from '../../../../../../shared/flowTrace';
 
 type Metrics = ReturnType<typeof useMetrics>;
 
@@ -29,7 +32,17 @@ interface Props {
   sectionGap: number;
 }
 
-export const StatsSection: React.FC<Props> = ({ metrics, t, showSection, sectionGap }) => {
+/**
+ * The stats page as Settings shows it: it holds its own counters (read while it is on screen),
+ * so reading them and their updates during a run redraw this page alone, never SettingsView.
+ */
+export const LiveStatsSection: React.FC<Omit<Props, 'metrics'>> = (props) => {
+  const metrics = useMetrics();
+  return <StatsSection metrics={metrics} {...props} />;
+};
+
+/** Memoised: leaving the screen redraws `LiveStatsSection`, and the page itself has nothing new. */
+export const StatsSection = React.memo<Props>(({ metrics, t, showSection, sectionGap }) => {
   const { snapshot, flowSnapshot } = metrics;
   const [rangeDays, setRangeDays] = useState<number>(DEFAULT_RANGE_DAYS);
   const [scope, setScope] = useState<StatsScope>('all');
@@ -49,12 +62,18 @@ export const StatsSection: React.FC<Props> = ({ metrics, t, showSection, section
   );
 
   const inspectFailures = useCallback(() => openLogsFiltered(['error']), [openLogsFiltered]);
+  // A step that failed and let the run carry on (`emitFailFlag`) logs a warning, not an error,
+  // so a step row asks for both, narrowed to its own flow.
+  const inspectStep = useCallback(
+    (row: StepRow) => openLogsFiltered(['error', 'warning'], flowTraceName(row.flowName)),
+    [openLogsFiltered],
+  );
 
   // Per-flow cards: shown under All and Flows only, and they are never split by scope.
   const flowCards = (
     <>
-      <FlowHealthCard stats={flowStats} t={t} onInspect={inspectFailures} />
-      <StepIssuesCard stats={flowStats} t={t} onInspect={inspectFailures} />
+      <FlowHealthCard stats={flowStats} t={t} onInspect={inspectStep} />
+      <StepIssuesCard stats={flowStats} t={t} onInspect={inspectStep} />
       <DownloadsCard stats={stats} t={t} onInspectFailures={inspectFailures} />
     </>
   );
@@ -86,13 +105,13 @@ export const StatsSection: React.FC<Props> = ({ metrics, t, showSection, section
   );
 
   return (
-    <Box display={showSection(TAG_SETS.stats, 'stats') ? 'block' : 'none'}>
+    <SearchSection shown={showSection(TAG_SETS.stats, 'stats')}>
       {/* A one-setting card is that row, with no title above it; the page title says Statistics. */}
       <SectionCard style={{ marginBottom: sectionGap }}>
         <SettingRow
           label={t('settings.stats.enable')}
           hint={t('settings.stats.hint')}
-          control={<ToggleSwitch checked={metrics.enabled} onChange={() => { void metrics.handleToggleEnabled(); }} />}
+          control={<ToggleSwitch aria-label={t('settings.stats.enable')} checked={metrics.enabled} onChange={() => { void metrics.handleToggleEnabled(); }} />}
         />
       </SectionCard>
 
@@ -160,6 +179,7 @@ export const StatsSection: React.FC<Props> = ({ metrics, t, showSection, section
         onConfirm={handleReset}
         onCancel={() => setConfirmReset(false)}
       />
-    </Box>
+    </SearchSection>
   );
-};
+});
+StatsSection.displayName = 'StatsSection';

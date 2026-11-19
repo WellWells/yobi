@@ -1,10 +1,14 @@
 import React from 'react';
 import { ActionIcon, Menu as MMenu, Tooltip } from '@mantine/core';
-import { Folder, FolderInput, FolderOutput, FolderPlus, Pencil, Trash } from 'lucide-react';
+import { Folder, FolderInput, FolderOpen, FolderOutput, FolderPlus, Pencil, RefreshCw, Trash } from 'lucide-react';
 import type { ConversationFolder } from '../../../../shared/conversationFolders';
 import type { OutputFile } from '../../../../shared/types';
 import { useResolvedCombo } from '../../store/shortcutStore';
+import { isMac } from '../../utils/keyLabels';
+import type { SidebarKnowledgeBase } from '../../utils/timeGroups';
+import type { KnowledgeMenuState } from './useSidebarKnowledge';
 import { ContextMenuPortal } from '../ContextMenuPortal';
+import { DangerMenuItem } from '../DangerMenuItem';
 import { ShortcutHint } from '../ShortcutHint';
 import { folderLabel, moveMenuModel } from './folderActions';
 
@@ -119,14 +123,46 @@ export const FolderContextMenu: React.FC<FolderContextMenuProps> = ({ menu, onCl
           {t('sidebar.folder.rename')}
         </MMenu.Item>
       )}
-      <MMenu.Item
+      <DangerMenuItem
         leftSection={<Trash size={13} />}
-        color="red"
         rightSection={<ShortcutHint combo={deleteCombo} />}
         onClick={() => { onClose(); onDelete(folder); }}
       >
         {t('sidebar.folder.delete')}
+      </DangerMenuItem>
+    </ContextMenuPortal>
+  );
+};
+
+interface KnowledgeContextMenuProps {
+  menu: KnowledgeMenuState | null;
+  onClose: () => void;
+  onRename: (base: SidebarKnowledgeBase) => void;
+  onSync: (base: SidebarKnowledgeBase) => void;
+  onOpenFolder: (base: SidebarKnowledgeBase) => void;
+  onRemove: (base: SidebarKnowledgeBase) => void;
+  t: Translate;
+}
+
+/**
+ * A knowledge base row's right-click menu and "⋯": rename, refresh, show its folder, remove. Removing
+ * does not ask: it only drops the index — the folder and its files stay, and adding it back is one pick.
+ */
+export const KnowledgeContextMenu: React.FC<KnowledgeContextMenuProps> = ({
+  menu, onClose, onRename, onSync, onOpenFolder, onRemove, t,
+}) => {
+  if (!menu) return null;
+  const { base } = menu;
+  const run = (action: (target: SidebarKnowledgeBase) => void) => () => { onClose(); action(base); };
+  return (
+    <ContextMenuPortal position={{ x: menu.x, y: menu.y }} onClose={onClose}>
+      <MMenu.Item leftSection={<Pencil size={13} />} onClick={run(onRename)}>{t('sidebar.knowledge.rename')}</MMenu.Item>
+      <MMenu.Item leftSection={<RefreshCw size={13} />} onClick={run(onSync)}>{t('settings.knowledge.sync')}</MMenu.Item>
+      <MMenu.Item leftSection={<FolderOpen size={13} />} onClick={run(onOpenFolder)}>
+        {t(isMac ? 'context.showInFolder.mac' : 'context.showInFolder')}
       </MMenu.Item>
+      <MMenu.Divider />
+      <DangerMenuItem leftSection={<Trash size={13} />} onClick={run(onRemove)}>{t('settings.knowledge.remove')}</DangerMenuItem>
     </ContextMenuPortal>
   );
 };

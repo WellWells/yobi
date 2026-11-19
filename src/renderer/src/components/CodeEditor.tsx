@@ -115,7 +115,8 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
       onKeyDown={handleKeyDown}
       style={{
         background: bg,
-        border: '1px solid var(--mantine-color-default-border)',
+        // The editor's boundary identifies a text field (WCAG 1.4.11), as Mantine inputs' does.
+        border: '1px solid var(--border-control)',
         borderRadius: 'var(--mantine-radius-sm)',
         overflow: 'auto',
         maxHeight,
@@ -132,7 +133,7 @@ export const CodeEditor: React.FC<CodeEditorProps> = ({
         spellCheck={false}
         style={{
           fontFamily: 'var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace)',
-          fontSize: 13,
+        fontSize: 'var(--font-size-base)',
           lineHeight: 1.6,
           minHeight,
           color: 'var(--text-primary, #e1e4e8)',

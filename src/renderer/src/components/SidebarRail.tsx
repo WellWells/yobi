@@ -12,6 +12,8 @@ export const RAIL_WIDTH = isMac ? 76 : 48;
 interface SidebarRailProps {
   /** The way back to the whole sidebar, with its shortcut in the name. */
   expandLabel: string;
+  /** The sidebar's landmark name (the rail is the same navigation, folded). */
+  navLabel: string;
   onExpand: () => void;
   /** The other view with a sidebar, reached from the rail's foot (above Settings). */
   otherView: 'chat' | 'flow';
@@ -27,13 +29,16 @@ interface SidebarRailProps {
  * window's title bar over the rail; on macOS the traffic lights fill it, so the way back opens the
  * column under it. The chat and flow sidebars fold to this same rail.
  */
-export const SidebarRail: React.FC<SidebarRailProps> = ({ expandLabel, onExpand, otherView, children, extra }) => {
+export const SidebarRail: React.FC<SidebarRailProps> = ({ expandLabel, navLabel, onExpand, otherView, children, extra }) => {
   const expand = <ToolbarIconButton icon={PanelLeftOpen} label={expandLabel} onClick={onExpand} />;
   return (
     <Stack
+      component="nav"
+      aria-label={navLabel}
+      data-region="sidebar"
       gap={0}
       w={RAIL_WIDTH}
-      bg="var(--mantine-color-default)"
+      bg="var(--panel-bg)"
       style={{ borderRight: '1px solid var(--mantine-color-default-border)', overflow: 'hidden', position: 'relative', flexShrink: 0 }}
     >
       <PanelToolbar px={8} caption="left">

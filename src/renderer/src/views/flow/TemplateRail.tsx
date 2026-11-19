@@ -2,7 +2,7 @@ import React from 'react';
 import { Box, Code, Group, Stack, Text, Tooltip, UnstyledButton } from '@mantine/core';
 import { GroupHeader } from '../../components/GroupHeader';
 import { ScrollChevron } from '../../components/ScrollChevron';
-import { useDragScroll, wheelScrollsSideways } from '../../hooks/useDragScroll';
+import { useDragScroll, useWheelScrollsSideways } from '../../hooks/useDragScroll';
 import { useScrollEnds } from '../../hooks/useScrollEnds';
 import { isMac } from '../../utils/keyLabels';
 import { comboLabel } from '../../../../shared/shortcuts';
@@ -29,6 +29,7 @@ interface TemplateRailProps {
 export const TemplateRail: React.FC<TemplateRailProps> = ({ label, blurb, templates, t, onPick }) => {
   const { ref, ends, measure, page } = useScrollEnds<HTMLDivElement>();
   const dragScroll = useDragScroll();
+  useWheelScrollsSideways(ref);
   const overflows = ends.back || ends.forward;
 
   return (
@@ -48,46 +49,48 @@ export const TemplateRail: React.FC<TemplateRailProps> = ({ label, blurb, templa
         )}
       </Group>
 
-      <Box ref={ref} className={classes.rail} onScroll={measure} onWheel={wheelScrollsSideways} {...dragScroll}>
-        {templates.map((tpl) => (
+      <Box ref={ref} className={classes.rail} onScroll={measure} {...dragScroll}>
+        {templates.map((tpl) => {
+          const fact = tpl.command || tpl.hotkey
+            ? (tpl.command ? `/${tpl.command}` : comboLabel(tpl.hotkey ?? '', isMac))
+            : tpl.setupCount > 0
+              ? fillTemplate(t('flow.templates.setup'), { count: String(tpl.setupCount) })
+              : t('flow.templates.ready');
           // The description lives in the tooltip to keep tiles short; a tooltip is mouse-only,
-          // so it also goes into the accessible name below.
-          <Tooltip
-            key={tpl.key}
-            label={t(tpl.descKey)}
-            position="bottom"
-            maw={280}
-            multiline
-            events={{ hover: true, focus: true, touch: false }}
-          >
-            <UnstyledButton
-              className={classes.tile}
-              aria-label={`${t(tpl.titleKey)} ${t(tpl.descKey)}`}
-              onClick={() => { onPick(tpl); }}
+          // so it also goes into the accessible name, after the tile's own text (WCAG 2.5.3:
+          // the name starts with what is shown, so speech input can say it).
+          return (
+            <Tooltip
+              key={tpl.key}
+              label={t(tpl.descKey)}
+              position="bottom"
+              maw={280}
+              multiline
+              events={{ hover: true, focus: true, touch: false }}
             >
-              <TemplateIcon template={tpl} size={28} />
+              <UnstyledButton
+                className={classes.tile}
+                aria-label={`${t(tpl.titleKey)} ${fact} ${t(tpl.descKey)}`}
+                onClick={() => { onPick(tpl); }}
+              >
+                <TemplateIcon template={tpl} size={28} />
 
-              <Text fz="sm" fw={600} className={classes.title}>
-                {t(tpl.titleKey)}
-              </Text>
+                <Text fz="sm" fw={600} className={classes.title}>
+                  {t(tpl.titleKey)}
+                </Text>
 
-              {/* One fact per tile: how you invoke it, or how much it wants from you. */}
-              <Box className={classes.meta}>
-                {tpl.command || tpl.hotkey ? (
-                  <Code fz={11} fw={600}>
-                    {tpl.command ? `/${tpl.command}` : comboLabel(tpl.hotkey ?? '', isMac)}
-                  </Code>
-                ) : (
-                  <Text fz={11} c="var(--text-muted)">
-                    {tpl.setupCount > 0
-                      ? fillTemplate(t('flow.templates.setup'), { count: String(tpl.setupCount) })
-                      : t('flow.templates.ready')}
-                  </Text>
-                )}
-              </Box>
-            </UnstyledButton>
-          </Tooltip>
-        ))}
+                {/* One fact per tile: how you invoke it, or how much it wants from you. */}
+                <Box className={classes.meta}>
+                  {tpl.command || tpl.hotkey ? (
+                    <Code fz={11} fw={600}>{fact}</Code>
+                  ) : (
+                    <Text fz={11} c="var(--text-muted)">{fact}</Text>
+                  )}
+                </Box>
+              </UnstyledButton>
+            </Tooltip>
+          );
+        })}
       </Box>
     </Stack>
   );

@@ -37,9 +37,10 @@ export async function sweepBundledTemp(root: string): Promise<void> {
 /**
  * A complete new folder, the old folder archived, then the version record; failures restore the old
  * copy. An old copy identical to the incoming one or to an archived revision is not archived again,
- * and only the newest `BUNDLED_REVISIONS_MAX` revisions are kept.
+ * and only the newest `BUNDLED_REVISIONS_MAX` revisions are kept. `held` marks a revision the user
+ * chose to go back to, which a newer shipped copy must not replace on its own.
  */
-export async function replaceBundledSkill(root: string, name: string, scan: SkillFileScan, state: BundledState, version: string, hash: string): Promise<void> {
+export async function replaceBundledSkill(root: string, name: string, scan: SkillFileScan, state: BundledState, version: string, hash: string, held = false): Promise<void> {
   await fs.mkdir(root, { recursive: true });
   const dest = path.join(root, name);
   const incoming = await fs.mkdtemp(path.join(root, BUNDLED_TEMP_PREFIX));
@@ -70,7 +71,7 @@ export async function replaceBundledSkill(root: string, name: string, scan: Skil
     revisions = revisions.slice(0, BUNDLED_REVISIONS_MAX);
     await fs.rename(incoming, dest);
     activated = true;
-    const next: BundledRecord = { version, hash, revisions };
+    const next: BundledRecord = { version, hash, revisions, ...(held ? { held: true } : {}) };
     await writeBundledState(root, { ...state, [name]: next });
     state[name] = next;
   } catch (error) {
@@ -104,7 +105,7 @@ export function restoreBundledSkill(change: BundledSkillChange): Promise<SkillSa
       if (!revision) return { ok: false, issue: { code: 'notFound', detail: change.name } };
       const read = await readSkillFolder(revisionDir(root, bundle.name, revision.id), bundle.name);
       if (!read || hasFatalIssue(read.view.issues)) return { ok: false, issue: { code: 'badFile', detail: change.name } };
-      await replaceBundledSkill(root, bundle.name, read.scan, state, revision.version, revision.hash);
+      await replaceBundledSkill(root, bundle.name, read.scan, state, revision.version, revision.hash, true);
       return { ok: true, name: bundle.name };
     } catch (error) {
       sendLog(`⚠️ [Skills] bundled skill restore failed: ${error instanceof Error ? error.message : String(error)}`);

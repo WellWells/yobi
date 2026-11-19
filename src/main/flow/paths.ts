@@ -30,6 +30,7 @@ export const CHECKPOINT_KINDS = [
   'on_change',
   'line_read',
   'mail_fetch',
+  'price_search',
 ] as const;
 
 export type CheckpointKind = (typeof CHECKPOINT_KINDS)[number];

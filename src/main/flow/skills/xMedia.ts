@@ -339,7 +339,7 @@ async function pickMenu(post: XPost, picks: PostPicks, destination: XMediaDestin
 export async function execXMedia(config: Record<string, string>, signal?: AbortSignal): Promise<string> {
   const raw = (config.input ?? '').trim();
   const input = parseXMediaInput(raw);
-  if (!input) throw new FlowUserError('flow.error.xPostUrl', { url: raw }, `X media: no X, Threads, Instagram, Facebook, TikTok, PTT, Dcard, Reddit or Weibo post link in: ${raw}`);
+  if (!input) throw new FlowUserError('flow.error.xPostUrl', { url: raw }, `X media: no X, Threads, Instagram, Facebook, TikTok, PTT, Dcard, Reddit or Weibo post link, or App Store app link, in: ${raw}`);
   // The "MP3" built-ins: the post's videos as MP3s, one Downloader use as a video's MP3 is.
   if (config.audio === 'mp3') return countDownload(input.source, signal, () => postAudio(input, config, signal));
   // A question about the post is answered, not downloaded: no Downloader use. Nor is a menu of a
@@ -373,8 +373,8 @@ async function postMedia(
   const jobDir = await createYtdlJobDir();
   try {
     // A chat a file is sent to (Telegram, LINE PC) gets the best version under the person's limit:
-    // 100 MB without the admin right (or, on LINE PC, being the owner), else what the chat takes
-    // now (`chatLimitBytes`).
+    // the owner's cap without the admin right (or, on LINE PC, being the owner), and never more
+    // than the chat takes now (`chatLimitBytes`).
     const chatLimit = destination === 'telegram' || destination === 'lineSelf'
       ? chatLimitBytes(await ytdlAccessFor(config), destination)
       : undefined;
@@ -472,7 +472,7 @@ async function postMedia(
       buttonImages: '',
       // A forum article's title, which names the chat, and its header as a card for the desktop
       // chat to draw in place of the message's opening block (`h`).
-      title: post.card?.title ?? '',
+      title: post.title || post.card?.title || '',
       card: post.card && post.heading ? JSON.stringify({ ...post.card, h: post.heading }) : '',
     });
     return { json, menu: false };

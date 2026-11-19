@@ -78,6 +78,7 @@ export const FlowTemplateGallery: React.FC<FlowTemplateGalleryProps> = ({
         {onQueryChange && (
           <AppTextInput
             autoFocus
+            aria-label={t('flow.templates.search.placeholder')}
             value={query}
             onChange={(e) => onQueryChange(e.currentTarget.value)}
             placeholder={t('flow.templates.search.placeholder')}

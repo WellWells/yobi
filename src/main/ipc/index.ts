@@ -18,6 +18,7 @@ import { reportSendFailure } from '../taskReporting';
 import { titleFromPrompt } from '../output';
 import { whileConversationBusy } from '../conversationBusy';
 import { pinsProvider, resolveUrlPrompt } from '../urlParser';
+import { providerAttachmentCapacity } from '../botChat/attachmentPlan';
 import { showWorkerWindow } from '../windows';
 import { openOfferedSiteVerification } from '../siteVerification';
 import type { IpcContext } from './context';
@@ -29,6 +30,7 @@ import { registerConversationFolderHandlers } from './conversationFolders';
 import { registerConversationHistoryHandlers } from './conversationHistory';
 import { registerNotionHandlers } from './notion';
 import { registerYtdlHandlers } from './ytdl';
+import { registerManagedToolHandlers } from './managedTools';
 import { registerBatchExportHandlers } from './batchExport';
 import { registerComposerEditorHandlers } from './composerEditor';
 import { registerTelegramHandlers } from './telegram';
@@ -42,6 +44,7 @@ import { registerBackupHandlers } from './backup';
 import { registerFlowHandlers } from './flow';
 import { registerFeedPreviewHandlers } from './feedPreview';
 import { registerPttBoardHandlers } from './pttBoard';
+import { registerKnowledgeHandlers } from './knowledge';
 import { registerAgentHandlers } from './agent';
 import { registerShellHandlers } from './shell';
 import { registerAccountHandlers } from './account';
@@ -54,6 +57,7 @@ import { registerShareHandlers } from './share';
 import { registerGeminiModelHandlers } from './geminiModel';
 import { registerClaudeModelHandlers } from './claudeModel';
 import { registerChatgptModelHandlers } from './chatgptModel';
+import { registerPerplexityModelHandlers } from './perplexityModel';
 import { registerMemoryHandlers } from './memory';
 import { registerMemoryCurateHandlers } from './memoryCurate';
 import { registerSkillHandlers } from './skills';
@@ -67,6 +71,7 @@ import { registerMarkdownExportHandlers } from './markdownExport';
 import { registerConversationPinHandlers } from './conversationPin';
 import { registerConversationMenuHandlers } from './conversationMenu';
 import { registerRegionCaptureHandlers } from '../regionCapture';
+import { registerSystemTextScaleHandlers } from './systemTextScale';
 
 let _ipcInitialized = false;
 
@@ -115,6 +120,7 @@ export function setupIpcHandlers(deps: IpcContext): void {
         targetUrl: resolvedTargetUrl,
         onLog: sendLog,
         hotelReviews: true,
+        ...(providerAttachmentCapacity(resolvedTargetUrl) > (attachments?.length ?? 0) ? { pictures: true } : {}),
       });
     } catch (err) {
       // Refused before a task exists (a custom Maps report leaves no room for a review): no task
@@ -134,7 +140,10 @@ export function setupIpcHandlers(deps: IpcContext): void {
       targetUrl: finalTargetUrl,
       title: resolved.title,
       source: 'ui',
-      attachments,
+      // A picture link's picture rides after the user's own files and is deleted once sent.
+      ...(resolved.picture
+        ? { attachments: [...(attachments ?? []), resolved.picture], ephemeralAttachments: true }
+        : { attachments }),
       conversationPath: conversation?.conversationPath,
       placeholderTitle: titleFromPrompt(text),
       sendId: conversation?.sendId,
@@ -266,6 +275,7 @@ export function setupIpcHandlers(deps: IpcContext): void {
   registerConversationHistoryHandlers();
   registerNotionHandlers();
   registerYtdlHandlers();
+  registerManagedToolHandlers();
   registerBatchExportHandlers();
   registerComposerEditorHandlers();
   registerTelegramHandlers(ctx);
@@ -279,6 +289,7 @@ export function setupIpcHandlers(deps: IpcContext): void {
   registerFlowHandlers(ctx);
   registerFeedPreviewHandlers();
   registerPttBoardHandlers();
+  registerKnowledgeHandlers();
   registerAgentHandlers(ctx);
   registerShellHandlers(ctx);
   registerAccountHandlers();
@@ -291,6 +302,7 @@ export function setupIpcHandlers(deps: IpcContext): void {
   registerGeminiModelHandlers();
   registerClaudeModelHandlers();
   registerChatgptModelHandlers();
+  registerPerplexityModelHandlers();
   registerMemoryHandlers(() => announceBotPermissionsChanged(ctx, 'telegram'));
   registerMemoryCurateHandlers();
   registerSkillHandlers();
@@ -304,4 +316,5 @@ export function setupIpcHandlers(deps: IpcContext): void {
   registerConversationPinHandlers();
   registerConversationMenuHandlers();
   registerRegionCaptureHandlers();
+  registerSystemTextScaleHandlers();
 }

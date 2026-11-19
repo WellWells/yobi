@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useId, useMemo } from 'react';
-import ReactMarkdown, { type Components, type ExtraProps, type Options } from 'react-markdown';
+import ReactMarkdown, { defaultUrlTransform, type Components, type ExtraProps, type Options } from 'react-markdown';
 import { Box } from '@mantine/core';
 import { Image } from 'lucide-react';
 import remarkGfm from 'remark-gfm';
@@ -13,6 +13,7 @@ import { promoteDisplayMath, promoteInlineMath } from '../../../shared/inlineMat
 import type { MarkdownLabels } from '../../../shared/markdownLabels';
 import { citationHost } from '../../../shared/citations';
 import { isHttpUrl } from '../../../shared/webUrl';
+import { isKbCitationUrl } from '../../../shared/knowledgeBase';
 import { useKatexPlugins } from './katexRuntime';
 import { rehypeTightTableColumns } from './markdownTableColumns';
 import { rehypeCitationChips } from './citationChips';
@@ -60,6 +61,14 @@ function footnoteOptions(labels: MarkdownLabels | null, prefix: string): RemarkR
 }
 
 /**
+ * react-markdown's own filter (http, https, mailto…) plus a knowledge-base citation, which main
+ * opens only when it resolves to a document inside that base's folder.
+ */
+function keepKbCitations(url: string): string {
+  return isKbCitationUrl(url) ? url : defaultUrlTransform(url);
+}
+
+/**
  * The single entry point for rendering an answer. Every caller shares one plugin
  * chain and one source repair, so a document cannot render one way in the app and
  * another way in an export.
@@ -84,6 +93,7 @@ export const BaseMarkdown: React.FC<{ children: string; components: Components; 
   );
   return (
     <ReactMarkdown
+      urlTransform={keepKbCitations}
       remarkPlugins={remark}
       remarkRehypeOptions={remarkRehypeOptions}
       rehypePlugins={rehypePlugins}
@@ -153,7 +163,13 @@ export const ExternalLink: React.FC<React.ComponentPropsWithoutRef<'a'> & ExtraP
   if (href?.startsWith('#')) return <InPageLink {...props} href={href} onClick={onClick} />;
   const handleClick: React.MouseEventHandler<HTMLAnchorElement> = (event) => {
     onClick?.(event);
-    if (event.defaultPrevented || !href || !isHttpUrl(href)) return;
+    if (event.defaultPrevented || !href) return;
+    if (isKbCitationUrl(href)) {
+      event.preventDefault();
+      void window.electronAPI.kbOpenCitation(href);
+      return;
+    }
+    if (!isHttpUrl(href)) return;
     event.preventDefault();
     void window.electronAPI.openExternalUrl(href);
   };

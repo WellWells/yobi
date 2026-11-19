@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Box, Group, Stack, Button as MButton } from '@mantine/core';
+import { SearchSection } from '../FreezeWhileHidden';
 import { Download, FolderOpen, RotateCcw, ShieldExclamationPoint, Trash, Upload } from 'lucide-react';
 import { SectionCard, GroupHeader, SectionTitle, SettingRow, SettingDivider } from '../components';
 import { WebDialog } from '../../../components/WebDialog';
@@ -35,7 +36,7 @@ export const SystemSection: React.FC<Props> = ({
 
   return (
     <Box>
-      <Box display={showSection(TAG_SETS.config, 'system') ? 'block' : 'none'}>
+      <SearchSection shown={showSection(TAG_SETS.config, 'system')}>
         {/* The page title already says Backup & Restore. */}
         <SectionCard style={{ marginBottom: sectionGap }}>
           <Stack gap={12}>
@@ -75,13 +76,13 @@ export const SystemSection: React.FC<Props> = ({
             />
           </Stack>
         </SectionCard>
-      </Box>
+      </SearchSection>
 
       {isSearching && showSection(TAG_SETS.danger, 'system') && <GroupHeader label={t('settings.group.danger')} />}
 
-      <Box display={showSection(TAG_SETS.danger, 'system') ? 'block' : 'none'}>
+      <SearchSection shown={showSection(TAG_SETS.danger, 'system')}>
         <SectionCard danger style={{ marginBottom: 24 }}>
-          <SectionTitle icon={<ShieldExclamationPoint size={15} />} label={t('settings.danger.title')} c="var(--mantine-color-error)" />
+          <SectionTitle icon={<ShieldExclamationPoint size={15} />} label={t('settings.danger.title')} c="var(--error-text)" />
           <Stack gap={12}>
             <SettingRow
               label={t('settings.danger.clearHistory')}
@@ -116,7 +117,7 @@ export const SystemSection: React.FC<Props> = ({
             />
           </Stack>
         </SectionCard>
-      </Box>
+      </SearchSection>
 
       <BackupExportModal open={exportOpen} t={t} onClose={() => setExportOpen(false)} />
       <BackupImportModal

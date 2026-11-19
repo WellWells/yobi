@@ -1,17 +1,22 @@
 import { ipcMain } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { BYOK_PROVIDER_TYPES, IPC, PROVIDER_URLS, byokIdFromUrl, byokGroupIdFromUrl, detectByokProviderType } from '../../shared/types';
-import type { ByokConnectionProbe, ByokGroupSaveRequest, ByokInstanceSaveRequest, ByokModelsResult, ByokProviderType, ByokSettingsSnapshot, ByokTestResult } from '../../shared/types';
+import type { ByokConnectionProbe, ByokGroupSaveRequest, ByokInstanceSaveRequest, ByokKeyTestResult, ByokModelsResult, ByokProviderType, ByokSettingsSnapshot, ByokTestResult } from '../../shared/types';
 import { isHttpUrl } from '../../shared/webUrl';
 import { config, saveConfig } from '../config';
 import type { ByokInstance } from '../configTypes';
 import { maskToken, sendLog } from '../helpers';
-import { callByokChat, listByokModels } from '../providers/byokClient';
+import { listByokModels } from '../providers/byokClient';
+import { BYOK_PROBE_TIMEOUT_MS, probeByokKey, testByokKeys } from '../byokKeyTest';
+import type { ByokProbeOutcome } from '../byokKeyTest';
 import { getLangCache, localizeUserFacingError } from '../i18n';
 import type { IpcContext } from './context';
 
-const BYOK_PROBE_TIMEOUT_MS = 30_000;
-const BYOK_TEST_PROMPT = 'Reply with the single word: OK';
+function toTestResult(outcome: ByokProbeOutcome): ByokTestResult {
+  return outcome.ok
+    ? { ok: true, reply: outcome.reply }
+    : { ok: false, message: localizeUserFacingError(outcome.error, getLangCache()) };
+}
 
 function buildByokSnapshot(): ByokSettingsSnapshot {
   const existingKeyIds = new Set(config.byokInstances.map((instance) => instance.id));
@@ -148,23 +153,20 @@ export function registerByokHandlers(ctx: IpcContext): void {
     }
   });
 
-  ipcMain.handle(IPC.BYOK_TEST_INSTANCE, async (_event, req: ByokConnectionProbe): Promise<ByokTestResult> => {
-    try {
-      const { response } = await callByokChat(
-        {
-          baseUrl: (req?.baseUrl ?? '').trim(),
-          apiKey: resolveProbeKey(req),
-          model: (req?.model ?? '').trim(),
-          label: (req?.name ?? '').trim(),
-        },
-        BYOK_TEST_PROMPT,
-        BYOK_PROBE_TIMEOUT_MS,
-      );
-      return { ok: true, reply: response.replace(/\s+/g, ' ').trim().slice(0, 120) };
-    } catch (err: unknown) {
-      const raw = err instanceof Error ? err.message : String(err);
-      return { ok: false, message: localizeUserFacingError(raw, getLangCache()) };
-    }
+  ipcMain.handle(IPC.BYOK_TEST_INSTANCE, async (_event, req: ByokConnectionProbe): Promise<ByokTestResult> => toTestResult(
+    await probeByokKey({
+      baseUrl: req?.baseUrl ?? '',
+      apiKey: resolveProbeKey(req),
+      model: req?.model ?? '',
+      name: req?.name ?? '',
+    }),
+  ));
+
+  ipcMain.handle(IPC.BYOK_TEST_KEYS, async (_event, ids?: string[]): Promise<ByokKeyTestResult[]> => {
+    const results = await testByokKeys(Array.isArray(ids) ? ids : []);
+    const failed = results.filter((result) => !result.outcome.ok).length;
+    sendLog(`🔑 BYOK keys tested: ${results.length - failed} working, ${failed} failing`);
+    return results.map((result) => ({ id: result.id, ...toTestResult(result.outcome) }));
   });
 
   ipcMain.handle(IPC.BYOK_DELETE_INSTANCE, (_event, id: string) => {

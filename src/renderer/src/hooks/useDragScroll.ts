@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import type React from 'react';
 
 /** Below this, the gesture is still a click on whatever is under the pointer. */
@@ -56,16 +56,47 @@ export function createDragScroll(threshold: number = DRAG_SCROLL_THRESHOLD_PX) {
   };
 }
 
+/** Chromium's line height for `deltaMode === 1` wheels. */
+const WHEEL_LINE_PX = 40;
+
+/**
+ * How far a vertical wheel moves a sideways rail, or null when the rail should not claim it:
+ * nothing to scroll, or the gesture is already horizontal (a trackpad swipe scrolls natively).
+ *
+ * Deliberately independent of where the rail sits: a claimed wheel stays claimed at either end,
+ * so reaching the last tile does not suddenly scroll the page under the pointer instead. The
+ * page scrolls again once the pointer leaves the rail.
+ */
+export function sidewaysWheelDelta(
+  rail: { scrollWidth: number; clientWidth: number },
+  deltaX: number,
+  deltaY: number,
+  deltaMode: number,
+): number | null {
+  if (rail.scrollWidth <= rail.clientWidth) return null;
+  if (Math.abs(deltaY) <= Math.abs(deltaX)) return null;
+  return deltaY * (deltaMode === 1 ? WHEEL_LINE_PX : 1);
+}
+
 /**
  * A rail that hides its scrollbar has to move with a plain wheel too: a Windows mouse has no
- * horizontal axis. Left alone when the gesture is already horizontal (a trackpad swipe) or when
- * there is nothing to scroll.
+ * horizontal axis. Native and non-passive: React's `onWheel` is passive, so it could not stop
+ * the wheel from also reaching the page, which showed as the page taking over at the rail's end.
  */
-export function wheelScrollsSideways(e: React.WheelEvent<HTMLDivElement>): void {
-  const rail = e.currentTarget;
-  if (rail.scrollWidth <= rail.clientWidth) return;
-  if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
-  rail.scrollLeft += e.deltaY;
+export function useWheelScrollsSideways(ref: React.RefObject<HTMLElement | null>): void {
+  useEffect(() => {
+    const rail = ref.current;
+    if (!rail) return undefined;
+    const onWheel = (e: WheelEvent): void => {
+      if (e.ctrlKey) return; // Ctrl+wheel is zoom.
+      const delta = sidewaysWheelDelta(rail, e.deltaX, e.deltaY, e.deltaMode);
+      if (delta === null) return;
+      e.preventDefault();
+      rail.scrollLeft += delta;
+    };
+    rail.addEventListener('wheel', onWheel, { passive: false });
+    return () => rail.removeEventListener('wheel', onWheel);
+  }, [ref]);
 }
 
 export interface DragScrollHandlers {

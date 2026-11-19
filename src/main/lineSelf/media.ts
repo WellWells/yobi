@@ -33,6 +33,7 @@ const INLINE_TEXT_MAX = 4_096;
 const REJECT_KEYS: Readonly<Record<AttachmentRejectReason, string>> = {
   'too-large': 'bot.lineSelf.media.tooLarge',
   'audio-unsupported': 'bot.lineSelf.media.audio',
+  'video-unsupported': 'bot.lineSelf.media.video',
   'format-unsupported': 'bot.lineSelf.media.format',
   'provider-cannot-upload': 'bot.lineSelf.media.providerCannotUpload',
   // Nothing is inlined against a budget here; a text file too long is read in part.
@@ -59,28 +60,34 @@ export interface LineSelfMediaTarget {
   userId: string;
   /** The run's model. */
   targetUrl: string;
+  /** The request asks for a file to be made (`asksForAFile`): a video or a voice message is fetched for the tools. */
+  forTools?: boolean;
 }
 
-/** The plan's view of a row: what the chat says it is. A video is refused outright (a row has no extension to tell). */
+/** The plan's view of a row: what the chat says it is (a video or voice row has no extension to tell). */
 function candidateOf(row: LineSelfMediaRow): AttachmentCandidate {
   const size = typeof row.sizeBytes === 'number' ? { sizeBytes: row.sizeBytes } : {};
   if (row.kind === 'image') return { kind: 'photo', mimeType: 'image/jpeg', ...size };
   if (row.kind === 'audio') return { kind: 'audio', ...size };
+  if (row.kind === 'video') return { kind: 'video', ...size };
   return { kind: 'document', ...(row.fileName ? { fileName: row.fileName } : {}), ...size };
 }
 
-function planOf(row: LineSelfMediaRow, targetUrl: string): AttachmentPlan {
-  if (row.kind === 'video') return { route: 'reject', reason: 'format-unsupported' };
-  return resolveAttachmentPlan(candidateOf(row), targetUrl);
+function planOf(row: LineSelfMediaRow, targetUrl: string, forTools: boolean): AttachmentPlan {
+  return resolveAttachmentPlan(candidateOf(row), targetUrl, { forTools });
 }
 
-/** The scratch copy's name: generated, with the sender's extension only when it is a picture or document type. */
-function scratchName(row: LineSelfMediaRow, route: 'upload' | 'inline'): string {
+/**
+ * The scratch copy's name: generated, with the sender's extension only when it is a picture,
+ * document or media type. LINE sends videos as MP4 and voice messages as M4A (AAC).
+ */
+function scratchName(row: LineSelfMediaRow, route: 'upload' | 'inline' | 'tools'): string {
   if (route === 'inline') return safeLocalFileName(undefined, 'txt');
-  return safeLocalFileName(row.fileName, row.kind === 'image' ? 'jpg' : 'bin');
+  const fallback = row.kind === 'image' ? 'jpg' : row.kind === 'video' ? 'mp4' : row.kind === 'audio' ? 'm4a' : 'bin';
+  return safeLocalFileName(row.fileName, fallback);
 }
 
-async function fetchRow(row: LineSelfMediaRow, route: 'upload' | 'inline', target: LineSelfMediaTarget, deps: LineSelfMediaDeps, dir: string): Promise<string> {
+async function fetchRow(row: LineSelfMediaRow, route: 'upload' | 'inline' | 'tools', target: LineSelfMediaTarget, deps: LineSelfMediaDeps, dir: string): Promise<string> {
   const name = scratchName(row, route);
   if (row.localPath) {
     // The plan saw the size LINE recorded; the file on disk may have changed since.
@@ -125,6 +132,7 @@ export async function prepareLineSelfMedia(ref: LineSelfMediaRef, target: LineSe
   const dir = deps.dir ?? botMediaTempDir();
   const fetched: string[] = [];
   const dispose = (): Promise<void> => deleteTempAttachments(fetched, dir);
+  const forTools = target.forTools === true;
   const planTarget = uploadTargetFor(ref.rows.filter((row) => row.kind !== 'video').map(candidateOf), target.targetUrl, deps.fallbackUrl);
   const viaFallback = planTarget !== target.targetUrl;
   if (viaFallback) deps.onLog('[lineSelf] the bot model takes no uploads — this media goes to the fallback model');
@@ -133,15 +141,16 @@ export async function prepareLineSelfMedia(ref: LineSelfMediaRef, target: LineSe
   const rejections: AttachmentRejectReason[] = [];
   let failures = 0;
   let inlineText = '';
+  let uploads = 0;
 
   for (const row of ref.rows) {
-    const plan = planOf(row, planTarget);
+    const plan = planOf(row, planTarget, forTools);
     if (plan.route === 'reject') {
       rejections.push(plan.reason);
       continue;
     }
     // Fewer slots than an album has photos (a BYOK key): the rest are skipped.
-    if ((plan.route === 'upload' && attachments.length >= capacity) || (plan.route === 'inline' && inlineText)) {
+    if ((plan.route === 'upload' && uploads >= capacity) || (plan.route === 'inline' && inlineText)) {
       failures += 1;
       continue;
     }
@@ -154,7 +163,9 @@ export async function prepareLineSelfMedia(ref: LineSelfMediaRef, target: LineSe
       failures += 1;
       continue;
     }
-    if (plan.route === 'upload') {
+    if (plan.route === 'upload' || plan.route === 'tools') {
+      // A tools-only file rides with the run's attachments; the run never uploads it (`modelUploads`).
+      if (plan.route === 'upload') uploads += 1;
       attachments.push(file);
       continue;
     }

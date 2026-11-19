@@ -3,7 +3,7 @@ import { Box, Collapse, Group, Stack, Text, UnstyledButton } from '@mantine/core
 import { ChevronRight, Workflow } from 'lucide-react';
 import { SectionCard, SectionTitle } from '../../../components';
 import { EmptyState } from '../../../../../components/EmptyState';
-import { OUTCOME_COLORS } from '../colors';
+import { OUTCOME_COLORS, OUTCOME_TEXT } from '../colors';
 import { formatShare } from '../aggregate';
 import { flowSuccessRate, formatDuration } from './aggregate';
 import type { FlowRow, FlowStatsAggregate, StepRow } from './aggregate';
@@ -14,7 +14,8 @@ import classes from '../stats.module.css';
 interface Props {
   stats: FlowStatsAggregate;
   t: (key: string) => string;
-  onInspect: () => void;
+  /** Opens the log on the step's flow. */
+  onInspect: (row: StepRow) => void;
 }
 
 /** The flow row's chevron and the gap after it; expanded step names start where the flow name does. */
@@ -22,13 +23,13 @@ const CHEVRON_SIZE = 14;
 const CHEVRON_GAP = 7;
 
 /** One step inside an expanded flow. Steps that never ran in the range are not listed at all. */
-const StepLine: React.FC<{ row: StepRow; t: (key: string) => string; onInspect: () => void }> = ({
+const StepLine: React.FC<{ row: StepRow; t: (key: string) => string; onInspect: (row: StepRow) => void }> = ({
   row, t, onInspect,
 }) => {
   const { title, skill } = useStepLabelParts(row.label, row.type, t);
   return (
   <UnstyledButton
-    onClick={onInspect}
+    onClick={() => onInspect(row)}
     w="100%"
     px={6}
     py={7}
@@ -56,12 +57,12 @@ const StepLine: React.FC<{ row: StepRow; t: (key: string) => string; onInspect: 
           </Text>
         )}
         {row.soft > 0 && (
-          <Text fz="var(--font-size-sm)" fw={600} c={OUTCOME_COLORS.timeout}>
+          <Text fz="var(--font-size-sm)" fw={600} c={OUTCOME_TEXT.timeout}>
             {`${t('settings.stats.flow.soft')} ${row.soft.toLocaleString()}`}
           </Text>
         )}
         {row.hard > 0 && (
-          <Text fz="var(--font-size-sm)" fw={600} c={OUTCOME_COLORS.failure}>
+          <Text fz="var(--font-size-sm)" fw={600} c={OUTCOME_TEXT.failure}>
             {`${t('settings.stats.flow.hard')} ${row.hard.toLocaleString()}`}
           </Text>
         )}
@@ -83,7 +84,7 @@ export const FlowLine: React.FC<{
   opened: boolean;
   onToggle: () => void;
   t: (key: string) => string;
-  onInspect: () => void;
+  onInspect: (row: StepRow) => void;
 }> = ({ row, opened, onToggle, t, onInspect }) => (
   <Stack gap={0} py={8} className={classes.keyRow}>
     <UnstyledButton
@@ -112,7 +113,7 @@ export const FlowLine: React.FC<{
             {row.name}
           </Text>
           {row.degraded > 0 && (
-            <Text fz="var(--font-size-sm)" c={OUTCOME_COLORS.timeout} style={{ flexShrink: 0 }}>
+            <Text fz="var(--font-size-sm)" c={OUTCOME_TEXT.timeout} style={{ flexShrink: 0 }}>
               {`${t('settings.stats.flow.degraded')} ${row.degraded.toLocaleString()}`}
             </Text>
           )}
@@ -124,7 +125,7 @@ export const FlowLine: React.FC<{
           <Text
             fz="var(--font-size-sm)"
             fw={600}
-            c={row.failures > 0 ? OUTCOME_COLORS.timeout : 'dimmed'}
+            c={row.failures > 0 ? OUTCOME_TEXT.timeout : 'dimmed'}
           >
             {/* Step failures, not failed runs: a loop step can fail on several items of one run. */}
             {row.failures > 0
@@ -136,7 +137,7 @@ export const FlowLine: React.FC<{
             <Text
               fz="var(--font-size-md)"
               fw={600}
-              c={row.runs.success === row.runTotal ? OUTCOME_COLORS.success : 'var(--mantine-color-text)'}
+              c={row.runs.success === row.runTotal ? OUTCOME_TEXT.success : 'var(--mantine-color-text)'}
               style={{ minWidth: 44, textAlign: 'right' }}
             >
               {formatShare(row.runs.success, row.runTotal)}

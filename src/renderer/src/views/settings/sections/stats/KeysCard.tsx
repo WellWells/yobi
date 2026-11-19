@@ -7,7 +7,7 @@ import { fillTemplate } from '../../../../../../shared/fillTemplate';
 import type { ByokInstanceSnapshot } from '../../../../../../shared/types';
 import { byokModelLabel } from '../../../../../../shared/byokModelLabel';
 import { HelpDot } from './parts';
-import { OUTCOME_COLORS } from './colors';
+import { OUTCOME_TEXT } from './colors';
 import { sumCounts } from './aggregate';
 import type { StatsAggregate } from './aggregate';
 import classes from './stats.module.css';
@@ -97,7 +97,7 @@ export const KeysCard: React.FC<Props> = ({ stats, instances, t }) => {
                     icon={<Snowflake size={13} />}
                     label={t('settings.stats.keys.cooldowns')}
                     value={row.cooldowns}
-                    color={OUTCOME_COLORS.timeout}
+                    color={OUTCOME_TEXT.timeout}
                   />
                 )}
                 {row.failures > 0 && (
@@ -105,7 +105,7 @@ export const KeysCard: React.FC<Props> = ({ stats, instances, t }) => {
                     icon={<TriangleExclamationPoint size={13} />}
                     label={t('settings.stats.keys.failures')}
                     value={row.failures}
-                    color={OUTCOME_COLORS.failure}
+                    color={OUTCOME_TEXT.failure}
                   />
                 )}
                 <Text fz="var(--font-size-sm)" c="dimmed" style={{ fontVariantNumeric: 'tabular-nums' }}>
@@ -115,7 +115,7 @@ export const KeysCard: React.FC<Props> = ({ stats, instances, t }) => {
                   <Text
                     fz="var(--font-size-md)"
                     fw={600}
-                    c="var(--mantine-color-accent)"
+                    c="var(--mantine-color-accent-text)"
                     style={{ fontVariantNumeric: 'tabular-nums' }}
                   >
                     {row.requests.toLocaleString()}

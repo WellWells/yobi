@@ -18,11 +18,16 @@ import { NOTION_SYNC_DIR_NAME } from './notion/notionSyncStore';
 import { deleteUserMemoryFiles } from './memory/memoryStore';
 import { SITE_PARTITIONS } from './siteAccounts';
 import { READER_PARTITIONS } from './sitePage';
+import { YOUTUBE_CLEARANCE_PARTITION } from './youtubeClearance';
 import { revokeAllBotPairings } from './botDirectory';
 import { reloadYtdlState, ytdlJobsRoot, ytdlToolsRoot } from './youtubeDownload';
+import { reloadManagedTools, toolRoot } from './managedTools';
+import { MANAGED_TOOL_ROWS } from '../shared/managedTools';
 import { downloadsLedgerPath } from './downloadsCache';
 import { RAIL_CACHE_DIR_NAME } from './rail/railCache';
 import { PTT_BOARDS_FILE } from './ptt/pttBoards';
+import { LAW_DIR_NAME } from './twLaw/lawPaths';
+import { KB_DIR_NAME } from './knowledge/kbPaths';
 import { clearWebHostPolicy } from './net/hostPolicyStore';
 import { telegramUploadSessionPath } from './telegram/mtproto/sessionPath';
 import { wipeGroupChatArchive } from './telegram/groupChatArchive';
@@ -33,6 +38,8 @@ const FACTORY_RESET_PARTITIONS = [
   'persist:url-parser',
   'persist:browser-flow',
   'persist:youtube',
+  // Google's pass for this address (`youtubeClearance.ts`).
+  YOUTUBE_CLEARANCE_PARTITION,
   'persist:gmaps',
   // The sign-ins' partitions and the signed-out readers' (bilibili has one of each), each once.
   ...new Set([...SITE_PARTITIONS, ...READER_PARTITIONS]),
@@ -95,6 +102,9 @@ export async function applyPendingFactoryReset(): Promise<void> {
     await fs.rm(ytdlToolsRoot(), { recursive: true, force: true }).catch(() => {});
     await fs.rm(ytdlJobsRoot(), { recursive: true, force: true }).catch(() => {});
     reloadYtdlState();
+    // The same for every other program Yobi downloaded (OfficeCLI); copies installed some other way stay.
+    for (const { id } of MANAGED_TOOL_ROWS) await fs.rm(toolRoot(id), { recursive: true, force: true }).catch(() => {});
+    reloadManagedTools();
     // Which downloads the Downloads/Yobi cleanup owns; the files there stay.
     await fs.rm(downloadsLedgerPath(), { force: true }).catch(() => {});
     // Pasted posts' media and videos' covers the chat showed; the conversations are gone too.
@@ -103,6 +113,10 @@ export async function applyPendingFactoryReset(): Promise<void> {
     await fs.rm(path.join(app.getPath('userData'), RAIL_CACHE_DIR_NAME), { recursive: true, force: true }).catch(() => {});
     // The PTT board directory (~13k boards); the next board lookup crawls it again.
     await fs.rm(path.join(app.getPath('userData'), PTT_BOARDS_FILE), { force: true }).catch(() => {});
+    // The law index the Taiwan law connector built (~250 MB); switching it on again rebuilds it.
+    await fs.rm(path.join(app.getPath('userData'), LAW_DIR_NAME), { recursive: true, force: true }).catch(() => {});
+    // The knowledge bases' indexes; the bases themselves left with the config, the folders stay.
+    await fs.rm(path.join(app.getPath('userData'), KB_DIR_NAME), { recursive: true, force: true }).catch(() => {});
     // Which sites refused Yobi's page reads; relearned from the next refusal.
     await clearWebHostPolicy();
     // Pairing proof lives outside config (the directory's pairedAt, and conversation keys for

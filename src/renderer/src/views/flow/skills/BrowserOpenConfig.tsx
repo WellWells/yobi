@@ -30,6 +30,7 @@ export const BrowserOpenConfig: React.FC<SkillConfigProps> = ({ step, onChange, 
         hint={t('flow.skill.browser_open.show.hint')}
         control={
           <ToggleSwitch
+            aria-label={t('flow.skill.browser_open.show')}
             checked={step.config.show === 'true'}
             onChange={(e) => onChange({ ...step.config, show: e.currentTarget.checked ? 'true' : 'false' })}
           />

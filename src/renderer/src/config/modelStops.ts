@@ -2,9 +2,10 @@ import { PROVIDER_URLS } from '../../../shared/types';
 import type { GeminiModelState } from '../../../shared/geminiModels';
 import type { ClaudeModelState } from '../../../shared/claudeModels';
 import type { ChatgptModelState } from '../../../shared/chatgptModels';
+import type { PerplexityModelState } from '../../../shared/perplexityModels';
 import type { ModelIcon, ModelOption } from './models';
 
-export type SubmodelProvider = 'gemini' | 'claude' | 'chatgpt';
+export type SubmodelProvider = 'gemini' | 'claude' | 'chatgpt' | 'perplexity';
 
 export interface SubmodelEntry {
   id: string;
@@ -22,6 +23,8 @@ export interface SubmodelSources {
   geminiModels: GeminiModelState | null;
   claudeModels: ClaudeModelState | null;
   chatgptModels: ChatgptModelState | null;
+  /** Only ever filled for a signed-in account: a visitor has no model to choose. */
+  perplexityModels: PerplexityModelState | null;
   /** Signed out of a provider that needs an account: whatever list is cached is not this user's. */
   needsLogin: (url: string) => boolean;
 }
@@ -52,6 +55,12 @@ export function providerSubmodels(url: string, src: SubmodelSources): ProviderSu
     const models = src.geminiModels?.catalog?.models ?? [];
     if (models.length === 0) return null;
     return { provider: 'gemini', models, currentId: src.geminiModels?.choice.modelId ?? '' };
+  }
+  if (url === PROVIDER_URLS.perplexity) {
+    const models = src.perplexityModels?.catalog?.models ?? [];
+    // A single row is the page choosing by itself: nothing to pick.
+    if (models.length < 2) return null;
+    return { provider: 'perplexity', models, currentId: src.perplexityModels?.choice.modelId ?? '' };
   }
   if (src.needsLogin(url)) return null;
   if (url === PROVIDER_URLS.claude) {

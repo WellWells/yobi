@@ -1,6 +1,7 @@
 import React from 'react';
 import { Textarea, type TextareaProps } from '@mantine/core';
 import { buildInputStyles, mergeInputStyles, type AppInputResize, type AppInputTone } from './inputStyles';
+import { useFieldName } from './fieldLabel';
 
 type AppTextareaTone = AppInputTone | 'prompt';
 
@@ -35,6 +36,7 @@ export const AppTextarea = React.forwardRef<HTMLTextAreaElement, AppTextareaProp
   styles,
   ...props
 }, ref) => {
+  const named = useFieldName(props);
   if (tone === 'prompt') {
     return (
       <Textarea
@@ -44,6 +46,7 @@ export const AppTextarea = React.forwardRef<HTMLTextAreaElement, AppTextareaProp
         minRows={3}
         maxRows={3}
         styles={mergeInputStyles(PROMPT_TEXTAREA_STYLES, styles)}
+        {...named}
         {...props}
       />
     );
@@ -57,6 +60,7 @@ export const AppTextarea = React.forwardRef<HTMLTextAreaElement, AppTextareaProp
         styles={mergeInputStyles(buildInputStyles({ tone, mono, resize }), styles)}
         // Mono = code (a script, JSON, a selector): no spelling squiggles, as in AppTextInput.
         spellCheck={mono ? false : undefined}
+        {...named}
         {...props}
       />
     );

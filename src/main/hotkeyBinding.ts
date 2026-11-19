@@ -12,6 +12,7 @@ import {
 } from './clipboard';
 import { getLangCache, localizeUserFacingError, t } from './i18n';
 import { pinsProvider, resolveUrlPrompt } from './urlParser';
+import { providerAttachmentCapacity } from './botChat/attachmentPlan';
 import { runQuickExport } from './quickExport';
 import { runRegionCapture } from './regionCapture';
 import type { QueueManager } from './queueManager';
@@ -74,6 +75,7 @@ export function bindHotkey(deps: HotkeyDeps): boolean {
         targetUrl: config.targetUrl,
         onLog: sendLog,
         hotelReviews: true,
+        ...(providerAttachmentCapacity(config.targetUrl) > 0 ? { pictures: true } : {}),
       });
     } catch (err) {
       // The "queued" banner already went out: the press ends with its failure, not in silence.
@@ -94,6 +96,8 @@ export function bindHotkey(deps: HotkeyDeps): boolean {
       title: resolved.title,
       source: 'hotkey',
       clipboardFingerprint: clipboardAtPress,
+      // A picture link's picture, deleted once sent.
+      ...(resolved.picture ? { attachments: [resolved.picture], ephemeralAttachments: true } : {}),
       ...(resolved.map ? { mapPlace: resolved.map } : {}),
       ...(pinsProvider(resolved) ? { providerPinned: true as const } : {}),
     });

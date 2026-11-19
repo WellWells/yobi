@@ -47,3 +47,14 @@ export function composerFrameStyle({ temporary, shell, focused }: {
     cursor: 'text',
   };
 }
+
+/**
+ * Whether a click that bubbled up to the composer frame should put the caret in the prompt. A mouse
+ * click anywhere on the frame does (it is one big text field). A keyboard-activated click — Enter or
+ * Space on a pill or a menu row, which arrives with `detail === 0` — does not: focus stays on the
+ * pill, and Mantine hands it back to the pill when its menu closes (WCAG 2.4.3). Menu rows are
+ * portalled, but React still bubbles their clicks here.
+ */
+export function frameClickFocusesPrompt(event: { detail: number }): boolean {
+  return event.detail > 0;
+}

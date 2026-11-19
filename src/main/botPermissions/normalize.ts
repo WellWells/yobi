@@ -1,4 +1,5 @@
 import {
+  ANALYZE_GRANT_VERSION,
   BOT_PERMISSIONS_VERSION,
   DOWNLOAD_GRANT_VERSION,
   LEGACY_PAIRED_GRANTS,
@@ -43,7 +44,7 @@ function migrateLegacy(source: BotPermissionsSource): Record<string, BotGrant[]>
   const admins = new Set(source.legacyAdminIds ?? []);
   const permissions: Record<string, BotGrant[]> = {};
   for (const id of source.pairedIds) {
-    const grants: BotGrant[] = [...LEGACY_PAIRED_GRANTS];
+    const grants: BotGrant[] = [...LEGACY_PAIRED_GRANTS, 'analyze'];
     if (source.platform === 'telegram' && admins.has(id)) grants.push('admin');
     permissions[id] = sortBotGrants(grants);
   }
@@ -68,6 +69,17 @@ function addDownloadGrant(
   for (const id of pairedIds) {
     if (malformedIds.has(id)) continue;
     permissions[id] = sortBotGrants([...new Set<BotGrant>([...(permissions[id] ?? []), 'download'])]);
+  }
+}
+
+/**
+ * Before the analysis buttons were a grant of their own, the downloader brought them: an account
+ * that holds `download` when the map is upgraded keeps analyzing. A group's grants are not
+ * upgraded — analysis for everyone in a group is the owner's to turn on.
+ */
+function addAnalyzeGrant(permissions: Record<string, BotGrant[]>): void {
+  for (const [id, grants] of Object.entries(permissions)) {
+    if (grants.includes('download')) permissions[id] = sortBotGrants([...new Set<BotGrant>([...grants, 'analyze'])]);
   }
 }
 
@@ -103,6 +115,7 @@ export function normalizeBotPermissions(source: BotPermissionsSource): Normalize
     console.warn(`[config] ${source.platform}.permissions had an entry that is not a list; that account is left without grants`);
   }
   if (version < DOWNLOAD_GRANT_VERSION) addDownloadGrant(permissions, source.pairedIds, malformedIds);
+  if (version < ANALYZE_GRANT_VERSION) addAnalyzeGrant(permissions);
   return { permissions, permissionsVersion: BOT_PERMISSIONS_VERSION };
 }
 
@@ -115,23 +128,30 @@ export function telegramAdminMirror(
 }
 
 /**
- * A backup written before `download` was a grant: its other grants stand, but the downloader is
- * whatever each account has now — upgrading it on read would hand the downloader back to everyone
+ * A backup written before `download` (or `analyze`) was a grant: its other grants stand, but the
+ * downloader (the analysis) is whatever each account has now — upgrading it on read would hand the downloader back to everyone
  * paired in it. An entry of the wrong shape stays as it is and fails closed when normalized.
  */
 function carryCurrentDownload(
   raw: Record<string, unknown>,
   current: Readonly<Record<string, readonly BotGrant[]>>,
+  version: number,
 ): Record<string, unknown> {
   if (!isPlainObject(raw.permissions)) return { ...raw, permissionsVersion: BOT_PERMISSIONS_VERSION };
+  // The grants the backup predates: each is what the account has now, never what the backup implies.
+  const carried: BotGrant[] = [
+    ...(version < DOWNLOAD_GRANT_VERSION ? ['download' as const] : []),
+    ...(version < ANALYZE_GRANT_VERSION ? ['analyze' as const] : []),
+  ];
   const permissions: Record<string, unknown> = {};
   for (const [rawId, grants] of Object.entries(raw.permissions)) {
-    permissions[rawId.trim()] = Array.isArray(grants) ? grants.filter((grant) => grant !== 'download') : grants;
+    permissions[rawId.trim()] = Array.isArray(grants) ? grants.filter((grant) => !carried.includes(grant as BotGrant)) : grants;
   }
   for (const [id, grants] of Object.entries(current)) {
     const kept = permissions[id];
-    if (!grants.includes('download') || (kept !== undefined && !Array.isArray(kept))) continue;
-    permissions[id] = [...(Array.isArray(kept) ? kept : []), 'download'];
+    const now = carried.filter((grant) => grants.includes(grant));
+    if (now.length === 0 || (kept !== undefined && !Array.isArray(kept))) continue;
+    permissions[id] = [...(Array.isArray(kept) ? kept : []), ...now];
   }
   return { ...raw, permissions, permissionsVersion: BOT_PERMISSIONS_VERSION };
 }
@@ -150,7 +170,7 @@ export function carryCurrentGrantsIntoLegacyBackup(
   if (!isPlainObject(raw)) return { value: raw, carried: false };
   const version = permissionsVersionOf(raw.permissionsVersion);
   if (version >= BOT_PERMISSIONS_VERSION) return { value: raw, carried: false };
-  if (version > 0) return { value: carryCurrentDownload(raw, current), carried: false };
+  if (version > 0) return { value: carryCurrentDownload(raw, current, version), carried: false };
   const permissions: Record<string, BotGrant[]> = {};
   for (const [id, grants] of Object.entries(current)) permissions[id] = [...grants];
   return { value: { ...raw, permissions, permissionsVersion: BOT_PERMISSIONS_VERSION }, carried: true };

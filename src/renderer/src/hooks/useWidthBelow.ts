@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
+import { useSystemTextScale } from '../styles/systemTextScale';
 
 /**
  * Whether an element is narrower than `below`, by its own width (a container's layout, not the
@@ -8,6 +9,7 @@ import { useCallback, useRef, useState } from 'react';
  * closes and reopens does not flip its layout and back.
  */
 export function useWidthBelow<T extends HTMLElement = HTMLDivElement>(below: number): [(node: T | null) => void, boolean] {
+  const scale = useSystemTextScale();
   const [narrow, setNarrow] = useState(false);
   const observerRef = useRef<ResizeObserver | null>(null);
   const ref = useCallback((node: T | null) => {
@@ -16,10 +18,10 @@ export function useWidthBelow<T extends HTMLElement = HTMLDivElement>(below: num
     if (!node) return;
     const observer = new ResizeObserver(([entry]) => {
       const width = entry?.contentRect.width ?? 0;
-      if (width > 0) setNarrow(width < below);
+      if (width > 0) setNarrow(width < below * scale);
     });
     observer.observe(node);
     observerRef.current = observer;
-  }, [below]);
+  }, [below, scale]);
   return [ref, narrow];
 }

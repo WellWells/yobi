@@ -177,11 +177,12 @@ export function attachTelegramHandlers(
     await handle(ctx);
   };
   bot.on(
-    ['message:animation', 'message:video', 'message:video_note', 'message:sticker'],
+    ['message:animation', 'message:sticker'],
     orRequest((ctx) => media.handleUnsupported(ctx)),
   );
+  // A video is handled like any file: the plan refuses it unless the caption asks for a conversion.
   bot.on(
-    ['message:photo', 'message:document', 'message:voice', 'message:audio'],
+    ['message:photo', 'message:document', 'message:voice', 'message:audio', 'message:video', 'message:video_note'],
     orRequest((ctx) => media.handle(ctx)),
   );
   bot.on('message:file', orRequest((ctx) => media.handleUnsupported(ctx)));

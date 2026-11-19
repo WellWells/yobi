@@ -24,7 +24,7 @@ export const GEMINI_URL_VIDEO_LIMIT_BYTES = 15_000_000;
  */
 export const TELEGRAM_CAPTION_CHARS = 1_000;
 
-/** Where a post lives. A Threads, Instagram, Facebook, TikTok, PTT, Dcard, Reddit or Weibo post is read and forwarded exactly as an X post is. */
+/** Where a post lives. A Threads, Instagram, Facebook, TikTok, PTT, Dcard, Reddit or Weibo post, or an App Store app, is read and forwarded exactly as an X post is. */
 export type PostSource = PostSiteId;
 
 export interface XMediaInput {

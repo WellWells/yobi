@@ -21,11 +21,12 @@ import {
 import type { AgentAction, AgentToolScope, AskGate, FinalAnswer } from './agentTools';
 import {
   applyPlanUpdate, buildActionRepair, buildDeltaPrompt, buildFinishPrompt, buildHeldDelta, buildRepairPrompt,
-  buildTranscriptRepair, BYOK_REBUILD_BUDGET, deltaRuleNotices, RECAP_HOOK, hasRecapSection, renderScratch,
+  buildTranscriptRepair, deltaRuleNotices, RECAP_HOOK, hasRecapSection, renderScratch,
   scratchRebuildCost,
   buildTurnPrompt, emptyPlan, historyThatFits, planComplete, scratchFitFor, SCRATCH_IN_PROMPT,
   SCRATCH_IN_PROMPT_MCP_CAPPED, SCRATCH_TOTAL_BUDGET,
-  capGoalForProvider, CHANGE_RULES_EST, INSTRUCTION_EST, MAX_SELF_ASSESSED_STEPS, SYNTH_SCRATCH_BUDGET_LEAN,
+  capGoalForProvider, CHANGE_RULES_EST, INSTRUCTION_EST, leanPromptFor, planStepCap, reestimateNotice,
+  selfAssessedStepCap, siteFileRules,
   chatSections, fitChatToProvider, fitLinkedPageToProvider, type ChatContext,
 } from './agentPrompts';
 import { NON_LATIN_LETTER } from './agentDoing';
@@ -44,16 +45,20 @@ import { getMcpRegistry } from '../../mcp';
 import {
   buildMcpCatalog, buildMcpIndex, buildMcpSummary, describeMcpServer, describeMcpTool, findMcpServer, hasMcpTools, subIndex,
   mcpCatalogBudgetChars, MCP_SCRATCH_RESERVE_SLOTS, mcpScratchReserveChars,
-  validateMcpAction,
+  connectorNamedAsTool, validateMcpAction,
 } from './mcpTools';
 import type { McpAction } from './mcpTools';
 import { connectServersForRun } from './mcpConnectOnUse';
 import { NO_WRITES, writesAllFailed } from './writeOutcome';
+import { siteMadeFileError, unseenFileError, unseenFileInAnswer } from './siteMadeFile';
+import { OFFICE_TOOL_NAME, officeViaConnector, readsOfficeSkill } from '../../office/officeCommand';
+import { BUILTIN_OFFICE_SERVER_ID } from '../../../shared/builtinConnectors';
 import type { AgentWriteOutcome } from './writeOutcome';
 import type { BuiltinDeps, BuiltinOutcome } from './agentBuiltins';
 import type { DrawImage } from './agentDrawImage';
 import type { ExportFile } from './agentExportFile';
 import { SKILLS_CATALOG_BUDGET, SKILLS_CATALOG_BUDGET_BYOK, offeredSkills, renderSkillCatalog, skillsLoadedBefore } from './agentSkillTool';
+import { PRICE_SEARCH_BRIEF, PRICE_SKILL } from './agentPrice';
 import { listAgentSkills } from '../../agentSkills/skillStore';
 import type { AgentSkillEntry } from '../../agentSkills/skillStore';
 import type { FlowRef } from '../flowEdit';
@@ -61,7 +66,7 @@ import type { RecipientDirectory } from '../../../shared/botRecipients';
 import { runCall } from './agentCall';
 import type { AgentConfirmRequest, CallContext, ShellConfirmRequest } from './agentCall';
 import type { TrustKey } from './shellTrust';
-import { createCitationPool, relinkCitations, withSourcesSection } from './agentCitations';
+import { createCitationPool, relinkCitations } from './agentCitations';
 import type { CitationSource } from '../../../shared/citations';
 import {
   CONNECTOR_CHANGE_NO_LONGER_ALLOWED, FLOW_SAVE_NO_LONGER_ALLOWED, SHELL_NO_LONGER_ALLOWED, connectorApprovalConfig,
@@ -72,8 +77,11 @@ import type { FlowHold, FlowSaveRequest } from './agentFlowShared';
 import { commitHeldFlow, isPendingFlow } from './agentFlowHold';
 import type { ShellApprovalText } from './shellApproval';
 import type { McpConfirmRequest } from './mcpAction';
-import { batchResource, llmConcurrency, runScheduled, validateBatchAction } from './agentBatch';
-import type { BatchAction, BatchCall } from './agentBatch';
+import {
+  batchResource, delegateBatchLimit, helperShareMs, isDelegateOnly, llmConcurrency, MAX_BATCH_CALLS, runScheduled, validateBatchAction,
+} from './agentBatch';
+import type { BatchAction, BatchCall, SkippedCall } from './agentBatch';
+import { budgetsAboveDefault, byokBudgets, isContextOverflowError, steppedDownBudgets, windowStepDownReason } from './agentBudgets';
 import { createLedger } from './evidenceLedger';
 import type { ActionRecord, EvidenceSnapshot } from './evidenceLedger';
 import type { GoalIntent } from './actionGate';
@@ -86,6 +94,7 @@ export {
 } from './agentPrompts';
 export type { AgentPlan, PromptFit, ScratchEntry, TurnPromptOptions } from './agentPrompts';
 export { AgentRunError, AgentScopeError, FULL_TOOL_SCOPE } from './agentTools';
+export { AGENT_BYOK_TOKEN_BUDGET } from './agentBudgets';
 export type { AgentWriteOutcome } from './writeOutcome';
 export type { AgentToolScope } from './agentTools';
 export type { McpConfirmRequest } from './mcpAction';
@@ -115,7 +124,18 @@ interface CallResult {
   unsourced?: boolean;
 }
 
+/**
+ * The step limit before the model says how many it needs. BYOK starts at twice the browser's: an
+ * API key has no prompt cap and pays in tokens, which have their own budget.
+ */
 const DEFAULT_MAX_TURNS = 8;
+const DEFAULT_MAX_TURNS_BYOK = 16;
+/** BYOK's one re-estimate opens when this many turns, or fewer, are left. */
+const REESTIMATE_WITHIN = 2;
+
+function defaultMaxTurns(lean: boolean): number {
+  return lean ? DEFAULT_MAX_TURNS_BYOK : DEFAULT_MAX_TURNS;
+}
 
 export interface ResearchAnswerContext {
   batched: boolean;
@@ -162,7 +182,6 @@ const DEFAULT_TOTAL_BUDGET_MS = 30 * 60_000;
 const MIN_TURN_BUDGET_MS = 30_000;
 /** Total think-time credited back across a whole run, however many confirmations it shows. */
 const MAX_CONFIRM_REFUND_MS = 10 * 60_000;
-const BYOK_OBSERVATION_LIMIT = 16_000;
 const BROWSER_OBSERVATION_LIMIT = 3_500;
 const BROWSER_DELTA_OBSERVATION_LIMIT = 24_000;
 
@@ -180,11 +199,6 @@ export function catalogFitsInFull(providerUrl: string, scope: AgentToolScope, ex
   const room = promptCapFor(providerUrl) - INSTRUCTION_EST - MIN_EVIDENCE_ROOM;
   return buildToolCatalog(scope).length + extraChars <= room;
 }
-// BYOK re-sends its whole conversation every turn (the endpoint keeps no thread; a cache hit cuts
-// the price, not a free key's quota), so tokens, not steps, are what stops a long BYOK run; sized
-// so a self-assessed 40-step run is not cut off early.
-export const AGENT_BYOK_TOKEN_BUDGET = 400_000;
-const AGENT_BYOK_TOKEN_CEILING = 600_000;
 const SYNTH_MIN_TIMEOUT_MS = 45_000;
 const STALL_THRESHOLD = 2;
 const MAX_STALE_READS = 2;
@@ -218,19 +232,56 @@ const OTHER_SERVERS_HEADING = `Also connected (not named; open one with "${AGENT
  * model paging through catalogs.
  */
 const MAX_HELP_CALLS_PER_RUN = 3;
+/** Turns in a row without a step that worked, after which the run answers from what it has. */
+const MAX_IDLE_TURNS = 3;
 
+/** "Not done" finishes held back per run; the second only after a step taken since the first. */
+const MAX_HOLDS_PER_RUN = 2;
+
+/** `<server>:<tool>` of a connector call's trace label ("mcp:officecli") and config, else undefined. */
+export function connectorToolCalled(label: string, config: Record<string, string>): string | undefined {
+  if (!label.startsWith('mcp:') || !config.server) return undefined;
+  return `${config.server}:${label.slice('mcp:'.length)}`;
+}
+
+/** officecli `load_skill` pages a run reads without spending steps (the largest skill is 6 pages). */
+const MAX_SKILL_READS_PER_RUN = 8;
+
+/**
+ * A helper's steps and time. On a browser provider they are pinned (8 steps, 8 minutes). On BYOK
+ * it starts at 8 and may say it needs up to 20,
+ * with 12 minutes — always within what the run that delegated has left.
+ */
 const SUBTASK_MAX_TURNS = 8;
+const SUBTASK_MAX_TURNS_BYOK = 20;
 const SUBTASK_BUDGET_MS = 8 * 60_000;
+const SUBTASK_BUDGET_MS_BYOK = 12 * 60_000;
+
+/** What a `delegate` row keeps of its helper while it runs (`forwardHelperEvent`). */
+interface HelperView {
+  /** The tools it called, for the findings' "read with" line. */
+  used: string[];
+  /** The helper's own step number → where that step sits in this `delegate` step's list. */
+  at: Map<number, number>;
+  /** The helper's research steps still running: only the newest reaches the row. */
+  researching: Set<number>;
+}
+
 const PLAN_TURN_BASE = 2;
 const PLAN_TURNS_PER_STEP = 2;
 
 /**
- * The floor a plan alone earns. A plan is a checklist capped at 4 items, not a budget, so it only
- * justifies a modest ceiling; a run that needs more says so through `steps_needed`.
+ * The floor a plan alone earns. A plan is a checklist capped at its tier's item count, not a
+ * budget, so it only justifies a modest ceiling; a run that needs more says so through `steps_needed`.
  */
-export function planTurnCeiling(steps: number): number {
-  if (steps <= 0) return DEFAULT_MAX_TURNS;
-  return Math.min(MAX_SELF_ASSESSED_STEPS, Math.max(DEFAULT_MAX_TURNS, PLAN_TURN_BASE + PLAN_TURNS_PER_STEP * steps));
+export function planTurnCeiling(steps: number, byok?: boolean): number {
+  return planCeilingWithin(steps, defaultMaxTurns(byok === true), selfAssessedStepCap(byok === true));
+}
+
+/** `planTurnCeiling` between a run's own floor and cap (a BYOK helper's are 8 and 20). */
+function planCeilingWithin(steps: number, floor: number, cap: number): number {
+  if (steps <= 0) return floor;
+  return Math.min(cap, Math.max(floor, PLAN_TURN_BASE + PLAN_TURNS_PER_STEP * steps));
 }
 
 /**
@@ -246,6 +297,11 @@ export type AgentProgress =
   | { stage: 'connecting'; server: string };
 
 export interface AgentRunOptions {
+  /**
+   * The user limited this run to their knowledge bases (`knowledgeOnlyRules`, pre-rendered with the
+   * document list): replaces the approach rules. The caller also narrows the scope to `kb_search`.
+   */
+  knowledgeOnly?: readonly string[];
   onProgress?: (progress: AgentProgress) => void;
   onTrace?: (event: AgentTraceEvent) => void;
   /**
@@ -265,7 +321,13 @@ export interface AgentRunOptions {
   temporaryChat?: boolean;
   attachments?: string[];
   signal?: AbortSignal;
+  /** A pinned step limit: `steps_needed` never raises it. */
   maxTurns?: number;
+  /**
+   * A step limit that is not pinned: the run starts at `initial` and `steps_needed` may raise it to
+   * `cap`. Absent means the tier's own (`defaultMaxTurns`, `selfAssessedStepCap`); a BYOK helper's.
+   */
+  stepBudget?: { initial: number; cap: number };
   totalBudgetMs?: number;
   onConfirm?: (request: AgentConfirmRequest) => Promise<boolean>;
   /** The desktop user's always-allowed programs and actions (`CallContext.trustedShell`). */
@@ -354,6 +416,8 @@ export interface AgentRunOptions {
    * run as this question, and the call stored on it runs when the user approves it.
    */
   connectorApproval?: (request: McpConfirmRequest) => ShellApprovalText;
+  /** Only these connectors' changes are put as questions; any other change is refused (`mcpAction`). */
+  connectorApprovalServers?: readonly string[];
   /**
    * The user's saved memory and the rule for changing it, pre-rendered by the caller that decided
    * this run may use it. A helper never gets it: it cannot answer the user, so it has nothing to
@@ -377,6 +441,8 @@ export interface AgentRunOptions {
   chatRecap?: boolean;
   /** The page the GOAL's link points at, read before the run. */
   linkedPage?: AgentLinkedPage;
+  /** Working copies of the Office files attached to the GOAL, by the names the tools read. */
+  attachedFiles?: readonly string[];
   /**
    * The user's answer preferences (tone, length, and for the user themself the nickname and custom
    * instructions), pre-rendered by the caller. Shares the memory block's slot and reserve; a helper
@@ -408,6 +474,8 @@ export interface AgentRunOptions {
    * to `draw_image`'s scope: nothing is drawn, the picture is the operator's own; a helper never gets it.
    */
   keepPictures?: (files: readonly string[]) => Promise<void>;
+  /** Keeps the files a built-in connector's call wrote (an edited spreadsheet) for the answer. */
+  keepDocuments?: (files: readonly string[]) => Promise<void>;
   /**
    * What `export_file` calls: renders an answer as a file and keeps it for the answer. Only used
    * when the scope offers `export_file` (`AgentToolScope.documents`); a helper never gets either.
@@ -417,6 +485,25 @@ export interface AgentRunOptions {
   skillEntries?: readonly AgentSkillEntry[];
   /** A folder for an offered skill that is not installed: the staged draft a skill's test run loads. */
   skillDirOf?: (name: string) => string | null;
+  /** A helper's skills: what the run that delegated to it offered, as offered. Only read with `readOnly`. */
+  helperSkills?: readonly AgentSkillEntry[];
+  /** The answer goes to a bot's chat on a phone: a skill is told, so it can use its compact form. */
+  phoneChat?: boolean;
+  /**
+   * Looks up a BYOK target's context window (tokens) as its provider reports it; undefined (or a
+   * failed lookup) keeps today's sizes. Asked once, at run setup, and only for a BYOK target.
+   */
+  getContextTokens?: (providerUrl: string) => Promise<number | undefined>;
+  /** The window the run that delegated already looked up: a helper inherits it, never asks again. */
+  contextTokens?: number;
+}
+
+/** The BYOK target's window, read once per run; a browser target never asks. */
+async function runContextTokens(lean: boolean, providerUrl: string, options: AgentRunOptions): Promise<number | undefined> {
+  if (!lean) return undefined;
+  if (options.contextTokens !== undefined) return options.contextTokens;
+  if (!options.getContextTokens) return undefined;
+  return options.getContextTokens(providerUrl).catch(() => undefined);
 }
 
 interface RunEvidence {
@@ -533,6 +620,8 @@ async function synthesizeFinal(
   deps: FlowExecutorDeps,
   timeoutMs: number,
   lean: boolean,
+  /** The observation characters a BYOK synthesis renders (`byokBudgets().synthScratch`). */
+  leanCeiling: number,
   scratchSlots: number,
   session: ProviderSession,
   history: string,
@@ -542,9 +631,10 @@ async function synthesizeFinal(
   userMemory: string,
   chat: ChatContext,
   answerLanguage: string | undefined,
+  helper: boolean,
   signal?: AbortSignal,
 ): Promise<FinalAnswer> {
-  const ceiling = lean ? SYNTH_SCRATCH_BUDGET_LEAN : SCRATCH_TOTAL_BUDGET;
+  const ceiling = lean ? leanCeiling : SCRATCH_TOTAL_BUDGET;
   const assemble = (over: { history?: string; scratch?: ScratchEntry[]; fit?: PromptFit } = {}): string =>
     buildFinishPrompt({
       goal,
@@ -559,6 +649,7 @@ async function synthesizeFinal(
       userMemory,
       ...chat,
       answerLanguage,
+      ...(helper ? { helper } : {}),
       ...(over.fit ? { scratchFit: over.fit } : {}),
     });
   // History first, then the observations against whatever the history decision left — the same
@@ -607,27 +698,44 @@ export async function runAgent(
   const trimmedGoal = goal.trim();
   if (!trimmedGoal) throw new Error('Empty goal');
 
+  const lean = leanPromptFor(providerUrl);
   const pinnedMaxTurns = options.maxTurns === undefined ? undefined : Math.max(1, options.maxTurns);
-  let maxTurns = pinnedMaxTurns ?? DEFAULT_MAX_TURNS;
+  // A BYOK helper's own floor and ceiling (`stepBudget`); otherwise the tier's.
+  const turnFloor = pinnedMaxTurns === undefined && options.stepBudget ? options.stepBudget.initial : defaultMaxTurns(lean);
+  const stepCap = pinnedMaxTurns === undefined && options.stepBudget ? options.stepBudget.cap : selfAssessedStepCap(lean);
+  let maxTurns = pinnedMaxTurns ?? turnFloor;
+  const planCap = planStepCap(lean);
+  // Offered to the run the user is watching, and on BYOK to its helpers too (reads only: a helper's
+  // scope has nothing else, and never `delegate`). A browser helper never batches: its one worker
+  // window runs every call one after another anyway.
   const readOnly = options.readOnly === true;
+  const batchGrammar = !readOnly || lean;
   const answerLanguage = readOnly ? undefined : options.answerLanguage;
   const askable = goalIsAskable(trimmedGoal, options);
   const baseScope = options.toolScope ?? FULL_TOOL_SCOPE;
   // Skills the user installed, for a run with `builtins` or one scoped to skills (a skill's test
-  // run). Never a helper's: it is handed a task, not the user's request, and the main run has
-  // already loaded whatever skill that needs.
-  const skillsOffered = readOnly || !(baseScope.builtins || baseScope.agentSkills)
-    ? []
-    : offeredSkills(options.skillEntries ?? await listAgentSkills().catch(() => []), trimmedGoal);
+  // run). A helper gets what the run that delegated offered, exactly as offered (its task is the
+  // model's wording, so it never decides which skill the user named); read-only like the rest of it:
+  // `use_skill` and the sandboxed JavaScript, never `shell`.
+  const skillsOffered = readOnly
+    ? [...(options.helperSkills ?? [])]
+    : !(baseScope.builtins || baseScope.agentSkills)
+      ? []
+      : offeredSkills(options.skillEntries ?? await listAgentSkills().catch(() => []), trimmedGoal);
   const skillCatalog = renderSkillCatalog(skillsOffered, isByokTargetUrl(providerUrl) ? SKILLS_CATALOG_BUDGET_BYOK : SKILLS_CATALOG_BUDGET);
   // `use_skill` only with a SKILLS section to pick from. A helper never delegates again.
   const { agentSkills: _skillsAsked, ...scopeRest } = baseScope;
   const toolScope: AgentToolScope = readOnly
-    ? readOnlyScope(baseScope)
+    ? { ...readOnlyScope(baseScope), ...(skillCatalog ? { agentSkills: true } : {}) }
     : { ...scopeRest, delegate: baseScope.builtins, ...(skillCatalog ? { agentSkills: true } : {}) };
-  const toolCatalog = buildToolCatalog(toolScope, !catalogFitsInFull(providerUrl, toolScope, skillCatalog.length));
+  // The tool an offered skill is the guide to gets a line of its own beside the skills: the model
+  // picks a tool it can see, and one named only inside a skill it has not loaded is not seen.
+  const skillSection = skillCatalog && skillsOffered.some((entry) => entry.name === PRICE_SKILL)
+    ? `${PRICE_SEARCH_BRIEF}\n${skillCatalog}`
+    : skillCatalog;
+  const toolCatalog = buildToolCatalog(toolScope, !catalogFitsInFull(providerUrl, toolScope, skillSection.length));
   // Part of the catalog, so every budget measured off `catalog` charges it (the MCP room first).
-  const catalog = skillCatalog ? `${toolCatalog}\n${skillCatalog}` : toolCatalog;
+  const catalog = skillSection ? `${toolCatalog}\n${skillSection}` : toolCatalog;
   // The web switch off removes these from the catalog; the prose and the worked examples follow it.
   const webTools = toolScope.skills.includes('research');
   // The answer preferences and the recap rule share the memory block's slot: all shape the final
@@ -640,7 +748,7 @@ export async function runAgent(
   // Capped once, here, so every budget computed below sees the length that will really be sent;
   // everything else competing for a capped prompt yields to the cap.
   const baseline = (over: { goal: string } & ChatContext): string => buildTurnPrompt({
-    catalog, scratch: [], mustFinish: false, lean: isByokTargetUrl(providerUrl), allowAsk: true,
+    catalog, scratch: [], mustFinish: false, lean, allowAsk: true,
     // Measured WITH the own-data rule although the MCP index is not built yet: the baseline may
     // never come out shorter than the prompt this run really sends, or the goal is handed room the
     // provider's cap does not have and the tail — the action instruction — comes off the end.
@@ -648,8 +756,9 @@ export async function runAgent(
     userMemory,
     answerLanguage,
     doingLanguage: options.doingLanguage,
-    // Same reason: a run the user watches may be shown the batch shape, so the baseline carries it.
-    batchGrammar: !readOnly,
+    ...(options.knowledgeOnly ? { knowledgeOnly: options.knowledgeOnly } : {}),
+    // Same reason: a run that may be shown the batch shape is measured with it.
+    batchGrammar,
     ...over,
   });
   // The group talk yields first, so a long recap never costs the request its own words.
@@ -659,14 +768,42 @@ export async function runAgent(
     ...(options.recentChat?.length ? { recentChat: options.recentChat } : {}),
     ...(options.chatRecap ? { chatRecap: true } : {}),
     ...(options.linkedPage ? { linkedPage: options.linkedPage } : {}),
+    ...(options.attachedFiles?.length ? { attachedFiles: options.attachedFiles } : {}),
   }, fitted), fitted);
   const promptGoal = capGoalForProvider(providerUrl, trimmedGoal, baseline({ goal: '', ...chat }));
   const fileRoots = await getAgentFileRoots();
   const workspaceDir = await agentWorkspaceDir();
-  const lean = isByokTargetUrl(providerUrl);
   const providerLabel = getProviderLabel(providerUrl);
-  const observationLimit = lean ? BYOK_OBSERVATION_LIMIT : BROWSER_OBSERVATION_LIMIT;
-  const deltaObservationLimit = lean ? BYOK_OBSERVATION_LIMIT : BROWSER_DELTA_OBSERVATION_LIMIT;
+  // Every BYOK size this run is held to, read once, from the window the provider reports (a helper
+  // inherits the delegating run's); unknown keeps today's sizes. Reassigned at most once, when the
+  // endpoint refuses a sized request (`stepDownWindow`).
+  let contextTokens = await runContextTokens(lean, providerUrl, options);
+  let byok = byokBudgets(contextTokens);
+  if (lean && !readOnly) {
+    sendLog(`📐 [Agent] BYOK context window ${contextTokens === undefined ? 'unknown' : `${contextTokens} tokens`} — transcript budget ${byok.scratchTotal} chars, observation ${byok.observationLimit}, token budget ${byok.tokenBudget}`);
+  }
+  let observationLimit = lean ? byok.observationLimit : BROWSER_OBSERVATION_LIMIT;
+  let deltaObservationLimit = lean ? byok.observationLimit : BROWSER_DELTA_OBSERVATION_LIMIT;
+  let steppedDown = false;
+  /**
+   * A sized BYOK run whose request the endpoint refused for its size (a context-length 400/413, or
+   * a 429 that outlived the transport retries) goes on at today's sizes: the window the provider
+   * reported is not always the one it enforces (a proxy, a tier, a tokenizer heavier than the one
+   * we sized for). Once per run; never on a browser provider, never on a run already at today's.
+   */
+  const stepDownWindow = (err: unknown, where: string): boolean => {
+    if (!lean || steppedDown || !budgetsAboveDefault(byok)) return false;
+    const reason = windowStepDownReason(err);
+    if (!reason) return false;
+    steppedDown = true;
+    byok = steppedDownBudgets(byok);
+    observationLimit = byok.observationLimit;
+    deltaObservationLimit = byok.observationLimit;
+    // A helper started after this sizes itself the same way: unknown, so today's sizes.
+    contextTokens = undefined;
+    sendLog(`📉 [Agent] ${where}: ${reason === 'overflow' ? 'the request did not fit the model\'s window' : 'still rate limited'} — going on at today's sizes (transcript budget ${byok.scratchTotal} chars, observation ${byok.observationLimit}) and asking again`);
+    return true;
+  };
 
   const mcpRegistry = getMcpRegistry();
   const scopedIds = options.mcpServerIds;
@@ -716,9 +853,11 @@ export async function runAgent(
   // What the user said is the one source a gate may treat as the user's own words; the answers to
   // earlier questions in this run count, the model's prose about them does not. Approving a shell
   // command is not one of them: "1. Run" says nothing about what else the user wants done.
-  const askAnswers = (options.resumeFrom ?? [])
-    .filter((entry) => isModelQuestion(entry) && entry.observation)
-    .map((entry) => entry.observation);
+  const asked = (options.resumeFrom ?? []).filter((entry) => isModelQuestion(entry) && entry.observation);
+  const askAnswers = asked.map((entry) => entry.observation);
+  // Whether the user agreed is read from which choice they picked, never from their words.
+  const lastAsked = asked.at(-1);
+  const askPickedFirst = lastAsked !== undefined && isShellApproved(lastAsked);
   const runWords = [trimmedGoal, ...askAnswers].join('\n');
   // A helper's goal is the model's own wording, so it never decides depth on the user's behalf.
   const deepAsked = !readOnly && asksForDeepResearch(runWords);
@@ -738,6 +877,12 @@ export async function runAgent(
     .some((server) => server.tools.some((tool) => resolveToolContract(server.serverId, tool).risk({}) !== 'read'));
   // The notes explain the change tools; a helper is shown none, so they would only name tools it lacks.
   const notes = mcpCandidate && !readOnly ? connectorNotes(shownIndex.handles).join('\n') : '';
+  // A helper is shown the office tool's reads only, so it never gets the tool named as a way to write.
+  const officeHandle = mcpCandidate && !readOnly
+    ? mcpIndex.handles.find((server) => server.serverId === BUILTIN_OFFICE_SERVER_ID && server.tools.some((tool) => tool.name === OFFICE_TOOL_NAME))?.handle
+    : undefined;
+  const siteRules = siteFileRules(providerUrl, officeHandle);
+  const officeServer = mcpIndex.handles.find((server) => server.serverId === BUILTIN_OFFICE_SERVER_ID)?.handle;
   // Charged like the goal: these blocks sit in every turn prompt and none can be trimmed later. The
   // memory is its real length, not an estimate — it is known before the first turn and never grows.
   const evidenceReserve = (earlierActions ? earlierActions.length + EVIDENCE_HEADING_CHARS : 0)
@@ -745,6 +890,7 @@ export async function runAgent(
     + (userMemory ? userMemory.length + 2 : 0)
     // The recap reminder repeated where the finish shape is described, charged like its section.
     + (recapHook ? RECAP_HOOK.length + 4 : 0)
+    + (siteRules.length > 0 ? measureFor(providerUrl)(siteRules.join('\n')) + 2 : 0)
     // In the provider's own unit: a recap of Chinese chat is three times its length in bytes.
     + measureFor(providerUrl)(chatSections(chat).join('\n'));
 
@@ -833,16 +979,18 @@ export async function runAgent(
   // BYOK has no window of steps, only a budget (`renderScratch` condenses what does not fit): a
   // count let three short weather readings fall out of view while the budget sat nearly empty.
   const scratchSlots = lean ? Number.POSITIVE_INFINITY : mcpEnabled ? SCRATCH_IN_PROMPT_MCP_CAPPED : SCRATCH_IN_PROMPT;
-  // Offered to the run the user is watching, never to a helper: fan-out below fan-out multiplies
-  // every rate limit, and a helper exists to do one reading job.
-  const batchGrammar = !readOnly;
+  // As wide as this run's keys run helpers at once, never under the usual batch: one key keeps three.
+  const delegateBatch = lean && toolScope.delegate === true ? delegateBatchLimit(providerUrl) : MAX_BATCH_CALLS;
   const parseDecision = (allowAsk: AskGate, json: unknown): Validation<AgentDecision> => {
     const obj = json && typeof json === 'object' && !Array.isArray(json) ? json as Record<string, unknown> : null;
     if (batchGrammar && obj?.action === 'call_tools') {
-      return validateBatchAction(obj, { scope: toolScope, mcpIndex: mcpEnabled ? mcpIndex : null });
+      return validateBatchAction(obj, { scope: toolScope, mcpIndex: mcpEnabled ? mcpIndex : null, delegateBatch });
     }
     if (mcpEnabled && obj?.action === 'call_mcp') return validateMcpAction(obj, mcpIndex);
-    return validateAgentAction(json, allowAsk, toolScope, [...deliverables.keys()], batchGrammar);
+    const checked = validateAgentAction(json, allowAsk, toolScope, [...deliverables.keys()], batchGrammar);
+    if (checked.ok || !mcpEnabled || obj?.action !== 'call_tool') return checked;
+    const hint = connectorNamedAsTool(mcpIndex, obj.tool);
+    return hint ? { ok: false, error: hint } : checked;
   };
   // A first action without "intent" leaves the run to reads and edits for good, so plain goals
   // end held back as things nobody asked for. It can
@@ -854,8 +1002,21 @@ export async function runAgent(
   const missesIntent = (decision: AgentDecision): boolean => changeTools && changesCanRun && intentOpen && !intentReasked
     && intent === null && decision.intent === undefined && plan.steps.length === 0 && scratch.length === 0
     && (decision.action === 'call_mcp' || decision.action === 'call_tools');
+  // A chat site's finish that names a file nothing in this run holds is asked once to make it
+  // with a tool; once, and with the finish kept as the fallback, so a true answer still lands.
+  let unseenFileAsked = isByokTargetUrl(providerUrl);
+  const unseenFinishFile = (decision: AgentDecision): string | undefined => {
+    if (unseenFileAsked || decision.action !== 'finish') return undefined;
+    const evidence = [goal, history, ...scratch.flatMap((entry) => [JSON.stringify(entry.config), entry.observation])];
+    return unseenFileInAnswer(`${decision.title ?? ''}\n${decision.content}`, evidence);
+  };
   const validateDecision = (allowAsk: AskGate) => (json: unknown): Validation<AgentDecision> => {
     const parsed = parseDecision(allowAsk, json);
+    const unseen = parsed.ok && parsed.value ? unseenFinishFile(parsed.value) : undefined;
+    if (unseen !== undefined && parsed.ok) {
+      unseenFileAsked = true;
+      return { ok: false, error: unseenFileError(unseen), otherwise: parsed.value };
+    }
     if (!parsed.ok || !parsed.value || !missesIntent(parsed.value)) return parsed;
     intentReasked = true;
     return { ok: false, error: 'This first action must also include "intent": {"change": [...], "content": ...}, as the rules say.', otherwise: parsed.value };
@@ -929,8 +1090,52 @@ export async function runAgent(
   let intentOpen = true;
   const gate = { blocked: 0, autoContext: 0 };
 
+  const subtaskCapMs = lean ? SUBTASK_BUDGET_MS_BYOK : SUBTASK_BUDGET_MS;
+  /** Each helper's time, set when a turn's calls start (`helperShareMs`). */
+  let helperBudgetMs = subtaskCapMs;
+
   /** Step number → what the helper of that `delegate` step did, for the step's record. */
   const helperSteps = new Map<number, AgentHelperStep[]>();
+
+  /**
+   * What the `delegate` row at `step` shows of its helper: each call it makes (sent when it starts,
+   * and once more with its `status` when it ends — the second replaces the first), the research
+   * checklist it is running, and its stages. Everything else of the helper's stays with the helper.
+   *
+   * The row has one research checklist, replaced whole by each one sent: a helper running two or
+   * three research calls side by side shows only its newest one still running, and an older one
+   * again once every newer one has settled — not each in turn, overwriting the others.
+   */
+  const forwardHelperEvent = (event: AgentTraceEvent, step: number, view: HelperView): void => {
+    const { used, at: helperAt, researching } = view;
+    if (event.kind === 'research') {
+      researching.add(event.turn);
+      if (event.turn !== Math.max(...researching)) return;
+      options.onTrace?.({ kind: 'research', turn: step, progress: event.progress, helperStep: event.turn });
+      return;
+    }
+    if (event.kind === 'stage') {
+      options.onTrace?.({ kind: 'stage', turn: step, label: event.label, ...(event.detail ? { detail: event.detail } : {}) });
+      return;
+    }
+    const steps = helperSteps.get(step) ?? [];
+    if (event.kind === 'observation') {
+      researching.delete(event.turn);
+      const at = helperAt.get(event.turn);
+      if (at === undefined || !steps[at]) return;
+      const settled: AgentHelperStep = { ...steps[at], status: event.status };
+      helperSteps.set(step, steps.map((existing, index) => (index === at ? settled : existing)));
+      options.onTrace?.({ kind: 'helper', turn: step, step: settled, helperStep: event.turn });
+      return;
+    }
+    if (event.kind !== 'tool') return;
+    used.push(event.tool);
+    const param = stepParam(event.tool, event.config);
+    const helperStep: AgentHelperStep = { tool: event.tool, ...(param ? { param } : {}), ...(event.doing ? { doing: event.doing } : {}) };
+    helperAt.set(event.turn, steps.length);
+    helperSteps.set(step, [...steps, helperStep]);
+    options.onTrace?.({ kind: 'helper', turn: step, step: helperStep, helperStep: event.turn });
+  };
 
   /**
    * The main agent hands a reading job to a helper with a clean context, and gets back findings
@@ -938,12 +1143,16 @@ export async function runAgent(
    * gate, but nothing the helper merely wrote does.
    */
   const runSubtask = async (task: string, step: number): Promise<BuiltinOutcome> => {
-    const used: string[] = [];
+    const view: HelperView = { used: [], at: new Map(), researching: new Set() };
+    const { used } = view;
     try {
       const helper = await runAgent(task, providerUrl, deps, {
         readOnly: true,
-        maxTurns: SUBTASK_MAX_TURNS,
-        totalBudgetMs: Math.max(MIN_TURN_BUDGET_MS, Math.min(remainingMs(), SUBTASK_BUDGET_MS)),
+        // Negotiable on BYOK (not pinned, so `steps_needed` can raise it), pinned on a browser provider.
+        ...(lean ? { stepBudget: { initial: SUBTASK_MAX_TURNS, cap: SUBTASK_MAX_TURNS_BYOK } } : { maxTurns: SUBTASK_MAX_TURNS }),
+        // The share set when its turn's calls started, so a helper queued behind others on the same
+        // key gets as long as the first; still never past what the run has left.
+        totalBudgetMs: Math.max(MIN_TURN_BUDGET_MS, Math.min(remainingMs(), helperBudgetMs)),
         toolScope: baseScope,
         ...(scopedIds ? { mcpServerIds: scopedIds } : {}),
         ...(noConnectors ? { noConnectors } : {}),
@@ -953,14 +1162,12 @@ export async function runAgent(
         // The title's language alone: the helper's own answer still follows its task.
         ...(answerLanguage ? { doingLanguage: answerLanguage } : {}),
         ...(options.rejectLatinDoing ? { rejectLatinDoing: true } : {}),
-        onTrace: (event) => {
-          if (event.kind !== 'tool') return;
-          used.push(event.tool);
-          const param = stepParam(event.tool, event.config);
-          const helperStep: AgentHelperStep = { tool: event.tool, ...(param ? { param } : {}), ...(event.doing ? { doing: event.doing } : {}) };
-          helperSteps.set(step, [...(helperSteps.get(step) ?? []), helperStep]);
-          options.onTrace?.({ kind: 'helper', turn: step, step: helperStep });
-        },
+        // The skills this run offered, read-only in the helper (no `shell` there).
+        ...(toolScope.agentSkills && skillsOffered.length > 0 ? { helperSkills: skillsOffered } : {}),
+        ...(options.skillDirOf ? { skillDirOf: options.skillDirOf } : {}),
+        // The same model, so the same window: looked up once by this run.
+        ...(contextTokens !== undefined ? { contextTokens } : {}),
+        onTrace: (event) => forwardHelperEvent(event, step, view),
       });
       ledger.absorb(helper.evidence);
       if (helper.kind !== 'answer') return { observation: 'ERROR: The helper stopped without findings.', status: 'error' };
@@ -971,9 +1178,15 @@ export async function runAgent(
       const gap = helper.completion.status === 'partial'
         ? `\nINCOMPLETE — ${helper.completion.missing ?? 'the helper stopped at its step limit'}.`
         : '';
-      // The helper's links point at its own pages; its list goes along so the main run can name them.
-      const findings = withSourcesSection(helper.answer, helper.sources, 'Sources');
-      return { observation: `Helper findings${tools}:\n${helper.title ? `${helper.title}\n` : ''}${findings}${gap}`, status: 'ok' };
+      // The helper's linked markers number its own pages from [1], like a research call's: they go
+      // back with its sources so this run's pool renumbers them (`runCall`), and its [1] never
+      // collides with a page this run already cited as [1].
+      const sources = (helper.sources ?? []).map((source) => ({ title: source.title, link: source.url }));
+      return {
+        observation: `Helper findings${tools}:\n${helper.title ? `${helper.title}\n` : ''}${helper.answer}${gap}`,
+        status: 'ok',
+        ...(sources.length > 0 ? { sources } : {}),
+      };
     } catch (err) {
       if (err instanceof FlowAbortError) throw err;
       return { observation: `ERROR: The helper failed: ${err instanceof Error ? err.message : String(err)}`, status: 'error' };
@@ -1008,8 +1221,11 @@ export async function runAgent(
     ...(toolScope.delegate ? { runSubtask } : {}),
     ...(toolScope.pictures && options.drawImage ? { drawImage: options.drawImage } : {}),
     ...(toolScope.documents && options.exportFile ? { exportFile: options.exportFile } : {}),
+    ...(toolScope.knowledge?.length ? { knowledge: toolScope.knowledge } : {}),
+    // A helper's words are the model's own task, so its `kb_search` searches the keywords only.
+    ...(readOnly ? {} : { asker: { words: runWords, history, ...(answerLanguage ? { uiLanguage: true } : {}) } }),
     ...(toolScope.agentSkills
-      ? { skills: { entries: skillsOffered, loaded: skillsLoadedBefore(skillsOffered, options.resumeFrom ?? []), shell: toolScope.skills.includes('shell'), namedTools: skillNamedTools(toolScope), ...(options.skillDirOf ? { dirOf: options.skillDirOf } : {}) } }
+      ? { skills: { entries: skillsOffered, loaded: skillsLoadedBefore(skillsOffered, options.resumeFrom ?? []), shell: toolScope.skills.includes('shell'), namedTools: skillNamedTools(toolScope), ...(options.phoneChat ? { phoneChat: true } : {}), ...(officeServer ? { programRoutes: { [OFFICE_TOOL_NAME]: officeViaConnector(officeServer) } } : {}), ...(options.skillDirOf ? { dirOf: options.skillDirOf } : {}) } }
       : {}),
   };
   const citations = createCitationPool();
@@ -1024,17 +1240,20 @@ export async function runAgent(
     runId: options.runId ?? '',
     intent: () => intent,
     askAnswers,
+    askPickedFirst,
     gate,
     unattended: options.unattended === true,
     askUser,
     ...(options.shellApproval ? { deferShell: options.shellApproval } : {}),
     ...(options.trustedShell ? { trustedShell: options.trustedShell } : {}),
-    ...(options.connectorApproval ? { deferChanges: true } : {}),
+    ...(options.connectorApproval ? { deferChanges: options.connectorApprovalServers ?? true } : {}),
     builtins: builtinCtx,
     fileRoots,
     workspaceDir,
     remainingMs,
     ...(options.keepPictures ? { keepPictures: options.keepPictures } : {}),
+    ...(options.keepDocuments ? { keepDocuments: options.keepDocuments } : {}),
+    ...(officeServer ? { officeServer } : {}),
     ...(options.onTrace ? { onTrace: options.onTrace } : {}),
     ...(options.signal ? { signal: options.signal } : {}),
   };
@@ -1043,11 +1262,16 @@ export async function runAgent(
   let staleReads = 0;
   /** A turn already rebuilt because Gemini's cap fell under it; only once per run. */
   let rebuiltForCap = false;
+  /** The next turn starts its BYOK conversation over, at the sizes `stepDownWindow` set. */
+  let rebuildAfterStepDown = false;
   let budgetSettled = false;
 
   let toolCalls = scratch.length;
   let helpCalls = 0;
+  let skillReads = 0;
   let consecutiveErrors = 0;
+  /** Turns in a row whose reply was still unusable after its repairs. */
+  let invalidTurns = 0;
   /**
    * The last observation did not fit its slot. The model cannot see this for itself — the cut
    * happens after it chose what to read — so the run would otherwise keep reading pages into a
@@ -1064,8 +1288,34 @@ export async function runAgent(
    * instead of paying a synthesis round trip to rewrite it from the same evidence.
    */
   let heldFinish: { title: string; content: string; missing: string; steps: number; pending: boolean } | null = null;
+  let holds = 0;
+  /**
+   * Turns in a row with no step that worked: a reply still unusable after its repairs, calls that
+   * all failed or only looked something up, a held "not done". A run can go a broken batch,
+   * then ten turns of its own Python, bad JSON and look-ups for 18 minutes with no two unusable
+   * replies in a row, which the stall guard never sees. Turns, not seconds: one sound browser turn
+   * takes 20 s to 2 min, so a timer would end healthy runs.
+   */
+  let idleTurns = 0;
+  /** Counts this turn as one without progress; true when the run should stop and answer now. */
+  let stoppedIdle = false;
+  const noProgress = (at: number, lastTurn: boolean, why: string): boolean => {
+    idleTurns += 1;
+    if (idleTurns < MAX_IDLE_TURNS || lastTurn || scratch.length === 0) return false;
+    stoppedIdle = true;
+    sendLog(`🛑 [Agent] turn ${at}: ${idleTurns} turns in a row without progress (${why}) — answering from what it has`);
+    return true;
+  };
+  /** Connector tools that answered without an error this run, as `<server>:<tool>`. */
+  const workingTools = new Set<string>();
   const plan: AgentPlan = emptyPlan();
-  if (options.resumePlan) applyPlanUpdate(plan, options.resumePlan.steps, options.resumePlan.done);
+  if (options.resumePlan) applyPlanUpdate(plan, options.resumePlan.steps, options.resumePlan.done, planCap);
+  /**
+   * BYOK's one re-estimate of the step limit: offered once, when the limit is near and the plan is
+   * not done; used once it actually raised the limit. A browser run, or a pinned one, never has it.
+   */
+  let reestimateOffered = false;
+  let reestimateUsed = false;
   const session = lean
     ? createProviderSession(undefined, true, await runImages(providerUrl, options))
     : createProviderSession(options.attachments);
@@ -1077,18 +1327,30 @@ export async function runAgent(
     const spent = currentScopeTokens();
     return spent ? spent.input + spent.output : null;
   };
+  /**
+   * A BYOK helper's own share: what it spent since it started, against
+   * `helperTokenBudget`. The meter is the whole run's (one scope, no nesting), so the share is a
+   * delta from here and also counts a sibling helper running beside it — it only ever bites early.
+   * The whole run's budget and ceiling still apply to the helper as they are.
+   */
+  const helperBaseline = readOnly && lean ? spentTokens() : null;
   const overTokenBudget = (): boolean => {
     const total = spentTokens();
-    if (total === null || total < AGENT_BYOK_TOKEN_BUDGET) return false;
+    if (total === null) return false;
+    const own = helperBaseline === null ? null : total - helperBaseline;
+    const overOwn = own !== null && own >= byok.helperTokenBudget;
+    if (total < byok.tokenBudget && !overOwn) return false;
     if (!budgetWarned) {
       budgetWarned = true;
-      sendLog(`⚠️ /agent reached its ${AGENT_BYOK_TOKEN_BUDGET} token budget (${total} spent) — answering with what it has`);
+      sendLog(total < byok.tokenBudget
+        ? `⚠️ /agent helper reached its ${byok.helperTokenBudget} token share (${own} spent) — answering with what it has`
+        : `⚠️ /agent reached its ${byok.tokenBudget} token budget (${total} spent) — answering with what it has`);
     }
     return true;
   };
   const overTokenCeiling = (): boolean => {
     const total = spentTokens();
-    return total !== null && total >= AGENT_BYOK_TOKEN_CEILING;
+    return total !== null && total >= byok.tokenCeiling;
   };
 
   const writes: AgentWriteOutcome = { ...NO_WRITES };
@@ -1202,7 +1464,11 @@ export async function runAgent(
     if (!isShellApproved(lastResumed)) {
       sendLog('🔒 [Agent] the user did not approve the connector change');
       lastResumed.observation = declinedConnectorObservation(lastResumed.observation);
-    } else if (!mcpRegistry || !handle?.tools.some((tool) => tool.name === pendingChange.name)) {
+    } else if (
+      !mcpRegistry || !handle?.tools.some((tool) => tool.name === pendingChange.name)
+      // Re-read now: a change approved in the chat for a connector this person may no longer approve.
+      || (options.connectorApprovalServers !== undefined && !options.connectorApprovalServers.includes(pendingChange.serverId))
+    ) {
       sendLog('🔒 [Agent] an approved connector change was not made: the connector is no longer in this run\'s reach');
       lastResumed.observation = `${lastResumed.observation}\n${CONNECTOR_CHANGE_NO_LONGER_ALLOWED}`;
     } else {
@@ -1227,8 +1493,20 @@ export async function runAgent(
     const askGate: AskGate = canAsk || (askBudget ? 'no_request' : false);
     const turnTimeoutMs = Math.max(10_000, Math.min(reasoningTimeoutMs, remainingMs()));
     const held: HeldFinish | undefined = heldFinish?.pending && !mustFinish
-      ? { missing: heldFinish.missing, stepsLeft: maxTurns - turn + 1, ...(summarise && mcpEnabled ? { connectorHelp: true } : {}) }
+      ? {
+        missing: heldFinish.missing,
+        stepsLeft: maxTurns - turn + 1,
+        ...(summarise && mcpEnabled ? { connectorHelp: true } : {}),
+        ...(workingTools.size > 0 ? { workingTools: [...workingTools] } : {}),
+      }
       : undefined;
+    if (lean && pinnedMaxTurns === undefined && !reestimateUsed && !mustFinish && maxTurns < stepCap
+      && maxTurns - turn + 1 <= REESTIMATE_WITHIN && plan.steps.length > 0 && !planComplete(plan)) {
+      reestimateOffered = true;
+    }
+    const reestimate = reestimateOffered && !reestimateUsed && !mustFinish
+      ? reestimateNotice(maxTurns - turn + 1, turn - 1, stepCap)
+      : '';
     const turnOptions: TurnPromptOptions = {
       goal: promptGoal,
       catalog: catalogForPrompt,
@@ -1237,7 +1515,7 @@ export async function runAgent(
       lean,
       mcpGrammar: mcpEnabled,
       scratchSlots,
-      stalled: consecutiveErrors >= STALL_THRESHOLD,
+      stalled: consecutiveErrors >= STALL_THRESHOLD || invalidTurns > 0,
       // Only worth saying when there is somewhere to put the work: pointing at `delegate` in a
       // run that cannot call it is an instruction the validator will reject.
       offload: observationCut && toolScope.delegate === true,
@@ -1251,12 +1529,19 @@ export async function runAgent(
       deliverable: [...deliverables.keys()],
       userMemory,
       batchGrammar,
+      delegate: toolScope.delegate === true,
+      ...(delegateBatch > MAX_BATCH_CALLS ? { delegateBatch } : {}),
+      ...(reestimate ? { reestimate } : {}),
+      ...(stepCap !== selfAssessedStepCap(lean) ? { stepCap } : {}),
+      ...(readOnly ? { helper: true } : {}),
       flowTools: scopeHasFlowTools(toolScope),
       webTools,
       ...(held ? { held } : {}),
       ...chat,
       answerLanguage,
       doingLanguage: options.doingLanguage,
+      siteRules,
+      ...(options.knowledgeOnly ? { knowledgeOnly: options.knowledgeOnly } : {}),
     };
     const capAtBuild = promptCapFor(providerUrl);
     const buildTurn = (h: string): string => buildTurnPrompt({ ...turnOptions, history: h });
@@ -1266,11 +1551,11 @@ export async function runAgent(
     // that fitted on turn 1 off the end of the cap by turn 4.
     const previous = scratch.slice(-Math.min(lastBatchSize, scratch.length));
     // A BYOK full prompt is only ever sent to start a conversation over, so its steps take part of
-    // the budget and leave the rest to the turns that follow (`BYOK_REBUILD_BUDGET`) — but never
+    // the budget and leave the rest to the turns that follow (`byokBudgets().rebuild`) — but never
     // less than the last turn's results in full: they reached the model only in the delta a
     // rebuild replaces, and condensing them would leave it the head of pages it never read.
     const scratchCeiling = lean
-      ? Math.min(SCRATCH_TOTAL_BUDGET, Math.max(BYOK_REBUILD_BUDGET, scratchRebuildCost(scratch, previous.length)))
+      ? Math.min(byok.scratchTotal, Math.max(byok.rebuild, scratchRebuildCost(scratch, previous.length)))
       : SCRATCH_TOTAL_BUDGET;
     const scratchFit = scratchFitFor(
       providerUrl,
@@ -1285,6 +1570,8 @@ export async function runAgent(
       offload: deltaObservationCut && toolScope.delegate === true && !mustFinish && !planComplete(plan),
       runtimeContext: turnOptions.runtimeContext ?? '',
       planned: plan.steps.length > 0,
+      // Latched once offered, so the notice is said the turn it opens and never again.
+      reestimate: reestimateOffered ? reestimate || ruleState?.reestimate || 'offered' : '',
     };
     const notices = ruleState ? deltaRuleNotices(rulesNow, ruleState) : [];
     const ruleStateBefore: DeltaRuleState | null = ruleState;
@@ -1300,8 +1587,9 @@ export async function runAgent(
     // A BYOK conversation that would outgrow the budget is rebuilt into one full prompt: the
     // current rules, the newest steps whole and the older ones condensed — what a browser thread
     // that was lost gets, and what keeps every request within today's largest one.
-    if (transcript && (transcript.messages.length === 0 || sessionPrompt === undefined
-      || transcriptChars(transcript, sessionPrompt) > SCRATCH_TOTAL_BUDGET)) {
+    if (transcript && (transcript.messages.length === 0 || sessionPrompt === undefined || rebuildAfterStepDown
+      || transcriptChars(transcript, sessionPrompt) > byok.scratchTotal)) {
+      rebuildAfterStepDown = false;
       if (transcript.messages.length > 0) {
         sendLog(`🗜️ [Agent] turn ${turn}: conversation rebuilt into one message — ${scratch.length} step(s), older ones condensed`);
       }
@@ -1322,6 +1610,8 @@ export async function runAgent(
         deps,
         timeoutMs: turnTimeoutMs,
         validate: validateDecision(askGate),
+        // Only a chat site makes files of its own; a BYOK endpoint keeps the generic rejection.
+        noJsonError: isByokTargetUrl(providerUrl) ? undefined : siteMadeFileError,
         buildRepair: buildActionRepair({ ...turnOptions, history }, providerUrl),
         transcriptRepair: buildTranscriptRepair,
         onReject: (error, attempt, preview) => {
@@ -1331,6 +1621,14 @@ export async function runAgent(
         signal: options.signal,
       });
     } catch (err) {
+      // Refused for its size on a sized BYOK run: the same turn again, once, at today's sizes,
+      // from a conversation rebuilt at them (the old one may be what did not fit).
+      if (stepDownWindow(err, `turn ${turn}`)) {
+        rebuildAfterStepDown = true;
+        ruleState = ruleStateBefore;
+        turn--;
+        continue;
+      }
       // Refused unsent because Gemini's cap fell under a prompt built for the larger one (the
       // picker showed the page signed out): build this turn again at the cap that holds now.
       if (rebuiltForCap || !geminiCapFellSince(capAtBuild, err)) throw err;
@@ -1380,13 +1678,29 @@ export async function runAgent(
           decision.error ?? 'The agent could not produce a valid action',
         );
       }
+      // One unusable turn is not the end of a run that has gathered something and has steps left:
+      // it is counted, the next turn carries the stall warning, and only a second in a row ends it
+      // in synthesis. Nothing of the rejected reply is kept — not in the steps, and on BYOK not in
+      // the conversation (`dropPending`) — so the next turn re-sends what this one could not use.
+      invalidTurns += 1;
+      if (noProgress(turn, mustFinish, 'no usable reply')) break;
+      if (!mustFinish && scratch.length > 0 && invalidTurns < STALL_THRESHOLD) {
+        sendLog(`↻ [Agent] turn ${turn}: no usable reply — going on to the next turn (${invalidTurns} in a row)`);
+        // The notices this turn's delta carried never reached a BYOK conversation: say them again.
+        ruleState = ruleStateBefore;
+        // Nor did a held notice: told again next turn. Without it the next delta would be the
+        // observations the held finish already answered, and the hold's extra try would be lost.
+        if (held && heldFinish) heldFinish.pending = true;
+        continue;
+      }
       break;
     }
+    invalidTurns = 0;
 
     const action = decision.value;
     const planWasEmpty = plan.steps.length === 0;
     const bornComplete = planWasEmpty && scratch.length === 0;
-    applyPlanUpdate(plan, action.plan, bornComplete ? undefined : action.planDone);
+    applyPlanUpdate(plan, action.plan, bornComplete ? undefined : action.planDone, planCap);
     if (plan.steps.length > 0) {
       options.onTrace?.({ kind: 'plan', steps: [...plan.steps], done: [...plan.done] });
     }
@@ -1405,19 +1719,31 @@ export async function runAgent(
         sendLog(`🎯 [Agent] intent: change [${action.intent.change.join(', ')}], content ${action.intent.content}`);
       }
     }
-    // The ceiling is negotiated once, on the first action, and only upward. An explicit `maxTurns`
+    // The ceiling is negotiated on the first action, and only upward. An explicit `maxTurns`
     // (`pinnedMaxTurns`) disables it: a caller that asked for N steps gets N. A later
-    // `steps_needed` is ignored: a run that can raise its own limit mid-flight has no limit.
+    // `steps_needed` is ignored — a run that can raise its own limit whenever it likes has no
+    // limit — except BYOK's one re-estimate below, offered by the engine, never asked for.
     if (budgetSettled === false && !mustFinish) {
       budgetSettled = true;
       if (pinnedMaxTurns === undefined) {
-        const grown = Math.max(planTurnCeiling(plan.steps.length), action.stepsNeeded ?? 0);
+        // The validators read `steps_needed` at the widest tier's cap; clamped to this run's here,
+        // before it is logged or compared, so the log says the limit that actually applies.
+        const asked = Math.min(action.stepsNeeded ?? 0, stepCap);
+        const grown = Math.max(planCeilingWithin(plan.steps.length, turnFloor, stepCap), asked);
         if (grown > maxTurns) {
-          const why = (action.stepsNeeded ?? 0) >= grown ? 'self-assessed' : `${plan.steps.length}-step plan`;
+          const why = asked >= grown ? 'self-assessed' : `${plan.steps.length}-step plan`;
           sendLog(`🗂️ [Agent] ${why} — step limit raised ${maxTurns} → ${grown}`);
-          maxTurns = Math.min(grown, MAX_SELF_ASSESSED_STEPS);
+          maxTurns = grown;
           options.onStepBudget?.(maxTurns);
         }
+      }
+    } else if (reestimateOffered && !reestimateUsed && !mustFinish && pinnedMaxTurns === undefined) {
+      const grown = Math.min(action.stepsNeeded ?? 0, stepCap);
+      if (grown > maxTurns) {
+        reestimateUsed = true;
+        sendLog(`🗂️ [Agent] re-estimated — step limit raised ${maxTurns} → ${grown}`);
+        maxTurns = grown;
+        options.onStepBudget?.(maxTurns);
       }
     }
 
@@ -1438,9 +1764,14 @@ export async function runAgent(
     if (action.action === 'finish') {
       // Held only while there is room to act on it: this turn plus at least one more that is not
       // the forced last one. Never for a helper — its parent judges the findings and is told below
-      // when they are incomplete. Once per run: a second "not done" was said on purpose.
-      const canHold = !readOnly && !mustFinish && maxTurns - turn >= 2 && heldFinish === null;
-      if (action.done === false && canHold) {
+      // when they are incomplete. Once per run, and once more only after the run took a step since
+      // that hold: a "not done" with nothing new was said on purpose, one after new work may rest on
+      // a false premise (five good officecli calls, then "there is no officecli").
+      const canHold = !readOnly && !mustFinish && maxTurns - turn >= 2
+        && (heldFinish === null || (holds < MAX_HOLDS_PER_RUN && scratch.length > heldFinish.steps));
+      // A hold is a turn with no step taken: counted, and none once the run has stopped moving.
+      if (action.done === false && canHold && !noProgress(turn, mustFinish, 'the finish said not done')) {
+        holds += 1;
         heldFinish = {
           title: action.title ?? '', content: action.content ?? '', missing: action.missing ?? '', steps: scratch.length, pending: true,
         };
@@ -1473,11 +1804,35 @@ export async function runAgent(
     }
 
     const calls: BatchCall[] = action.action === 'call_tools' ? action.calls : [action];
-    const batched = calls.length > 1;
+    // A batch item that does not run keeps its position: every item the model wrote is one step.
+    const skipped = new Map((action.action === 'call_tools' ? action.skipped ?? [] : []).map((item) => [item.index, item]));
+    const items: Array<BatchCall | SkippedCall> = [];
+    for (let position = 0, next = 0; position < calls.length + skipped.size; position++) {
+      items.push(skipped.get(position) ?? calls[next++]);
+    }
+    const isSkipped = (item: BatchCall | SkippedCall): item is SkippedCall => !('action' in item);
+    const batched = items.length > 1;
     const firstStep = scratch.length + 1;
     if (batched) {
-      sendLog(`🧺 [Agent] turn ${turn}: ${calls.length} calls at once — ${calls.map((call) => planCall(call, providerUrl, researchDepth()).label).join(', ')}`);
+      const notRun = skipped.size > 0 ? ` (${skipped.size} not run)` : '';
+      sendLog(`🧺 [Agent] turn ${turn}: ${calls.length} calls at once${notRun} — ${calls.map((call) => planCall(call, providerUrl, researchDepth()).label).join(', ')}`);
     }
+
+    /**
+     * A batch item the validator set aside: filed as a failed step under the name the model wrote,
+     * never executed — no tool call, no repeat-guard entry, no write. Its row and its observation
+     * read like any failed call's, so the model sees which call failed and why.
+     */
+    const skipCall = (item: SkippedCall, step: number): CallResult => {
+      const thought = step === firstStep ? action.thought : '';
+      const written = step === firstStep ? action.doing : undefined;
+      const titled = written && !(options.rejectLatinDoing && !NON_LATIN_LETTER.test(written)) ? { doing: written } : {};
+      const observation = `ERROR: ${item.error}`;
+      options.onTrace?.({ kind: 'tool', turn: step, tool: item.tool, config: {}, ...(thought ? { thought } : {}), ...titled });
+      sendLog(`⏭️ [Agent] turn ${turn} · step ${step}: ${item.tool} not run — ${maskSecrets(item.error, true)}`);
+      options.onTrace?.({ kind: 'observation', turn: step, tool: item.tool, status: 'error', preview: truncate(observation, 200) });
+      return { label: item.tool, config: {}, thought, ...titled, observation, status: 'error', startedAt: Date.now(), ms: 0 };
+    };
 
     /**
      * One call, from the repeat guard to its observation. Everything the model or the UI numbers
@@ -1542,6 +1897,16 @@ export async function runAgent(
         return settle(help, help.startsWith('ERROR:') ? 'error' : 'ok');
       }
 
+      // Reading officecli's own design guide is a look-up, like tool_help: its pages give their steps
+      // back (a model can spend 5 of its 8 steps on the four pages of the word skill and run
+      // out before writing a line). Capped, and not on the last turn, where it could not be acted on.
+      if (!batched && !mustFinish && call.action === 'call_mcp' && officeServer !== undefined
+        && recordConfig.server === officeServer && readsOfficeSkill(recordConfig.arguments)
+        && skillReads < MAX_SKILL_READS_PER_RUN) {
+        skillReads += 1;
+        maxTurns += 1;
+        toolCalls -= 1;
+      }
       if (!batched) activeStep = step;
       const outcome = await runCall(callCtx, call, recordConfig, step, signature);
       if (outcome.deferred) {
@@ -1576,11 +1941,20 @@ export async function runAgent(
       };
     };
 
+    // A skipped item waits on nothing: a resource of its own settles it at once, in its position.
+    const resources = items.map((item, index) => (isSkipped(item) ? `skipped:${index}` : batchResource(item, mcpIndex)));
+    const llmCalls = resources.filter((resource) => resource === 'llm').length;
+    // Looked up only for a batch with model-backed calls: nothing else queues on the model.
+    const llmWidth = batched && llmCalls > 0 ? llmConcurrency(providerUrl, isDelegateOnly(calls)) : 1;
+    helperBudgetMs = helperShareMs(remainingMs(), subtaskCapMs, llmCalls, llmWidth, MIN_TURN_BUDGET_MS);
     const results = batched
       ? await runScheduled(
-          calls.map((call) => batchResource(call, mcpIndex)),
-          (resource) => (resource === 'llm' ? llmConcurrency(providerUrl) : 1),
-          (index) => executeCall(calls[index], firstStep + index),
+          resources,
+          (resource) => (resource === 'llm' ? llmWidth : 1),
+          (index) => {
+            const item = items[index];
+            return isSkipped(item) ? Promise.resolve(skipCall(item, firstStep + index)) : executeCall(item, firstStep + index);
+          },
         )
       : [await executeCall(calls[0], firstStep)];
 
@@ -1645,6 +2019,8 @@ export async function runAgent(
       if (result.status === 'ok' && isDeliverableSkill(result.label) && result.observation.trim() && !result.foreign) {
         deliverables.set(step, result.answer ?? result.observation);
       }
+      const answeredTool = result.status === 'ok' ? connectorToolCalled(result.label, result.config) : undefined;
+      if (answeredTool) workingTools.add(answeredTool);
       scratch.push({
         thought: result.thought,
         tool: result.label,
@@ -1670,6 +2046,9 @@ export async function runAgent(
       });
     });
     lastBatchSize = results.length;
+    // A look-up is neither: `tool_help` is free discovery with its own per-run cap.
+    if (results.some((result) => result.status === 'ok' && !isHelpTool(result.label))) idleTurns = 0;
+    else if (!results.every((result) => isHelpTool(result.label)) && noProgress(turn, mustFinish, 'every call failed')) break;
 
     if (answersAsResearched(results[0], {
       batched,
@@ -1700,9 +2079,21 @@ export async function runAgent(
   if (plan.steps.length > 0 && !planComplete(plan)) {
     sendLog(`🗂️ [Agent] stopped with ${plan.done.length}/${plan.steps.length} plan items done — synthesizing from what it has`);
   }
-  const final = await synthesizeFinal(
-    promptGoal, scratch, providerUrl, deps, synthTimeoutMs, lean, scratchSlots, session, history, plan,
-    writesAllFailed(writes), renderActionLines(ledger.actions, 8), userMemory, chat, answerLanguage, options.signal,
+  const synthesize = (ceiling: number): Promise<FinalAnswer> => synthesizeFinal(
+    promptGoal, scratch, providerUrl, deps, synthTimeoutMs, lean, ceiling, scratchSlots, session, history, plan,
+    writesAllFailed(writes), renderActionLines(ledger.actions, 8), userMemory, chat, answerLanguage, readOnly, options.signal,
   );
-  return answered(final.title, final.content, turnsUsed, synthesisCompletion(final.done, final.missing));
+  let final: FinalAnswer;
+  try {
+    final = await synthesize(byok.synthScratch);
+  } catch (err) {
+    // The synthesis is a request of its own: refused for its size, it is asked once more at
+    // today's synthesis budget. Only on BYOK, and only from a budget above today's.
+    const todaySynth = byokBudgets().synthScratch;
+    if (!lean || byok.synthScratch <= todaySynth || !isContextOverflowError(err)) throw err;
+    sendLog(`📉 [Agent] synthesis did not fit the model's window at ${byok.synthScratch} characters — asking again at ${todaySynth}`);
+    final = await synthesize(todaySynth);
+  }
+  // A run stopped for going nowhere is cut short whatever the synthesis claims: it never got there.
+  return answered(final.title, final.content, turnsUsed, synthesisCompletion(stoppedIdle ? false : final.done, final.missing));
 }

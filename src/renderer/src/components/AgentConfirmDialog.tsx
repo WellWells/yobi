@@ -10,6 +10,15 @@ import { AppModal } from './AppModal';
 import { AppButton } from './AppButton';
 import { Z_MODAL_CONFIRM } from '../config/zLayers';
 
+/** A one-time flow's local `YYYY-MM-DDTHH:mm`, in the interface's language with its weekday. */
+function formatRunAt(runAt: string, locale: string): string {
+  const date = new Date(runAt);
+  if (Number.isNaN(date.getTime())) return runAt;
+  return new Intl.DateTimeFormat(locale, {
+    year: 'numeric', month: 'numeric', day: 'numeric', weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false,
+  }).format(date);
+}
+
 function rowValue(row: AgentConfirmRow, t: (key: string) => string): string {
   return row.valueKey ? fillTemplate(t(row.valueKey), row.vars ?? {}) : row.value;
 }
@@ -38,6 +47,7 @@ function ConfirmRows({ rows, shell, t }: { rows: AgentConfirmRow[]; shell: boole
 
 export const AgentConfirmDialog: React.FC = () => {
   const t = useI18nStore((s) => s.t);
+  const locale = useI18nStore((s) => s.locale);
   const [queue, setQueue] = useState<AgentConfirmPayload[]>([]);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const current = queue[0];
@@ -81,9 +91,14 @@ export const AgentConfirmDialog: React.FC = () => {
   const flowMessageKey = flowEdit ? 'agent.flow.edit.message' : 'agent.flow.confirm.message';
   const flowSaveKey = flowEdit ? 'agent.flow.edit.save' : 'agent.flow.confirm.save';
   const titleKey = isFlow ? flowTitleKey : isShell ? 'agent.shell.confirm.title' : 'agent.mcp.confirm.title';
+  // A one-time flow is switched on by this approval — unless a step acts on the computer.
+  const runAt = current.kind === 'flow' && !flowEdit ? current.runAt : undefined;
+  const flowNewDetail = runAt && current.kind === 'flow' && current.sensitiveTypes.length === 0
+    ? 'agent.flow.confirm.detailOnce'
+    : 'agent.flow.confirm.detail';
   const detailKey = flowEdit
     ? (flowEdit.paused ? 'agent.flow.edit.detailPaused' : flowEdit.enabled ? 'agent.flow.edit.detailEnabled' : 'agent.flow.edit.detail')
-    : isFlow ? 'agent.flow.confirm.detail' : isShell ? 'agent.shell.confirm.detail' : 'agent.mcp.confirm.detail';
+    : isFlow ? flowNewDetail : isShell ? 'agent.shell.confirm.detail' : 'agent.mcp.confirm.detail';
   const denyKey = isFlow ? 'agent.flow.confirm.discard' : isShell ? 'agent.shell.confirm.deny' : 'agent.mcp.confirm.deny';
   const allowKey = isFlow ? flowSaveKey : isShell ? 'agent.shell.confirm.allow' : 'agent.mcp.confirm.allow';
 
@@ -111,6 +126,12 @@ export const AgentConfirmDialog: React.FC = () => {
         {summary ? (
           <Text fz="var(--font-size-sm)" fw={600} c="var(--text-primary)" style={{ lineHeight: 1.6, wordBreak: 'break-word' }}>
             {summary}
+          </Text>
+        ) : null}
+
+        {runAt ? (
+          <Text fz="var(--font-size-sm)" fw={600} c="var(--text-primary)" style={{ lineHeight: 1.6 }}>
+            {fillTemplate(t('agent.flow.confirm.runAt'), { time: formatRunAt(runAt, locale) })}
           </Text>
         ) : null}
 
@@ -189,7 +210,7 @@ export const AgentConfirmDialog: React.FC = () => {
         )}
 
         {isFlow && dangerous && (
-          <Text fz="var(--font-size-sm)" c="var(--error)" style={{ lineHeight: 1.6 }}>
+          <Text fz="var(--font-size-sm)" c="var(--error-text)" style={{ lineHeight: 1.6 }}>
             {fillTemplate(t('agent.flow.confirm.warning'), { types: current.sensitiveTypes.map((type) => t(`flow.skill.${type}`)).join('、') })}
           </Text>
         )}

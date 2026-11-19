@@ -52,6 +52,34 @@ export interface ScriptJsonOptions {
   marker?: string;
 }
 
+/**
+ * A Google page's data calls (`AF_initDataCallback({key: 'ds:5', hash: '…', data:[…], sideChannel: {}})`,
+ * Google Play): the `data` of each, parsed, by key. A call whose data is not JSON is skipped.
+ */
+const INIT_DATA_RE = /AF_initDataCallback\(\{key: '(ds:\d+)', hash: '[^']*', data:([\s\S]*?), sideChannel: \{\}\}\);<\/script>/g;
+
+export function initDataBlocks(html: string): Map<string, unknown> {
+  const blocks = new Map<string, unknown>();
+  for (const match of html.matchAll(INIT_DATA_RE)) {
+    try {
+      blocks.set(match[1], JSON.parse(match[2]));
+    } catch {
+      // A call whose data is not JSON holds nothing to read.
+    }
+  }
+  return blocks;
+}
+
+/** The value at `path` in nested arrays (Google's positional data); undefined when any step is missing. */
+export function at(value: unknown, ...path: number[]): unknown {
+  let node = value;
+  for (const index of path) {
+    if (!Array.isArray(node)) return undefined;
+    node = node[index];
+  }
+  return node;
+}
+
 /** The page's JSON script blocks, parsed, in page order; a block that is not JSON is skipped. */
 export function* scriptJson(html: string, options: ScriptJsonOptions): Generator<unknown> {
   const re = options.sjsOnly ? SJS_SCRIPTS_RE : ALL_SCRIPTS_RE;

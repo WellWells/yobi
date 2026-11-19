@@ -1,6 +1,7 @@
 import type { SkillSpec, SkillType } from './flowSkillSpecs';
 import { SKILL_OUTPUT, SKILL_SPECS, SKILLS_WITHOUT_OUTPUT_KEY } from './flowSkillSpecs';
 import { SKILL_NOTES } from './flowSkillNotes';
+import { formatLocalMoment } from './flowRunAt';
 import type { FlowClarification } from './types';
 
 export const ALWAYS_INCLUDED_SKILLS: readonly SkillType[] = [
@@ -70,7 +71,7 @@ function renderNotes(skills: readonly SkillType[]): string[] {
 }
 
 const TRIGGER_BRIEFS: readonly string[] = [
-  '- "cron": run on a SCHEDULE — any repeating time, from every few seconds to specific days and times (e.g. every minute, every weekday at 08:00). Runs in the background while the app is open; no external scheduler needed.',
+  '- "cron": run on a SCHEDULE — any repeating time, from every few seconds to specific days and times (e.g. every minute, every weekday at 08:00) — or ONCE at a given moment ("in 5 minutes", "tomorrow at 8"; the flow then deletes itself). Runs in the background while the app is open; no external scheduler needed.',
   '- "hotkey": run when the user presses a global keyboard shortcut, from anywhere on the desktop.',
   '- "bot": run when the user sends a /command to the chat bot (Telegram, LINE, Discord, Slack); their message text becomes an input variable.',
   '- "chat": run when the user types a /command in the app\'s own chat box; the text after it becomes an input variable.',
@@ -217,6 +218,7 @@ export function flowCompilerRules(
   skills: readonly string[],
   triggerHint: string | undefined,
   mode: 'create' | 'edit',
+  now: Date = new Date(),
 ): string[] {
   const edit = mode === 'edit';
   const selected = resolveSelectedSkills(skills);
@@ -246,6 +248,7 @@ export function flowCompilerRules(
     '- manual: {"type":"manual"} (default when unsure)',
     '- hotkey: {"type":"hotkey","keys":"CommandOrControl+Shift+Y"}  (a keyboard accelerator: "+"-joined modifiers CommandOrControl/Alt/Shift/Super plus ONE key, or a bare media/volume/function key like "MediaPlayPause"; pick an uncommon combo to avoid collisions)',
     '- cron:   {"type":"cron","cronExpression":"0 8 * * 1-5"}  (standard 5-field cron: minute hour day-of-month month day-of-week; a 6th LEADING seconds field is allowed for sub-minute schedules; day-of-month accepts "L" for the month end — uneven steps like "*/7" still run but the visual schedule editor cannot display them)',
+    `- once:   {"type":"cron","runAt":"YYYY-MM-DD HH:mm"}  (runs ONCE, local time after NOW: ${formatLocalMoment(now)})`,
     '- bot:    {"type":"bot","botCommand":"my_cmd","botCommandDescription":"...","botInputVariable":"input"}  (a Telegram /command)',
     '- chat:   {"type":"chat","chatCommand":"my_cmd","chatCommandDescription":"...","chatInputVariable":"input"}  (a /command run from the in-app chat)',
     '- file:   {"type":"file","watchFolder":"~/Downloads","watchPattern":"*.pdf"}  (runs once per NEW file there)',

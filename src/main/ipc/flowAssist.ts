@@ -1,15 +1,16 @@
 import { ipcMain } from 'electron';
 import { IPC } from '../../shared/types';
 import {
-  parseAssistEditRequest, parseAssistExplainRequest, parseAssistNamesRequest,
+  parseAssistEditRequest, parseAssistExplainRequest, parseAssistKeysRequest, parseAssistNamesRequest,
 } from '../../shared/flowAssist';
 import type {
-  FlowAssistEditResult, FlowAssistExplainResult, FlowAssistNamesResult,
+  FlowAssistEditResult, FlowAssistExplainResult, FlowAssistKeysResult, FlowAssistNamesResult,
 } from '../../shared/flowAssist';
 import { withClarifications } from '../../shared/flowSkillSchema';
 import { config, saveConfig } from '../config';
 import { oneShotIo } from '../chat/oneShotRequest';
-import { explainFlow, nameFlowSteps } from '../flowAssist';
+import { explainFlow, nameFlowSteps, nameOutputKeys } from '../flowAssist';
+import { loadChatNames } from '../flow/botRecipientDirectory';
 import { parseFlowTooLongToRevise } from '../flow/flowBuildTooLong';
 import type { FlowManager } from '../flow/flowManager';
 import { sendLog } from '../helpers';
@@ -90,15 +91,17 @@ export async function handleAssistExplain(raw: unknown): Promise<FlowAssistExpla
   rememberModel(request.providerUrl);
   sendLog(`🧩 [Flow assist] explaining "${request.flow.name}"`);
   return track(request.id, async (signal) => {
+    // The desktop editor is the user's own: every chat this computer can name, LINE PC's included.
+    const names = await loadChatNames();
     const result = await explainFlow(request, oneShotIo(signal, () => undefined), {
       locale: config.locale,
       emptyReply: t(strings, 'flow.assist.error.empty'),
       tooLong: t(strings, 'flow.assist.error.tooLong'),
+      names,
       headings: {
         when: t(strings, 'flow.assist.explain.when'),
         steps: t(strings, 'flow.assist.explain.steps'),
         results: t(strings, 'flow.assist.explain.results'),
-        problems: t(strings, 'flow.assist.explain.problems'),
       },
     });
     if (result.ok) return { ok: true, markdown: result.value };
@@ -127,6 +130,25 @@ export async function handleAssistNames(raw: unknown): Promise<FlowAssistNamesRe
   });
 }
 
+export async function handleAssistKeys(raw: unknown): Promise<FlowAssistKeysResult> {
+  const strings = getLangCache();
+  const request = parseAssistKeysRequest(raw);
+  if (!request || !request.providerUrl) return failed(t(strings, 'flow.assist.error.invalid'));
+  rememberModel(request.providerUrl);
+  sendLog(`🏷️ [Flow assist] naming ${request.targets.length} output(s)`);
+  return track(request.id, async (signal) => {
+    const result = await nameOutputKeys(request, oneShotIo(signal, () => undefined), {
+      locale: config.locale,
+      emptyReply: t(strings, 'flow.assist.error.empty'),
+      tooLong: t(strings, 'flow.assist.error.tooLong'),
+    });
+    if (result.ok) return { ok: true, keys: result.value };
+    if (result.reason === 'cancelled') return result;
+    sendLog(`⚠️ [Flow assist] no output names: ${result.error}`);
+    return failed(localizeUserFacingError(result.error, strings));
+  });
+}
+
 export function cancelAssist(id: unknown, deps: FlowAssistDeps): boolean {
   if (typeof id !== 'string') return false;
   const controller = running.get(id);
@@ -140,5 +162,6 @@ export function registerFlowAssistHandlers(deps: FlowAssistDeps): void {
   ipcMain.handle(IPC.FLOW_ASSIST_EDIT, (_event, request: unknown) => handleAssistEdit(request, deps));
   ipcMain.handle(IPC.FLOW_ASSIST_EXPLAIN, (_event, request: unknown) => handleAssistExplain(request));
   ipcMain.handle(IPC.FLOW_ASSIST_NAMES, (_event, request: unknown) => handleAssistNames(request));
+  ipcMain.handle(IPC.FLOW_ASSIST_KEYS, (_event, request: unknown) => handleAssistKeys(request));
   ipcMain.handle(IPC.FLOW_ASSIST_CANCEL, (_event, id: unknown) => cancelAssist(id, deps));
 }

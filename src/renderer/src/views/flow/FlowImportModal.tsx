@@ -108,12 +108,13 @@ export const FlowImportModal: React.FC<FlowImportModalProps> = ({
           >
             {t('flow.import.file.button')}
           </Button>
-          {fileError && <Text fz="xs" c="var(--mantine-color-error)">{fileError}</Text>}
+          {fileError && <Text fz="xs" c="var(--error-text)">{fileError}</Text>}
         </Stack>
 
         <Stack gap="xs">
           <Text fz="sm" fw={600}>{t('flow.import.url.label')}</Text>
           <AppTextInput
+            aria-label={t('flow.import.url.label')}
             value={urlValue}
             onChange={(e) => { setUrlValue(e.currentTarget.value); setUrlError(''); }}
             placeholder={t('flow.import.url.placeholder')}

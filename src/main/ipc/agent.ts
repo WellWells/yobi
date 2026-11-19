@@ -6,6 +6,12 @@ import { config } from '../config';
 import { resolveMcpCommandName } from '../../shared/mcpCommand';
 import { BUILTIN_AGENT_COMMAND } from '../../shared/types';
 import { findBuiltinConnector } from '../../shared/builtinConnectors';
+import { readKnowledgeFileScope, splitKnowledgeIds } from '../../shared/knowledgeBase';
+
+/** Knowledge base ids the user still has; anything else the renderer sent is dropped. */
+function configuredKnowledgeIds(ids: readonly string[]): string[] {
+  return ids.filter((id) => config.knowledgeBases.some((kb) => kb.id === id));
+}
 import { loadLanguageData, t } from '../i18n';
 import { cancelAllAgentConfirms } from '../chat/agentConfirmBridge';
 import { executeAgentRun } from '../chat/agentCommand';
@@ -80,6 +86,8 @@ export function registerAgentHandlers(ctx: IpcContext): void {
       attachments?: string[],
       mcpServerIds?: string[],
       web?: boolean,
+      knowledgeOnly?: boolean,
+      knowledgeFiles?: unknown,
     ): Promise<AgentCommandResult> => {
       const goal = (rawGoal ?? '').trim();
       const strings = (await loadLanguageData(config.locale)) ?? {};
@@ -88,10 +96,15 @@ export function registerAgentHandlers(ctx: IpcContext): void {
 
       // Resolve against config, never against what the renderer sent: the command name is only a
       // label, and every server id has to be one the user actually configured and left enabled.
-      const scoped = resolveDisclosedServers(mcpServerIds);
-      if ((mcpServerIds?.length ?? 0) > 0 && scoped.ids.length === 0) {
+      const split = splitKnowledgeIds(mcpServerIds);
+      const scoped = resolveDisclosedServers(split.servers);
+      if (split.servers.length > 0 && scoped.ids.length === 0) {
         return { success: false, error: t(strings, 'mcp.command.unknownServer') };
       }
+      const knowledgeIds = configuredKnowledgeIds(split.knowledge);
+      const onlyKnowledge = knowledgeOnly === true && knowledgeIds.length > 0;
+      // The documents it is limited to: only inside "knowledge base only", only of attached bases.
+      const knowledgeScope = onlyKnowledge ? readKnowledgeFileScope(knowledgeFiles, knowledgeIds) : undefined;
 
       const now = new Date().toISOString();
       const state: AgentRunState = {
@@ -101,6 +114,10 @@ export function registerAgentHandlers(ctx: IpcContext): void {
         ...(conversationPath ? { conversationPath } : {}),
         ...(attachments?.length ? { attachments: attachments.filter(Boolean) } : {}),
         ...(scoped.ids.length > 0 ? { mcpServerIds: scoped.ids, mcpCommandName: scoped.command } : {}),
+        ...(knowledgeIds.length > 0 ? { knowledgeIds } : {}),
+        // Only with a base still configured: "only the knowledge base" with none would be a run with no tool.
+        ...(onlyKnowledge ? { knowledgeOnly: true as const } : {}),
+        ...(knowledgeScope ? { knowledgeFiles: knowledgeScope } : {}),
         // Only the off state is persisted; `undefined` means web allowed, so legacy runs need no migration.
         ...(web === false ? { web: false } : {}),
         status: 'running',
@@ -132,6 +149,17 @@ export function registerAgentHandlers(ctx: IpcContext): void {
       if (still.ids.length === 0) return { success: false, error: t(strings, 'mcp.command.unknownServer') };
       state.mcpServerIds = still.ids;
       state.mcpCommandName = still.command;
+    }
+    // A base deleted since is no longer attached; one still there stays first.
+    if (state.knowledgeIds?.length) state.knowledgeIds = configuredKnowledgeIds(state.knowledgeIds);
+    // Its bases all removed since: nothing left to answer from, and widening it is not ours to do.
+    if (state.knowledgeOnly && !state.knowledgeIds?.length) return { success: false, error: t(strings, 'agent.error.notResumable') };
+    // Its documents' limit loses the removed bases with them; a limit with nothing left is no run,
+    // never a lifted one.
+    if (state.knowledgeFiles) {
+      const kept = readKnowledgeFileScope(state.knowledgeFiles, state.knowledgeIds ?? []);
+      if (!kept) return { success: false, error: t(strings, 'agent.error.notResumable') };
+      state.knowledgeFiles = kept;
     }
     const answer = (rawAnswer ?? '').trim();
     // The model picked for this resume, spelled the way every other send spells it; anything that
@@ -201,13 +229,19 @@ export function registerAgentHandlers(ctx: IpcContext): void {
    */
   ipcMain.handle(
     IPC.AGENT_SET_CONNECTORS,
-    async (_event, filePath: string, serverIds: string[], web?: boolean, agent?: boolean): Promise<boolean> => {
+    async (_event, filePath: string, serverIds: string[], web?: boolean, agent?: boolean, knowledgeOnly?: boolean, knowledgeFiles?: unknown): Promise<boolean> => {
       const target = (filePath ?? '').trim();
       if (!target) return false;
       try {
-        const { ids } = resolveDisclosedServers(serverIds);
+        const split = splitKnowledgeIds(serverIds);
+        const { ids } = resolveDisclosedServers(split.servers);
+        const kb = configuredKnowledgeIds(split.knowledge);
         await mergeConversationThread(target, {
           ...(ids.length > 0 ? { mcp: ids } : { mcp: undefined }),
+          kb: kb.length > 0 ? kb : undefined,
+          // Only ever true; `undefined` drops a stored one (the patch is merged over the marker).
+          kbOnly: knowledgeOnly === true && kb.length > 0 ? true : undefined,
+          kbFiles: knowledgeOnly === true ? readKnowledgeFileScope(knowledgeFiles, kb) : undefined,
           // On, or switched off by the user (`false`); absent is the default, where the agent may
           // turn it on itself. A default conversation's marker stays as it was.
           web: web === true ? true : web === false ? false : undefined,

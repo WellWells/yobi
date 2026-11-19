@@ -30,11 +30,14 @@ export function buildInputStyles({
   resize = 'none',
 }: BuildInputStylesOptions = {}) {
   return {
+    // The border colour is a variable on the wrapper, never `borderColor` on the input: an inline
+    // colour outranks Mantine's :focus rule, and focused fields then look exactly like idle ones.
+    // The default comes from globals.css (`--border-control`, `--focus-ring`).
+    wrapper: (tone === 'accent' || tone === 'recording'
+      ? { '--input-bd': 'var(--mantine-color-accent)' }
+      : {}) as CSSProperties,
     input: {
       background: resolveInputBackground(tone),
-      borderColor: tone === 'accent' || tone === 'recording'
-        ? 'var(--mantine-color-accent)'
-        : 'var(--mantine-color-default-border)',
       color: 'var(--mantine-color-default-color)',
       fontSize: 'var(--font-size-md)',
       fontFamily: mono ? 'var(--font-mono)' : 'var(--font-sans)',

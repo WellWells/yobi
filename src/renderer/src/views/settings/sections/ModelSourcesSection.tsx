@@ -1,11 +1,15 @@
 import React, { useState } from 'react';
-import { ActionIcon, Box, Group, Menu, Stack, Text, Tooltip } from '@mantine/core';
+import { ActionIcon, Box, Group, Menu, Stack, Text } from '@mantine/core';
+import { SearchSection } from '../FreezeWhileHidden';
 import { CircleUserRound, LogIn, LogOut, EllipsisVertical, RotateCcw } from 'lucide-react';
 import {
   GroupHeader, SectionCard, SectionTitle, SettingRow, ToggleSwitch, VisibilityToggle,
 } from '../components';
 import { AccountStatusPill, pillStateOf } from './AccountStatusPill';
+import { HiddenSourceBadge, sourceNameColor } from './HiddenSourceBadge';
 import { AppButton } from '../../../components/AppButton';
+import { DangerMenuItem } from '../../../components/DangerMenuItem';
+import { TooltipTarget } from '../../../components/TooltipTarget';
 import { WebDialog } from '../../../components/WebDialog';
 import { getModelIconByUrl } from '../../../config/models';
 import { useHiddenSources } from '../hooks/useHiddenSources';
@@ -35,11 +39,11 @@ const RowMenu: React.FC<{
 }> = ({ busy, onLogout, onReset, t }) => (
   <Menu position="bottom-end" radius="sm" withinPortal zIndex={Z_POPOVER}>
     <Menu.Target>
-      <Tooltip label={t('common.moreActions')} position="bottom">
+      <TooltipTarget label={t('common.moreActions')} position="bottom">
         <ActionIcon variant="default" size={30} aria-label={t('common.moreActions')} loading={busy}>
           <EllipsisVertical size={14} />
         </ActionIcon>
-      </Tooltip>
+      </TooltipTarget>
     </Menu.Target>
     <Menu.Dropdown>
       {onLogout && (
@@ -50,9 +54,9 @@ const RowMenu: React.FC<{
           <Menu.Divider />
         </>
       )}
-      <Menu.Item color="red" leftSection={<RotateCcw size={14} />} onClick={onReset}>
+      <DangerMenuItem leftSection={<RotateCcw size={14} />} onClick={onReset}>
         {t('settings.accounts.reset.action')}
-      </Menu.Item>
+      </DangerMenuItem>
     </Menu.Dropdown>
   </Menu>
 );
@@ -70,7 +74,7 @@ export const ModelSourcesSection: React.FC<Props> = ({ account, t, showSection, 
 
   return (
     <Box>
-      <Box display={showSection(TAG_SETS.accounts, 'accounts') ? 'block' : 'none'}>
+      <SearchSection shown={showSection(TAG_SETS.accounts, 'accounts')}>
         <SectionCard style={{ marginBottom: sectionGap }}>
           <SectionTitle icon={<CircleUserRound size={15} />} label={t('settings.accounts.title')} />
           <Text fz="var(--font-size-sm)" c="dimmed" lh={1.6}>
@@ -105,28 +109,21 @@ export const ModelSourcesSection: React.FC<Props> = ({ account, t, showSection, 
                       wrap="nowrap"
                       flex={1}
                       miw={0}
-                      opacity={providerHidden ? 0.55 : 1}
                     >
-                      <Box c="var(--mantine-color-default-color)" mt={2} style={{ flexShrink: 0 }}>
+                      <Box c={sourceNameColor(providerHidden)} mt={2} style={{ flexShrink: 0 }}>
                         <Icon size={18} />
                       </Box>
                       <Stack gap={4} miw={0}>
                         <Group gap={8} align="center" wrap="nowrap" miw={0}>
-                          <Text fz="var(--font-size-base)" fw={600} c="var(--mantine-color-default-color)">
+                          <Text fz="var(--font-size-base)" fw={600} c={sourceNameColor(providerHidden)}>
                             {PROVIDER_LABELS[provider]}
                           </Text>
                           <AccountStatusPill state={pillState} t={t} />
+                          {providerHidden && <HiddenSourceBadge t={t} />}
                         </Group>
                         <Text fz="var(--font-size-sm)" c="dimmed" lh={1.5}>
                           {t(`settings.accounts.necessity.${provider}`)}
                         </Text>
-                        {provider === 'deepseek' && (
-                          // DeepSeek has no temporary chat: every chat Yobi opens there is deleted
-                          // once read, whatever the temporary-chat switch below says.
-                          <Text fz="var(--font-size-sm)" c="dimmed" lh={1.5}>
-                            {t('providers.deepseek.chatsDeleted')}
-                          </Text>
-                        )}
                       </Stack>
                     </Group>
 
@@ -172,6 +169,7 @@ export const ModelSourcesSection: React.FC<Props> = ({ account, t, showSection, 
             alignStart
             control={
               <ToggleSwitch
+                aria-label={t('settings.accounts.temporaryChat.title')}
                 checked={account.oneShotTemporaryChat}
                 onChange={() => { void account.toggleOneShotTemporaryChat(); }}
               />
@@ -185,13 +183,14 @@ export const ModelSourcesSection: React.FC<Props> = ({ account, t, showSection, 
             alignStart
             control={
               <ToggleSwitch
+                aria-label={t('settings.accounts.fallback.title')}
                 checked={account.providerFallback}
                 onChange={() => { void account.toggleProviderFallback(); }}
               />
             }
           />
         </SectionCard>
-      </Box>
+      </SearchSection>
 
       <WebDialog
         open={confirmLogout !== null}

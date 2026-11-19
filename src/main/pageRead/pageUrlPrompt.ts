@@ -13,8 +13,10 @@ export async function pagePromptFor(url: string, signal?: AbortSignal): Promise<
   if (!config.pageConnectorEnabled) return null;
   try {
     const page = await readPageLink(url, signal);
-    const published = page.publishedAt ? `Published: ${page.publishedAt}\n\n` : '';
-    return { title: page.title, url: page.url, cleanedText: `${published}${page.text}`, truncated: page.truncated };
+    const archived = page.archived ? `Archived copy of ${page.archived.day}: the site no longer has this page.\n` : '';
+    const published = page.publishedAt ? `Published: ${page.publishedAt}\n` : '';
+    const heading = archived || published ? `${archived}${published}\n` : '';
+    return { title: page.title, url: page.archived?.url ?? page.url, cleanedText: `${heading}${page.text}`, truncated: page.truncated };
   } catch (err) {
     if (signal?.aborted) throw err;
     sendLog(`📄 [PageRead] ${err instanceof Error ? err.message : String(err)} — reading the page the usual way`);

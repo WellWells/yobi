@@ -6,6 +6,6 @@
 
 .tag[data-selected='true'] {
   border-color: var(--mantine-color-accent);
-  color: var(--mantine-color-accent);
+  color: var(--mantine-color-accent-text);
   opacity: 1;
 }

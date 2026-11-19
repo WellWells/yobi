@@ -3,6 +3,7 @@ import { ActionIcon, Box, Group, Tooltip } from '@mantine/core';
 import { Search, X } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { AppTextInput } from './AppTextInput';
+import { MIN_TARGET_PX } from './a11y';
 import { useResolvedCombo } from '../store/shortcutStore';
 import { comboLabel } from '../../../shared/shortcuts';
 import { isMac } from '../utils/keyLabels';
@@ -141,7 +142,7 @@ export const ToolbarSearchInput = React.forwardRef<HTMLInputElement, ToolbarSear
     radius="sm"
     leftSection={<Search size={13} />}
     rightSection={value ? (
-      <ActionIcon variant="subtle" size={20} onClick={() => onChange('')} aria-label={clearLabel}>
+      <ActionIcon variant="subtle" size={MIN_TARGET_PX} onClick={() => onChange('')} aria-label={clearLabel}>
         <X size={12} />
       </ActionIcon>
     ) : null}

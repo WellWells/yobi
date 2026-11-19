@@ -16,7 +16,8 @@
 }
 
 .fileItem:focus-visible {
-  box-shadow: 0 0 0 2px var(--mantine-color-accent-dim);
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
 }
 
 .fileItem[data-selected='true'] {
@@ -66,7 +67,7 @@
 }
 
 .providerMark[data-selected='true'] {
-  color: var(--mantine-color-accent);
+  color: var(--mantine-color-accent-text);
 }
 
 /* The unread dot at the end of the line. A flex box, so the inline icon does not open a text line
@@ -102,11 +103,14 @@
 }
 
 .folderItem:focus-visible {
-  box-shadow: 0 0 0 2px var(--mantine-color-accent-dim);
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
 }
 
-/* Conversations dragged over it would be filed here. */
-.folderItem[data-drop-target='true'] {
+/* Conversations dragged over it would be filed here; files dragged over a knowledge base would be
+   added to it; a knowledge base whose page is open is the selection. */
+.folderItem[data-drop-target='true'],
+.folderItem[data-selected='true'] {
   background: var(--mantine-color-accent-dim);
 }
 
@@ -168,7 +172,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  line-height: 18px;
+  line-height: 1.4;
 }
 
 /* A section heading (Pinned, Folders, Recent): its name and a chevron, the whole row a toggle. */
@@ -178,6 +182,7 @@
   display: flex;
   align-items: center;
   border-radius: 8px;
+  outline: none;
   transition: background 0.15s ease;
 }
 
@@ -216,8 +221,9 @@
   flex-shrink: 0;
 }
 
-.sectionItem:focus-visible {
-  box-shadow: 0 0 0 2px var(--mantine-color-accent-dim);
+.sectionRow:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
 }
 
 .sectionChevron {

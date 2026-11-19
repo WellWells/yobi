@@ -1,5 +1,6 @@
+import { fillTemplate } from './fillTemplate';
 import { SHARE_EXPIRE_VALUES } from './shareExpire';
-import { CAPTURE_BACKGROUND_STYLES, CAPTURE_PALETTES } from './capturePalettes';
+import { CAPTURE_PALETTES, captureBackgroundStyleOf } from './capturePalettes';
 import type { CaptureBackgroundStyle } from './capturePalettes';
 import { SITE_CONNECTOR_ROWS, bySite } from './siteConnectors';
 import type { SiteConnectorSite } from './siteConnectors';
@@ -7,6 +8,7 @@ import type { ShareExpire, ShareExpireCache } from './shareExpire';
 import type { MapPlaceRef, TurnMeta, TurnShell } from './conversationDoc';
 import type { TokenUsage } from './tokenEstimate';
 import type { Theme } from './themes';
+import type { FlowStepColor } from './flowStepColor';
 import type { BotGrant, BotGroupGrant } from './botPermissions';
 import type { ResearchProgress } from './researchProgress';
 import type { MarkdownLabels } from './markdownLabels';
@@ -186,7 +188,7 @@ export const BYOK_MODEL_EXAMPLES: Record<ByokProviderType, string> = {
   anthropic: 'claude-opus-4-8',
   gemini: 'models/gemini-3.1-flash-lite',
   openrouter: 'anthropic/claude-sonnet-5',
-  deepseek: 'deepseek-chat',
+  deepseek: 'deepseek-flash',
   xai: 'grok-4.5',
   groq: 'llama-3.3-70b-versatile',
   mistral: 'mistral-large-latest',
@@ -352,6 +354,11 @@ export interface ByokTestResult {
   ok: boolean;
   reply?: string;
   message?: string;
+}
+
+/** One saved key's answer to the Settings page's "Test all". */
+export interface ByokKeyTestResult extends ByokTestResult {
+  id: string;
 }
 
 /** Stable id/command of the in-process, opt-in LINE PC reader connector. */
@@ -589,8 +596,18 @@ export const IPC = {
   YTDL_TOOLS_REMOVE: 'ytdl-tools:remove',
   YTDL_TOOLS_SET_CUSTOM: 'ytdl-tools:set-custom',
   YTDL_TOOLS_SET_NIGHTLY: 'ytdl-tools:set-nightly',
+  MANAGED_TOOLS_GET: 'managed-tools:get',
+  MANAGED_TOOLS_STATE: 'managed-tools:state',
+  MANAGED_TOOLS_INSTALL: 'managed-tools:install',
+  MANAGED_TOOLS_CHECK_UPDATE: 'managed-tools:check-update',
+  MANAGED_TOOLS_REMOVE: 'managed-tools:remove',
+  MANAGED_TOOLS_SET_CUSTOM: 'managed-tools:set-custom',
   DOWNLOADS_KEEP_GET: 'downloads-keep:get',
   DOWNLOADS_KEEP_SET: 'downloads-keep:set',
+  BOT_DOWNLOAD_CAP_GET: 'bot-download-cap:get',
+  BOT_DOWNLOAD_CAP_SET: 'bot-download-cap:set',
+  BOT_USER_DOWNLOAD_CAPS_GET: 'bot-user-download-caps:get',
+  BOT_USER_DOWNLOAD_CAP_SET: 'bot-user-download-cap:set',
   START_CONVERSATION: 'file:start-conversation',
   IMPORT_CONVERSATIONS: 'file:import-conversations',
   START_FILE_DRAG: 'file:start-drag',
@@ -620,6 +637,9 @@ export const IPC = {
   UPDATE_SHORTCUTS: 'shortcuts:update',
   GET_AI_URL: 'ai:get-url',
   UPDATE_AI_URL: 'ai:update-url',
+  /** Main → renderer: the chat's default model changed outside Settings (the Yobi connector). */
+  AI_URL_CHANGED: 'ai:url-changed',
+  SETTINGS_CHANGED: 'settings:changed',
   GET_HIDDEN_SOURCES: 'sources:get-hidden',
   UPDATE_HIDDEN_SOURCES: 'sources:update-hidden',
   GET_LANGUAGE_LIST: 'language:get-list',
@@ -681,6 +701,7 @@ export const IPC = {
   CLEAR_TELEGRAM_LARGE_UPLOAD: 'telegram:clear-large-upload',
   TEST_TELEGRAM_LARGE_UPLOAD: 'telegram:test-large-upload',
   UPDATE_TELEGRAM_ALLOW_GROUP_COMMANDS: 'telegram:update-allow-group-commands',
+  UPDATE_TELEGRAM_REPLACE_LINK_MESSAGE: 'telegram:update-replace-link-message',
   /** Replaces one paired Telegram / LINE account's grants (`BotSetPermissionsRequest`). */
   BOT_SET_PERMISSIONS: 'bot:set-permissions',
   /** Replaces what accounts are given when they pair (`BotSetDefaultGrantsRequest`). */
@@ -805,6 +826,7 @@ export const IPC = {
   FLOW_ASSIST_EDIT: 'flow-assist:edit',
   FLOW_ASSIST_EXPLAIN: 'flow-assist:explain',
   FLOW_ASSIST_NAMES: 'flow-assist:names',
+  FLOW_ASSIST_KEYS: 'flow-assist:keys',
   FLOW_ASSIST_CANCEL: 'flow-assist:cancel',
   DOC_ASSISTANT_RUN: 'doc-assistant:run',
   DOC_ASSISTANT_CANCEL: 'doc-assistant:cancel',
@@ -815,6 +837,10 @@ export const IPC = {
   TRANSLATE_CONVERSATION: 'translate:conversation',
   TRANSLATE_CONVERSATION_CANCEL: 'translate:conversation-cancel',
   TRANSLATE_CONVERSATION_PROGRESS: 'translate:conversation-progress',
+  PERPLEXITY_MODEL_GET: 'perplexity-model:get',
+  PERPLEXITY_MODEL_SET: 'perplexity-model:set',
+  PERPLEXITY_MODEL_REFRESH: 'perplexity-model:refresh',
+  PERPLEXITY_MODEL_CHANGED: 'perplexity-model:changed',
   GEMINI_MODEL_GET: 'gemini-model:get',
   GEMINI_MODEL_SET: 'gemini-model:set',
   GEMINI_MODEL_REFRESH: 'gemini-model:refresh',
@@ -832,6 +858,7 @@ export const IPC = {
   BYOK_DELETE_INSTANCE: 'byok:delete-instance',
   BYOK_LIST_MODELS: 'byok:list-models',
   BYOK_TEST_INSTANCE: 'byok:test-instance',
+  BYOK_TEST_KEYS: 'byok:test-keys',
   BYOK_SAVE_GROUP: 'byok:save-group',
   BYOK_DELETE_GROUP: 'byok:delete-group',
   MCP_LIST_SERVERS: 'mcp:list-servers',
@@ -860,6 +887,8 @@ export const IPC = {
   UPDATE_LAYOUT_MODE: 'ui:update-layout-mode',
   GET_SHOW_TOKEN_USAGE: 'ui:get-show-token-usage',
   UPDATE_SHOW_TOKEN_USAGE: 'ui:update-show-token-usage',
+  GET_BACKDROP_MOTION: 'ui:get-backdrop-motion',
+  UPDATE_BACKDROP_MOTION: 'ui:update-backdrop-motion',
   GET_SHOW_RECAP: 'ui:get-show-recap',
   UPDATE_SHOW_RECAP: 'ui:update-show-recap',
   GET_LINK_RECOGNITION: 'links:get-recognition',
@@ -867,6 +896,8 @@ export const IPC = {
   LINK_RECOGNITION_CHANGED: 'links:recognition-changed',
   GET_MARKDOWN_ZOOM: 'ui:get-markdown-zoom',
   UPDATE_MARKDOWN_ZOOM: 'ui:update-markdown-zoom',
+  GET_SYSTEM_TEXT_SCALE: 'ui:get-system-text-scale',
+  SYSTEM_TEXT_SCALE_CHANGED: 'ui:system-text-scale-changed',
   READING_ZOOM_COMMAND: 'ui:reading-zoom-command',
   GET_READING_PREFS: 'ui:get-reading-prefs',
   UPDATE_READING_PREFS: 'ui:update-reading-prefs',
@@ -901,6 +932,12 @@ export const IPC = {
   FLOW_FOLDER_MOVE: 'flow-folder:move',
   /** Main → renderer after any folder change: the new `FlowFolder[]`. */
   FLOW_FOLDERS_CHANGED: 'flow-folder:changed',
+  /** 「全部執行」 on a folder: its flows one after another (`FlowFolderRunStartResult`). */
+  FLOW_FOLDER_RUN: 'flow-folder:run',
+  FLOW_FOLDER_RUN_STOP: 'flow-folder:run-stop',
+  FLOW_FOLDER_RUN_LIST: 'flow-folder:run-list',
+  /** Main → renderer while folder runs go: `FlowFolderRunState[]` (a just-ended one included once). */
+  FLOW_FOLDER_RUN_CHANGED: 'flow-folder:run-changed',
   /** Sorting unfiled flows into folders: the model proposes, the user ticks what is filed. */
   FLOW_FOLDER_SORT_GET_MODEL: 'flow-folder:sort-get-model',
   FLOW_FOLDER_SORT_PROPOSE: 'flow-folder:sort-propose',
@@ -956,6 +993,37 @@ export const IPC = {
   PTT_FIND_BOARDS: 'ptt-board:find-boards',
   PTT_PREVIEW_BOARD: 'ptt-board:preview',
   PTT_CANCEL_PREVIEW: 'ptt-board:cancel-preview',
+  KB_LIST: 'knowledge:list',
+  KB_PICK_FOLDER: 'knowledge:pick-folder',
+  KB_SAVE: 'knowledge:save',
+  KB_REMOVE: 'knowledge:remove',
+  KB_SYNC: 'knowledge:sync',
+  KB_OPEN_CITATION: 'knowledge:open-citation',
+  /** Shows a base's folder in the file manager, by the base's id (never a path from the renderer). */
+  KB_OPEN_FOLDER: 'knowledge:open-folder',
+  /** A base's files (disk joined with the index), by the base's id. */
+  KB_FILES: 'knowledge:files',
+  KB_FILE_DETAIL: 'knowledge:file-detail',
+  KB_FILE_PREVIEW: 'knowledge:file-preview',
+  /** The base page's content search: the index's ranking, no model (`KnowledgeSearchResult`). */
+  KB_SEARCH: 'knowledge:search',
+  /** Copies files (paths from a drop or the file picker) into a base's folder. */
+  KB_IMPORT: 'knowledge:import',
+  KB_PICK_FILES: 'knowledge:pick-files',
+  /** Moves files of a base to the Recycle Bin, by relative path. */
+  KB_DELETE_FILES: 'knowledge:delete-files',
+  KB_OPEN_FILE: 'knowledge:open-file',
+  /** Shows one file of a base selected in the file manager (same path check as opening it). */
+  KB_REVEAL_FILE: 'knowledge:reveal-file',
+  /** Queues files for an AI description with a chosen model; `KB_ANALYSIS` reports each one. */
+  KB_ANALYZE: 'knowledge:analyze',
+  KB_ANALYZE_CANCEL: 'knowledge:analyze-cancel',
+  KB_AI_CLEAR: 'knowledge:ai-clear',
+  KB_ANALYSIS: 'knowledge:analysis',
+  /** main → renderer: one base's index status changed (`KbStatus`). */
+  KB_STATUS: 'knowledge:status',
+  /** main → renderer: the list of bases changed. */
+  KB_CHANGED: 'knowledge:changed',
   CAPTURE_PAGE: 'browser:capture-page',
   METRICS_GET: 'metrics:get',
   METRICS_CONVERSATION_TOKENS: 'metrics:conversation-tokens',
@@ -982,6 +1050,8 @@ export interface NotifyEventPrefs {
   chatFailure: boolean;
   flowSuccess: boolean;
   flowFailure: boolean;
+  /** Someone asks to be paired with a bot, or a bot is added to a group awaiting approval. */
+  botRequests: boolean;
 }
 
 export type MetricDomain = 'chat' | 'agent' | 'flow';
@@ -1052,6 +1122,8 @@ export interface MetricsSnapshot {
 export interface FlowExecutionEvent {
   flowId: string;
   name: string;
+  /** On the "ended" event only: how the run came out (the window announces it to a screen reader). */
+  outcome?: 'succeeded' | 'failed' | 'stopped';
 }
 
 export interface FeedCandidate {
@@ -1519,6 +1591,8 @@ export interface TelegramSettingsSnapshot {
   /** The my.telegram.org values for files over 50 MB. */
   largeUpload: TelegramLargeUploadSnapshot;
   allowGroupCommands: boolean;
+  /** The answer to a link pasted alone takes that message's place (the message is deleted). */
+  replaceLinkMessage: boolean;
   /** Per-account grants keyed by the stringified user id; no entry means no grants. */
   permissions: Record<string, BotGrant[]>;
   /** What an account is given when it pairs with a code. */
@@ -1883,6 +1957,23 @@ export function clampCaptureMargin(margin: unknown): number {
   return Math.max(0, Math.min(MAX_CAPTURE_MARGIN, Math.round(value)));
 }
 
+/**
+ * How opaque the card under the text is, in percent; lower lets the background show through.
+ * The floor is where the body text of the most saturated palette (nebula) still reads at 4.5:1 —
+ * coloured text falls back on its own (captureCardCssVars), body text has nothing to fall back to.
+ */
+export const MIN_CARD_OPACITY = 40;
+export const MAX_CARD_OPACITY = 100;
+export const CARD_OPACITY_STEP = 5;
+export const CARD_OPACITY_MARKS = [40, 60, 80, 100] as const;
+export const DEFAULT_CARD_OPACITY = 95;
+
+export function clampCardOpacity(opacity: unknown): number {
+  const value = typeof opacity === 'number' ? opacity : Number.NaN;
+  if (!Number.isFinite(value)) return DEFAULT_CARD_OPACITY;
+  return Math.max(MIN_CARD_OPACITY, Math.min(MAX_CARD_OPACITY, Math.round(value)));
+}
+
 export const DEFAULT_CAPTURE_WIDTH = 1000;
 export const MIN_CAPTURE_WIDTH = 600;
 export const MAX_CAPTURE_WIDTH = 1200;
@@ -2001,6 +2092,8 @@ export interface CaptureSettings {
   range: CaptureRange;
   width: number;
   margin: number;
+  /** Percent, MIN_CARD_OPACITY–100. */
+  cardOpacity: number;
   pixelRatio: number;
   zip: boolean;
 }
@@ -2046,10 +2139,15 @@ export interface ExportPromptPayload {
   zip: boolean;
   width: number;
   margin: number;
+  cardOpacity: number;
   palette: string;
   backgroundStyle: CaptureBackgroundStyle;
   direction: string;
+  /** Settings' resolution: the panel multiplies the card's measured height by it. */
+  pixelRatio: number;
   theme: Theme;
+  /** The card the preview draws; null draws the schematic only. */
+  preview: ExportPromptPreview | null;
   strings: {
     title: string;
     fileName: string;
@@ -2060,8 +2158,11 @@ export interface ExportPromptPayload {
     cancel: string;
     theme: string;
     margin: string;
+    cardOpacity: string;
     aiName: string;
     aiNameMenu: string;
+    /** Unfilled templates: the panel fills them with its own measurement. */
+    tooTall: CaptureTooTallTemplates;
     share: ExportPromptShareStrings;
   };
   sizes: Array<{ value: number; label: string }>;
@@ -2069,6 +2170,41 @@ export interface ExportPromptPayload {
   /** The models that can suggest a file name; null when this panel offers no naming. */
   naming: ExportNaming | null;
   share: ExportPromptShareState;
+}
+
+/** The card text the quick-export preview draws, with what main fills in for the capture window. */
+export interface ExportPromptPreview {
+  payload: MarkdownCapturePayload;
+  markdownLabels?: MarkdownLabels;
+  readingFont?: 'default' | 'serif';
+}
+
+/** `{{format}}`, `{{limit}}`, `{{height}}` and `{{width}}` left in, for whoever measured the card. */
+export interface CaptureTooTallTemplates {
+  over: string;
+  switch: string;
+  widen: string;
+}
+
+/**
+ * Only ever suggest what the quick-export panel can change: the width picker, or PDF. Shared by
+ * the panel (warned before export, from its preview) and main (after a capture came back too tall).
+ */
+export function captureTooTallNotice(
+  verdict: CaptureHeightVerdict,
+  format: CaptureFormat,
+  templates: CaptureTooTallTemplates,
+): string {
+  const over = fillTemplate(templates.over, {
+    format: format.toUpperCase(),
+    limit: String(verdict.limit),
+    height: String(verdict.encodedHeight),
+  });
+  const hint = verdict.suggestedWidth === null
+    ? templates.switch
+    : fillTemplate(templates.widen, { width: String(verdict.suggestedWidth) });
+  // CJK sentences already close with a full-width stop, which supplies its own spacing.
+  return over + (/[。！？]$/.test(over) ? '' : ' ') + hint;
 }
 
 /** One model the panel can ask for a file name. */
@@ -2141,6 +2277,7 @@ export interface CaptureExportChoice {
   zip: boolean;
   width: number;
   margin: number;
+  cardOpacity: number;
   palette: string;
   backgroundStyle: CaptureBackgroundStyle;
   action: CaptureExportAction;
@@ -2166,6 +2303,7 @@ export interface ExportChoiceFallback {
   zip: boolean;
   width: number;
   margin: number;
+  cardOpacity: number;
   palette: string;
   backgroundStyle: CaptureBackgroundStyle;
   expire: ShareExpire;
@@ -2205,12 +2343,11 @@ export function normalizeExportChoice(
     margin: typeof value.margin === 'number'
       ? clampCaptureMargin(value.margin)
       : clampCaptureMargin(fallback.margin),
+    cardOpacity: clampCardOpacity(typeof value.cardOpacity === 'number' ? value.cardOpacity : fallback.cardOpacity),
     palette: CAPTURE_PALETTES.some((entry) => entry.key === value.palette)
       ? (value.palette as string)
       : fallback.palette,
-    backgroundStyle: CAPTURE_BACKGROUND_STYLES.includes(value.backgroundStyle as CaptureBackgroundStyle)
-      ? (value.backgroundStyle as CaptureBackgroundStyle)
-      : fallback.backgroundStyle,
+    backgroundStyle: captureBackgroundStyleOf(value.backgroundStyle) ?? fallback.backgroundStyle,
     action: value.action === 'save' ? 'save' : 'copy',
   };
 }
@@ -2249,6 +2386,8 @@ export interface MarkdownCaptureOptions {
   showTokens: boolean;
   width: number;
   margin?: number;
+  /** Percent, MIN_CARD_OPACITY–100; absent = DEFAULT_CARD_OPACITY. */
+  cardOpacity?: number;
   background: string;
   cardTheme: CardTheme;
   cardLayout: CardLayout;
@@ -2317,7 +2456,7 @@ export interface ZipExportResult {
   error?: string;
 }
 
-export type SkillType = 'shell' | 'run' | 'js' | 'browser' | 'browser_open' | 'browser_js' | 'browser_close' | 'llm' | 'clipboard' | 'delay' | 'notify' | 'capture' | 'share' | 'bot' | 'rss' | 'stop' | 'comment' | 'scraper' | 'search' | 'research' | 'gmap_reviews' | 'line_read' | 'telegram_read' | 'mcp' | 'loop' | 'end_loop' | 'if' | 'end_if' | 'on_change' | 'sysinfo' | 'http' | 'youtube' | 'youtube_subs' | 'youtube_info' | 'youtube_download' | 'x_posts' | 'x_thread' | 'x_trends' | 'x_media' | 'ptt_board' | 'power' | 'restart_app' | 'file_write' | 'file_read' | 'file_list' | 'file_delete' | 'file_download' | 'email_send' | 'text' | 'translate' | 'stock' | 'forex' | 'weather' | 'air_quality' | 'calendar' | 'mail_fetch' | 'almanac' | 'tw_invoice' | 'random' | 'break' | 'continue';
+export type SkillType = 'shell' | 'run' | 'js' | 'browser' | 'browser_open' | 'browser_js' | 'browser_close' | 'llm' | 'clipboard' | 'delay' | 'notify' | 'capture' | 'share' | 'bot' | 'rss' | 'stop' | 'comment' | 'scraper' | 'search' | 'research' | 'gmap_reviews' | 'line_read' | 'telegram_read' | 'mcp' | 'loop' | 'end_loop' | 'if' | 'end_if' | 'on_change' | 'sysinfo' | 'http' | 'youtube' | 'youtube_subs' | 'youtube_info' | 'youtube_download' | 'x_posts' | 'x_thread' | 'x_trends' | 'x_media' | 'ptt_board' | 'power' | 'restart_app' | 'file_write' | 'file_read' | 'file_list' | 'file_delete' | 'file_download' | 'email_send' | 'text' | 'translate' | 'stock' | 'forex' | 'weather' | 'air_quality' | 'calendar' | 'mail_fetch' | 'almanac' | 'tw_invoice' | 'app_store' | 'price_search' | 'random' | 'break' | 'continue';
 
 export interface SkillInstance {
   id: string;
@@ -2325,6 +2464,8 @@ export interface SkillInstance {
   label: string;
   config: Record<string, string>;
   outputKey: string;
+  /** A saved visual annotation; not part of the step's execution settings. */
+  color?: FlowStepColor;
 }
 
 export const TRIGGER_TYPES = ['hotkey', 'cron', 'manual', 'bot', 'chat', 'system', 'file'] as const;
@@ -2646,6 +2787,11 @@ export interface AgentHelperStep {
   param?: string;
   /** The helper's own title for the call. */
   doing?: string;
+  /**
+   * How the call ended; absent while it runs. A live trace sends each step twice: when it starts
+   * (no status) and when it ends (with one), the second standing for the first.
+   */
+  status?: 'ok' | 'error';
 }
 
 export interface AgentTurnRecord {
@@ -2729,6 +2875,8 @@ export interface AgentLinkedPage {
   text: string;
   truncated: boolean;
   failure?: string;
+  /** The Internet Archive's copy, the site no longer having the page: the day it was taken and where to open it. */
+  archived?: { day: string; url: string };
 }
 
 /** A page a bot forwards as it stands: the Markdown of each part, and the site's own media for it. */
@@ -2762,11 +2910,29 @@ export interface AgentRunState {
   /** The page the request is about, persisted so an answered question does not read it again. */
   linkedPage?: AgentLinkedPage;
   /**
+   * Working copies of the attached Office files in the output folder (`officeWorkingCopies`), by
+   * the names the agent's tools read; made once, so a resume edits the same copies.
+   */
+  workingCopies?: string[];
+  /**
    * The MCP servers the user disclosed for this run. Persisted, so a resume discloses the same
    * set. Read through `readRunConnectors` — a resume that silently loses its scope widens what
    * the agent may touch.
    */
   mcpServerIds?: readonly string[];
+  /** The knowledge bases the user attached for this run (searched first). Persisted for a resume. */
+  knowledgeIds?: readonly string[];
+  /**
+   * The user asked only those bases ("knowledge base only"): the run's one tool is `kb_search` over
+   * them. Persisted, so answering its question never widens the run to the full kit.
+   */
+  knowledgeOnly?: true;
+  /**
+   * Within a knowledge-only run, the documents the user limited it to, by base id
+   * (`KnowledgeFileScope`). Persisted: a resume never widens it, and a document deleted since is
+   * simply not found.
+   */
+  knowledgeFiles?: Readonly<Record<string, readonly string[]>>;
   /** The slash command that started the run, for the conversation badge. */
   mcpCommandName?: string;
   /**
@@ -2793,9 +2959,10 @@ export interface AgentRunState {
    * started — the web tools, this computer's files and devices, and which connectors (`all`, none,
    * or the listed server ids). A resume re-reads the grants and keeps only what both allow, so
    * revoking a grant while a question is pending narrows the run and a new grant never widens it.
-   * `shell` is absent on runs saved before the grant existed, which reads as not granted.
+   * `shell` and `manage` (the Yobi connector) are absent on runs saved before those grants existed,
+   * which reads as not granted.
    */
-  botGrants?: { web: boolean; local: boolean; shell?: boolean; connectors: 'all' | 'none' | string[] };
+  botGrants?: { web: boolean; local: boolean; shell?: boolean; manage?: boolean; connectors: 'all' | 'none' | string[]; knowledge?: 'all' | 'none' | string[] };
   status: AgentRunStatus;
   /**
    * The step ceiling this run negotiated for itself. Absent on runs written before the ceiling
@@ -2871,7 +3038,9 @@ export type AgentStageLabel =
   /** The model finished while saying the goal is not done, and was sent back to finish the work. */
   | 'held'
   /** Flow building: matching the request against the skill list, and writing the steps. */
-  | 'discovering' | 'building';
+  | 'discovering' | 'building'
+  /** `kb_search`: reading the knowledge base's new and changed files first ("12/40"). */
+  | 'indexing';
 
 export type AgentTraceEvent =
   /** A desktop run left the queue and is past the link shortcut: its clock starts at `at`. */
@@ -2882,9 +3051,13 @@ export type AgentTraceEvent =
   | { kind: 'stage'; turn: number; label: AgentStageLabel; detail?: string }
   /** The user answered the confirmation on step `turn`: the step no longer waits on them. */
   | { kind: 'answered'; turn: number }
-  /** The helper of the `delegate` step `turn` made a call. */
-  | { kind: 'helper'; turn: number; step: AgentHelperStep }
-  | { kind: 'research'; turn: number; progress: ResearchProgress }
+  /** The helper of the `delegate` step `turn` made a call, or one ended (`step.status` set: it stands for the call it settles). */
+  /**
+   * `helperStep` (forwarded from a helper only): the helper's own step the call or checklist is,
+   * so the row knows whether the research that owns its checklist is still running.
+   */
+  | { kind: 'helper'; turn: number; step: AgentHelperStep; helperStep?: number }
+  | { kind: 'research'; turn: number; progress: ResearchProgress; helperStep?: number }
   | { kind: 'observation'; turn: number; tool: string; status: 'ok' | 'error'; preview: string }
   | { kind: 'synthesizing' }
   | { kind: 'done'; title: string }
@@ -3065,6 +3238,8 @@ export type AgentConfirmRequestData =
     edit?: AgentFlowEditSummary;
     /** Absent when no bot step is involved. */
     recipients?: AgentFlowRecipient[];
+    /** A one-time flow's moment, local `YYYY-MM-DDTHH:mm`: approving saves it switched on. */
+    runAt?: string;
   }
   | {
     kind: 'mcp';

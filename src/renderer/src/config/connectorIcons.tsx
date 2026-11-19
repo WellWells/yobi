@@ -1,6 +1,6 @@
 import React from 'react';
 import {
-  BookOpen, Briefcase, CalendarDays, Code, CreditCard, FileText, FolderGit2, GraduationCap, Languages, LibraryBig, Mail, MessagesSquare, Palette, Server, TrainFront,
+  BookOpen, Briefcase, CalendarDays, Code, CreditCard, FileSpreadsheet, FileText, FolderGit2, SlidersHorizontal, GraduationCap, Languages, Library, LibraryBig, Mail, MessagesSquare, Palette, Scale, Server, TrainFront,
 } from 'lucide-react';
 import {
   AirtableIcon, AsanaIcon, AtlassianIcon, BilibiliIcon, CloudflareIcon, DropboxIcon, FacebookIcon, FigmaIcon, GithubIcon,
@@ -13,8 +13,8 @@ import { brandTint, readableTint, tileBackground } from './brandTints';
 import { findCatalogEntry } from '../../../shared/mcpCatalog';
 import type { McpCatalogCategory, McpCatalogEntry } from '../../../shared/mcpCatalog';
 import {
-  BUILTIN_CALENDAR_SERVER_ID, BUILTIN_MAIL_SERVER_ID, BUILTIN_PAGE_SERVER_ID, BUILTIN_PTT_SERVER_ID, BUILTIN_RAIL_SERVER_ID, BUILTIN_THUNDERBIRD_SERVER_ID,
-  BUILTIN_TRANSLATE_SERVER_ID, BUILTIN_X_SERVER_ID, findBuiltinConnectorByUrl,
+  BUILTIN_CALENDAR_SERVER_ID, BUILTIN_MAIL_SERVER_ID, BUILTIN_OFFICE_SERVER_ID, BUILTIN_PAGE_SERVER_ID, BUILTIN_PTT_SERVER_ID, BUILTIN_RAIL_SERVER_ID, BUILTIN_THUNDERBIRD_SERVER_ID,
+  BUILTIN_TRANSLATE_SERVER_ID, BUILTIN_TWLAW_SERVER_ID, BUILTIN_X_SERVER_ID, BUILTIN_YOBI_SERVER_ID, findBuiltinConnectorByUrl,
 } from '../../../shared/builtinConnectors';
 import { SITE_CONNECTOR_ROWS, siteConnectorServerId } from '../../../shared/siteConnectors';
 import type { SiteConnectorSite } from '../../../shared/siteConnectors';
@@ -102,6 +102,8 @@ export const BUILTIN_MARKS: Record<string, BuiltinMark> = {
   [BUILTIN_RAIL_SERVER_ID]: { icon: TrainFront, hex: '#E3651D' },
   // PTT has no mark of its own anyone would know: a forum's speech bubbles in a terminal blue.
   [BUILTIN_PTT_SERVER_ID]: { icon: MessagesSquare, hex: '#2563EB' },
+  // The ministry's database has no mark of its own: the scales of justice in a bronze no other built-in uses.
+  [BUILTIN_TWLAW_SERVER_ID]: { icon: Scale, hex: '#A16207' },
   // Any IMAP mailbox, not only Gmail: a plain envelope in a mail red.
   [BUILTIN_MAIL_SERVER_ID]: { icon: Mail, hex: '#D44638' },
   // Any CalDAV server or .ics feed, not one brand: a plain calendar in a violet no other built-in uses.
@@ -110,6 +112,10 @@ export const BUILTIN_MARKS: Record<string, BuiltinMark> = {
   [BUILTIN_TRANSLATE_SERVER_ID]: { icon: Languages, hex: '#0F8B8D' },
   // Many outlets, no one brand: a plain newspaper in a rose no other built-in uses.
   [BUILTIN_PAGE_SERVER_ID]: { icon: FileText, hex: '#BE185D' },
+  // Word, Excel and PowerPoint files, not Microsoft's product: a spreadsheet in a green no other built-in uses.
+  [BUILTIN_OFFICE_SERVER_ID]: { icon: FileSpreadsheet, hex: '#1D7A46' },
+  // Yobi's own settings: the settings sliders in a slate no other built-in uses.
+  [BUILTIN_YOBI_SERVER_ID]: { icon: SlidersHorizontal, hex: '#475569' },
   ...Object.fromEntries(SITE_CONNECTOR_ROWS.map((row) => [
     siteConnectorServerId(row.site), { icon: SITE_CONNECTOR_ICONS[row.site], hex: row.hex },
   ])),
@@ -128,6 +134,11 @@ export function renderServerIcon(url: string | undefined, size = 18): React.Reac
     return <Icon size={size} />;
   }
   return renderConnectorIcon(url ? findCatalogEntry(url) : undefined, size);
+}
+
+/** A composer candidate's icon: a knowledge base's own glyph, else the connector's. */
+export function renderCandidateIcon(candidate: { url: string; knowledge?: boolean } | undefined, size = 18): React.ReactNode {
+  return candidate?.knowledge ? <Library size={size} /> : renderServerIcon(candidate?.url, size);
 }
 
 /** The brand colour for that icon on this theme's tiles; undefined means inherit the text colour. */

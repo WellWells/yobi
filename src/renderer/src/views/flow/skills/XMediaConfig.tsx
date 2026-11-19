@@ -95,6 +95,7 @@ export const XMediaConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) 
         hint={fillTemplate(t('flow.skill.x_media.emitFailFlag.hint'), { flag: `{{${step.outputKey}.isFailed}}` })}
         control={
           <ToggleSwitch
+            aria-label={t('flow.skill.x_media.emitFailFlag')}
             checked={step.config.emitFailFlag === 'true'}
             onChange={(e) => onChange({ ...step.config, emitFailFlag: e.currentTarget.checked ? 'true' : 'false' })}
           />

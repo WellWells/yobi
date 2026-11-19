@@ -79,9 +79,10 @@
   color: var(--mantine-color-white);
 }
 
+/* The theme's brand fill and its label (brandFill): white on the raw accent was 1.54:1 (Cyberpunk). */
 .circle[data-tone='accent'] {
-  background: var(--mantine-color-accent);
-  color: var(--mantine-color-white);
+  background: var(--mantine-primary-color-filled);
+  color: var(--mantine-primary-color-contrast);
 }
 
 .circle[data-tone='neutral'] {

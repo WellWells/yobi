@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActionIcon, Badge, Box, Flex, Group, Loader, Menu, Stack, Text, Tooltip, UnstyledButton,
+  ActionIcon, Badge, Box, Flex, Group, Loader, Menu, Stack, Text, Tooltip, UnstyledButton, rem,
 } from '@mantine/core';
-import { useElementSize, useMergedRef } from '@mantine/hooks';
+import { useMergedRef } from '@mantine/hooks';
 import {
   ArrowDown, ArrowUp, Copy, EllipsisVertical, OctagonX, Play, RotateCcw, RotateCcwClock, Save, Sparkles, Square, TableOfContents, Trash,
   TriangleExclamationPoint, Upload,
@@ -12,12 +12,16 @@ import { useFlowStore } from '../../store/useFlowStore';
 import { useFlowOutlineStore } from '../../store/useFlowOutlineStore';
 import { useFlowAssistStore } from '../../store/useFlowAssistStore';
 import { useWidthBelow } from '../../hooks/useWidthBelow';
+import { useElementWidth } from '../../hooks/useElementWidth';
+import { useSystemTextScale } from '../../styles/systemTextScale';
 import { locateStep } from './outline/locateStep';
 import { FLOW_SECTION_IDS, noteEditorFocus } from './outline/FlowOutline';
-import { OUTLINE_BESIDE_MIN_WIDTH, OUTLINE_WIDTH, OutlinePane } from './outline/OutlinePane';
-import { useReadingPosition } from './outline/useReadingPosition';
+import { OUTLINE_BESIDE_MIN_WIDTH, OutlinePane } from './outline/OutlinePane';
+import { outlineWidthLimits } from './outline/outlineWidth';
 import { EDITOR_WIDE_MIN_WIDTH, editorColumnWidth } from './editorColumn';
 import { AppTextarea } from '../../components/AppTextarea';
+import { DangerMenuItem } from '../../components/DangerMenuItem';
+import { TooltipTarget } from '../../components/TooltipTarget';
 import { RenameInput } from '../../components/RenameInput';
 import { flowAiSource } from '../../../../shared/aiName';
 import { PANEL_TOOLBAR_PY } from '../../components/PanelToolbar';
@@ -53,11 +57,11 @@ const RunSpotButton: React.FC<{ spot: RunSpot; compact: boolean; t: (k: string) 
   return (
     <Tooltip label={label} position="bottom" disabled={!compact}>
       <UnstyledButton onClick={scroll} aria-label={label} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
-        {failed && <TriangleExclamationPoint size={14} color="var(--mantine-color-error)" />}
+        {failed && <TriangleExclamationPoint size={14} color="var(--error-text)" />}
         {spot.kind === 'running' && <Loader size={12} />}
         {spot.kind === 'stopped' && <OctagonX size={14} color="var(--text-muted)" />}
         {!compact && (
-          <Text fz="xs" c={failed ? 'var(--mantine-color-error)' : 'var(--text-muted)'} style={{ whiteSpace: 'nowrap' }}>{label}</Text>
+          <Text fz="xs" c={failed ? 'var(--error-text)' : 'var(--text-muted)'} style={{ whiteSpace: 'nowrap' }}>{label}</Text>
         )}
       </UnstyledButton>
     </Tooltip>
@@ -103,15 +107,14 @@ export const FlowEditor: React.FC<FlowEditorProps> = ({
     s.runningFlowIds.includes(flow.id),
   )));
   const viewportRef = useRef<HTMLDivElement | null>(null);
-  const [viewport, setViewport] = useState<HTMLDivElement | null>(null);
-  const setViewportRef = useCallback((node: HTMLDivElement | null) => {
-    viewportRef.current = node;
-    setViewport(node);
-  }, []);
   const [outlineRef, outlineNarrow] = useWidthBelow(OUTLINE_BESIDE_MIN_WIDTH);
   const [columnRef, columnNarrow] = useWidthBelow(EDITOR_WIDE_MIN_WIDTH);
-  const rootRef = useMergedRef(outlineRef, columnRef);
+  const [sizeRef, editorWidth] = useElementWidth();
+  const rootRef = useMergedRef(outlineRef, columnRef, sizeRef);
   const column = editorColumnWidth(!columnNarrow);
+  const preferredOutlineWidth = useFlowOutlineStore((s) => s.width);
+  const widthLimits = outlineWidthLimits(editorWidth, outlineNarrow);
+  const outlineWidth = Math.min(widthLimits.max, Math.max(widthLimits.min, preferredOutlineWidth));
   const { outlineOpen, setOutlineOpen, drawerOpen, setDrawerOpen } = useFlowOutlineStore(useShallow((s) => ({
     outlineOpen: s.open, setOutlineOpen: s.setOpen, drawerOpen: s.drawerOpen, setDrawerOpen: s.setDrawerOpen,
   })));
@@ -124,8 +127,6 @@ export const FlowEditor: React.FC<FlowEditorProps> = ({
     if (outlineNarrow) setDrawerOpen(!drawerOpen);
     else setOutlineOpen(!outlineOpen);
   };
-  const stepIdsKey = flow.steps.map((step) => step.id).join('\n');
-  useReadingPosition(outlineShown ? viewport : null, flow.id, stepIdsKey);
   const sentinelRef = useRef<HTMLDivElement>(null);
   const [isPinned, setIsPinned] = useState(false);
   const [versionsOpen, setVersionsOpen] = useState(false);
@@ -160,9 +161,11 @@ export const FlowEditor: React.FC<FlowEditorProps> = ({
   const handleStop = useCallback(() => { void abortFlow(flow.id); }, [abortFlow, flow.id]);
   // Words need about 400px (the badge, three labelled buttons and ⋮); at the window's narrowest the
   // band, beside the caption controls, has half that.
-  const { ref: bandRef, width: bandWidth } = useElementSize();
+  const [bandRef, bandWidth] = useElementWidth();
   const narrowWindow = useNarrowWindow();
-  const compact = bandWidth > 0 && bandWidth < (spot ? BAND_WORDS_WITH_SPOT_MIN_WIDTH : BAND_WORDS_MIN_WIDTH);
+  const textScale = useSystemTextScale();
+  const splitBand = narrowWindow && editorWidth > 0 && editorWidth < 600 * textScale;
+  const compact = splitBand || (bandWidth > 0 && bandWidth < (spot ? BAND_WORDS_WITH_SPOT_MIN_WIDTH : BAND_WORDS_MIN_WIDTH) * textScale);
 
   useShortcutAction('flow.save', () => {
     if (isDirty) void handleSave();
@@ -180,8 +183,8 @@ export const FlowEditor: React.FC<FlowEditorProps> = ({
 
   // The band's column (560px, 720px in a wide editor) sits over the editor's column, which the
   // outline beside it moves left.
-  const aside = outlineBeside ? `${OUTLINE_WIDTH}px` : '0px';
-  const columnPx = `${column}px`;
+  const aside = outlineBeside ? `${outlineWidth}px` : '0px';
+  const columnPx = rem(column);
   const assistShown = outlineShown && assistTab === 'assist';
   const outlineLabel = t(outlineShown && !assistShown ? 'flow.outline.hide' : 'flow.outline.show');
   // The assistant is the right pane's other tab: this opens the pane on it, or closes it.
@@ -208,6 +211,7 @@ export const FlowEditor: React.FC<FlowEditorProps> = ({
           boxShadow: isPinned ? '0 8px 20px rgba(0, 0, 0, 0.18)' : 'none',
           borderBottom: isPinned ? '1px solid var(--mantine-color-default-border)' : '1px solid transparent',
           display: 'flex',
+          flexDirection: splitBand ? 'column' : 'row',
         }}
       >
         {/* A narrow window has the flow list in a drawer; the way to it starts the row, at the
@@ -226,17 +230,17 @@ export const FlowEditor: React.FC<FlowEditorProps> = ({
           maw={column}
           px="20px"
           py={PANEL_TOOLBAR_PY}
-          style={{
+          style={splitBand ? undefined : {
             marginLeft: `max(0px, min(calc((100% - ${aside} - ${columnPx}) / 2), calc(100% - ${columnPx} - ${CAPTION_RIGHT})))`,
             marginRight: `max(calc((100% - ${aside} - ${columnPx}) / 2 + ${aside}), ${CAPTION_RIGHT})`,
           }}
         >
-          <Group ref={bandRef} justify="flex-end" align="center" wrap="nowrap" gap={compact ? 8 : 'md'}>
+          <Group ref={bandRef} justify="flex-end" align="center" wrap={splitBand ? 'wrap' : 'nowrap'} gap={splitBand ? 4 : compact ? 8 : 'md'}>
             {spot && <RunSpotButton spot={spot} compact={compact} t={t} />}
             {isDirty ? (
               <Badge color="var(--mantine-color-warning)" variant="light">{t('flow.unsaved')}</Badge>
             ) : (
-              !compact && <Text fz="xs" c="dimmed">{t('flow.saved')}</Text>
+              !compact && <Text fz="xs" c="dimmed" style={{ whiteSpace: 'nowrap', flexShrink: 0 }}>{t('flow.saved')}</Text>
             )}
             <FlowBandButton compact={compact} label={t('flow.restore')} icon={<RotateCcw size={14} />} onClick={handleRestore} disabled={!isDirty} />
             <FlowBandButton compact={compact} label={t('flow.saveFlow')} icon={<Save size={14} />} onClick={() => { void handleSave(); }} disabled={!isDirty} />
@@ -282,11 +286,11 @@ export const FlowEditor: React.FC<FlowEditorProps> = ({
             </Tooltip>
             <Menu position="bottom-end" withArrow shadow="md">
               <Menu.Target>
-                <Tooltip label={t('common.moreActions')} position="bottom">
+                <TooltipTarget label={t('common.moreActions')} position="bottom">
                   <ActionIcon variant="default" size="md" aria-label={t('common.moreActions')}>
                     <EllipsisVertical size={14} />
                   </ActionIcon>
-                </Tooltip>
+                </TooltipTarget>
               </Menu.Target>
               <Menu.Dropdown>
                 <Menu.Item leftSection={<Copy size={14} />} onClick={onDuplicate}>{t('flow.duplicateFlow')}</Menu.Item>
@@ -295,7 +299,7 @@ export const FlowEditor: React.FC<FlowEditorProps> = ({
                 <Menu.Item leftSection={<ArrowUp size={14} />} disabled={!canMoveUp} onClick={onMoveUp}>{t('flow.flow.moveUp')}</Menu.Item>
                 <Menu.Item leftSection={<ArrowDown size={14} />} disabled={!canMoveDown} onClick={onMoveDown}>{t('flow.flow.moveDown')}</Menu.Item>
                 <Menu.Divider />
-                <Menu.Item leftSection={<Trash size={14} />} color="red" onClick={onDelete}>{t('flow.deleteFlow')}</Menu.Item>
+                <DangerMenuItem leftSection={<Trash size={14} />} onClick={onDelete}>{t('flow.deleteFlow')}</DangerMenuItem>
               </Menu.Dropdown>
             </Menu>
           </Group>
@@ -307,7 +311,7 @@ export const FlowEditor: React.FC<FlowEditorProps> = ({
         flex={1}
         h="100%"
         miw={0}
-        ref={setViewportRef}
+        ref={viewportRef}
         style={{ overflowY: 'auto' }}
         onFocusCapture={(event) => noteEditorFocus(event.target as HTMLElement)}
       >
@@ -367,7 +371,7 @@ export const FlowEditor: React.FC<FlowEditorProps> = ({
           </Box>
         </Box>
       </Box>
-      <OutlinePane flow={flow} t={t} narrow={outlineNarrow} />
+      <OutlinePane flow={flow} t={t} narrow={outlineNarrow} width={outlineWidth} widthLimits={widthLimits} />
       </Flex>
       <FlowVersionsDialog
         open={versionsOpen}

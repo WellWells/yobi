@@ -28,6 +28,15 @@ function returnToComposer(): void {
   win.focus();
 }
 
+/** `choice` is the editor; `command` (only for `custom`) is left as it is when absent. */
+export function applyEditorSettings(update: unknown): ExternalEditorSettings {
+  const next = update && typeof update === 'object' ? update as { choice?: unknown; command?: unknown } : {};
+  config.externalEditor = normalizeEditorChoice(next.choice);
+  if (typeof next.command === 'string') config.externalEditorCommand = next.command.trim();
+  saveConfig({ externalEditor: config.externalEditor, externalEditorCommand: config.externalEditorCommand });
+  return editorSettingsSnapshot(config.externalEditor, config.externalEditorCommand);
+}
+
 export function registerComposerEditorHandlers(): void {
   ipcMain.handle(IPC.COMPOSER_EDITOR_OPEN, async (_event, text: unknown): Promise<string | null> => {
     if (typeof text !== 'string') return null;
@@ -66,13 +75,7 @@ export function registerComposerEditorHandlers(): void {
   ipcMain.handle(IPC.COMPOSER_EDITOR_SETTINGS_GET, (): ExternalEditorSettings =>
     editorSettingsSnapshot(config.externalEditor, config.externalEditorCommand));
 
-  ipcMain.handle(IPC.COMPOSER_EDITOR_SETTINGS_SET, (_event, update: unknown): ExternalEditorSettings => {
-    const next = update && typeof update === 'object' ? update as { choice?: unknown; command?: unknown } : {};
-    config.externalEditor = normalizeEditorChoice(next.choice);
-    if (typeof next.command === 'string') config.externalEditorCommand = next.command.trim();
-    saveConfig({ externalEditor: config.externalEditor, externalEditorCommand: config.externalEditorCommand });
-    return editorSettingsSnapshot(config.externalEditor, config.externalEditorCommand);
-  });
+  ipcMain.handle(IPC.COMPOSER_EDITOR_SETTINGS_SET, (_event, update: unknown): ExternalEditorSettings => applyEditorSettings(update));
 
   // The draft may be private; it does not outlive the app in the temp folder.
   app.on('will-quit', () => {

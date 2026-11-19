@@ -3,7 +3,7 @@
 .row {
   flex: 1;
   min-width: 0;
-  height: 30px;
+  height: 1.875rem;
   display: flex;
   align-items: center;
   gap: 2px;
@@ -32,6 +32,6 @@
 }
 
 .button:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px var(--mantine-color-accent-dim);
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
 }

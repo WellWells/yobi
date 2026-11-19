@@ -29,7 +29,7 @@ export const StepBox: React.FC<{ step: number; label: string; children: React.Re
         bg="var(--mantine-color-accent-dim)"
         style={{ borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
       >
-        <Text fz="var(--font-size-xs)" fw={700} c="var(--mantine-color-accent)" lh={1}>{step}</Text>
+        <Text fz="var(--font-size-xs)" fw={700} c="var(--mantine-color-accent-text)" lh={1}>{step}</Text>
       </Box>
       <Text fz="var(--font-size-sm)" fw={600} c="var(--mantine-color-default-color)">{label}</Text>
     </Group>

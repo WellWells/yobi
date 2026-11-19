@@ -18,6 +18,11 @@ export interface AgentTraceTurn {
   provider?: string;
   stage?: { label: AgentStageLabel; detail?: string };
   research?: ResearchProgress;
+  /**
+   * A `delegate` row: the helper step whose research `research` is, and whether that call has
+   * ended. Absent when the engine named none (then any helper call's start ends the checklist).
+   */
+  researchOwner?: { helperStep: number; settled: boolean };
 }
 
 export interface AgentPlanState {
@@ -155,6 +160,49 @@ export function choiceAnswer(
   return pending?.runId === pick.runId ? pending : null;
 }
 
+/**
+ * A helper's calls once `step` has come in. The engine sends each call twice — when it starts (no
+ * status) and when it ends (with one), the second a copy of the first plus the status — and sends no
+ * index, so the end settles the first unsettled call that matches it. Two identical calls running
+ * side by side read the same, so which of them it settles does not show.
+ */
+export function withHelperStep(steps: readonly AgentHelperStep[] | undefined, step: AgentHelperStep): AgentHelperStep[] {
+  const list = [...(steps ?? [])];
+  if (!step.status) return [...list, step];
+  const at = list.findIndex((entry) => !entry.status
+    && entry.tool === step.tool && entry.param === step.param && entry.doing === step.doing);
+  if (at < 0) return [...list, step];
+  list[at] = step;
+  return list;
+}
+
+/**
+ * A `delegate` row once its helper reports a call. The helper's research checklist and stage come
+ * onto this row too (the engine forwards them under the delegate's step), so a call that starts
+ * ends whatever the helper was at before: the row then shows what the helper is doing now — unless
+ * the research that owns the checklist is still running (a quick read beside it would otherwise
+ * wipe a checklist that is still filling, and the line would jump). `helperStep` is the helper's own
+ * step the event is; without it, as before, every start ends the checklist.
+ */
+function helperPatch(row: AgentTraceTurn | undefined, step: AgentHelperStep, helperStep?: number): Partial<AgentTraceTurn> {
+  const helperSteps = withHelperStep(row?.helperSteps, step);
+  const owner = row?.researchOwner;
+  if (step.status) {
+    return owner && !owner.settled && owner.helperStep === helperStep
+      ? { helperSteps, researchOwner: { ...owner, settled: true } }
+      : { helperSteps };
+  }
+  if (owner && !owner.settled) return { helperSteps };
+  return { helperSteps, stage: undefined, research: undefined, researchOwner: undefined };
+}
+
+/** A research checklist onto its row, owned by the helper step that sent it (when one did). */
+function researchPatch(progress: ResearchProgress, helperStep?: number): Partial<AgentTraceTurn> {
+  return helperStep === undefined
+    ? { research: progress, researchOwner: undefined }
+    : { research: progress, researchOwner: { helperStep, settled: false } };
+}
+
 interface AgentRunStore {
   resumable: AgentRunSummary[];
   traces: Record<string, AgentTraceTurn[]>;
@@ -242,12 +290,23 @@ export const useAgentRunStore = create<AgentRunStore>((set) => ({
         }
       : event.kind === 'stage' ? { stage: { label: event.label, ...(event.detail ? { detail: event.detail } : {}) } }
       : event.kind === 'answered' ? { stage: undefined }
-      : event.kind === 'research' ? { research: event.progress }
-      : event.kind === 'helper' ? { helperSteps: [...(turns[idx]?.helperSteps ?? []), event.step] }
-      : { tool: event.tool, status: event.status, preview: event.preview, stage: undefined };
+      : event.kind === 'research' ? researchPatch(event.progress, event.helperStep)
+      : event.kind === 'helper' ? helperPatch(turns[idx], event.step, event.helperStep)
+      : {
+        tool: event.tool,
+        status: event.status,
+        preview: event.preview,
+        stage: undefined,
+        // A delegate's checklist was its helper's, which its record does not keep: a reopened run has none.
+        ...(event.tool === 'delegate' ? { research: undefined, researchOwner: undefined } : {}),
+      };
     if (idx >= 0) turns[idx] = { ...turns[idx], ...patch };
     else turns.push({ turn: event.turn, status: 'thinking', ...patch });
-    const title = event.kind === 'tool' ? event.doing : event.kind === 'helper' ? event.step.doing : undefined;
+    // Only a call's start brings a title: its end is the same title again, and in a batch of helpers
+    // it would put back an older one over the newest.
+    const title = event.kind === 'tool' ? event.doing
+      : event.kind === 'helper' && !event.step.status ? event.step.doing
+      : undefined;
     const view = state.runViews[runId];
     return {
       traces: { ...state.traces, [runId]: turns },

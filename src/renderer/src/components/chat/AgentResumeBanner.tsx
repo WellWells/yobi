@@ -2,6 +2,7 @@ import { ActionIcon, Group, Text, Tooltip } from '@mantine/core';
 import { ChevronDown, Play, RotateCcwClock, Trash } from 'lucide-react';
 import { AppButton } from '../AppButton';
 import { CopyIconButton } from '../CopyIconButton';
+import { TooltipTarget } from '../TooltipTarget';
 import { ModelDropdown } from './ModelDropdown';
 import { useI18nStore } from '../../store/i18nStore';
 import type { AgentRunSummary } from '../../../../shared/types';
@@ -42,11 +43,11 @@ export function AgentResumeBanner({ runs, onResume, onDiscard }: AgentResumeBann
         value={top.providerUrl}
         onChange={(url) => onResume(top, url)}
         renderTrigger={({ toggle, disabled }) => (
-          <Tooltip label={t('agent.banner.resumeWithModel')}>
+          <TooltipTarget label={t('agent.banner.resumeWithModel')}>
             <ActionIcon variant="subtle" color="gray" size="md" aria-label={t('agent.banner.resumeWithModel')} onClick={toggle} disabled={disabled} style={{ flexShrink: 0 }}>
               <ChevronDown size={14} />
             </ActionIcon>
-          </Tooltip>
+          </TooltipTarget>
         )}
       />
       <CopyIconButton key={top.runId} value={top.goal} copyLabel={t('agent.banner.copyInput')} copiedLabel={t('common.copied')} size="md" position="top" />

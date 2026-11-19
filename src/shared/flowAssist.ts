@@ -33,8 +33,6 @@ export interface FlowAssistExplainRequest {
   id: string;
   providerUrl: string;
   flow: FlowDefinition;
-  /** What the editor's own checks found, in the user's words, so the explanation names them. */
-  problems: string[];
 }
 
 export type FlowAssistExplainResult = { ok: true; markdown: string } | FlowAssistFailure;
@@ -51,6 +49,8 @@ export interface StepNameMaterial {
   label: string;
   /** The card's summary line(s): what it reads, what it does, where it sends. */
   summary: string;
+  /** The name later steps read its result by (`{{key}}`); '' when it hands nothing on. */
+  outputKey?: string;
 }
 
 export interface FlowAssistNamesRequest {
@@ -65,11 +65,26 @@ export interface FlowAssistNamesRequest {
 
 export type FlowAssistNamesResult = { ok: true; names: Record<string, string> } | FlowAssistFailure;
 
+/** Output names for the target steps (`outputKey`), the way step names are asked for. */
+export interface FlowAssistKeysRequest extends FlowAssistNamesRequest {
+  /** Names the flow already means something else by: built-ins, loop variables, a trigger's input. */
+  reserved: string[];
+}
+
+export type FlowAssistKeysResult = { ok: true; keys: Record<string, string> } | FlowAssistFailure;
+
+/** What an output name may look like (`OUTPUT_KEY_RE`, kept lower case and short so it reads in a field). */
+export const ASSIST_OUTPUT_KEY_RE = /^[a-z][a-z0-9_]{1,31}$/;
+
+/** An output name the editor gave by itself: the step's kind or base with a number (`llm_1`, `rss_2`). */
+export function isNumberedOutputKey(key: string): boolean {
+  return /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_\d+$/.test(key.trim());
+}
+
 /** A flow this long is named in one request; the rest keep their names (the panel says so). */
 export const ASSIST_NAME_MAX_STEPS = 60;
 export const ASSIST_STEP_LINE_MAX_CHARS = 220;
 export const ASSIST_CHANGE_MAX_CHARS = 4_000;
-export const ASSIST_PROBLEMS_MAX = 20;
 
 export function clipLine(text: string, max: number): string {
   const flat = text.replace(/\s+/g, ' ').trim();
@@ -134,8 +149,7 @@ export function parseAssistExplainRequest(raw: unknown): FlowAssistExplainReques
   const head = base(raw);
   const flow = flowOf(head?.value.flow);
   if (!head || !flow) return null;
-  const problems = Array.isArray(head.value.problems) ? head.value.problems.filter(isString).slice(0, ASSIST_PROBLEMS_MAX) : [];
-  return { id: head.id, providerUrl: head.providerUrl, flow, problems };
+  return { id: head.id, providerUrl: head.providerUrl, flow };
 }
 
 export function parseAssistNamesRequest(raw: unknown): FlowAssistNamesRequest | null {
@@ -150,6 +164,18 @@ export function parseAssistNamesRequest(raw: unknown): FlowAssistNamesRequest | 
   const targets = head.value.targets.filter(isString).filter((id) => known.has(id)).slice(0, ASSIST_NAME_MAX_STEPS);
   if (targets.length === 0) return null;
   return { id: head.id, providerUrl: head.providerUrl, flowName: isString(head.value.flowName) ? head.value.flowName : '', steps, targets };
+}
+
+export function parseAssistKeysRequest(raw: unknown): FlowAssistKeysRequest | null {
+  const names = parseAssistNamesRequest(raw);
+  if (!names) return null;
+  const steps = names.steps.map((step) => ({ ...step, outputKey: isString(step.outputKey) ? step.outputKey.trim() : '' }));
+  const keyed = new Set(steps.filter((step) => step.outputKey).map((step) => step.id));
+  const targets = names.targets.filter((id) => keyed.has(id));
+  if (targets.length === 0) return null;
+  const rawReserved = (raw as Record<string, unknown>).reserved;
+  const reserved = Array.isArray(rawReserved) ? rawReserved.filter(isString).map((name) => name.trim()).filter(Boolean) : [];
+  return { ...names, steps, targets, reserved };
 }
 
 /** What the editor compares to tell whether the draft moved on since a request was sent. */

@@ -33,6 +33,78 @@ export function stepMark(status: FlowStepStatus, flowRunning: boolean, error?: s
   return MARK_BY_STATUS[status];
 }
 
+interface ExecutionStepRowProps {
+  step: SkillInstance;
+  status: FlowStepStatus;
+  output?: string;
+  note?: string;
+  error?: string;
+  displayError?: string;
+  flowRunning: boolean;
+  changedSince: boolean;
+  t: (k: string) => string;
+}
+
+/**
+ * One step's result. Plain values, not the log: a run adds a log line per step and the list is
+ * rebuilt each time (a step that failed earlier in a loop gets a new merged object), so only the
+ * step whose line changed redraws, not every result with its spoiler and tooltips.
+ */
+const ExecutionStepRow = React.memo(({
+  step, status, output, note, error, displayError, flowRunning, changedSince, t,
+}: ExecutionStepRowProps) => {
+  const copyLabel = t('common.copy');
+  const copiedLabel = t('common.copied');
+  return (
+    <Box>
+      <Box style={PROGRESS_ROW_STYLE}>
+        <ProgressMark state={stepMark(status, flowRunning, error)} />
+        <Group gap="xs" wrap="nowrap" style={{ minWidth: 0 }}>
+          <Text fz="xs" fw={500} c={status === 'skipped' ? 'dimmed' : undefined}>{step.label}</Text>
+          {changedSince && (
+            <Tooltip label={t('flow.run.changedSince.hint')} position="top">
+              <Text fz="xs" c="var(--text-muted)" data-changed-since-run="" style={{ whiteSpace: 'nowrap' }}>{t('flow.run.changedSince')}</Text>
+            </Tooltip>
+          )}
+          {stepHasOutput(step) && (
+            <CopyButton value={`{{${step.outputKey}}}`}>
+              {({ copied, copy }) => (
+                <Tooltip label={copied ? copiedLabel : copyLabel} position="top">
+                  <Code fz="xs" style={{ cursor: 'pointer' }} onClick={copy}>{`{{${step.outputKey}}}`}</Code>
+                </Tooltip>
+              )}
+            </CopyButton>
+          )}
+        </Group>
+      </Box>
+      {output && (
+        <Group gap={4} wrap="nowrap" align="flex-start" mt={2} pl={LABEL_OFFSET}>
+          <Box style={{ flex: 1, minWidth: 0 }}>
+            <Spoiler maxHeight={72} showLabel={t('common.showMore')} hideLabel={t('common.showLess')}>
+              <Text className="selectable" fz="xs" c="dimmed" ff={isCodeOutput(step.type, output) ? 'monospace' : undefined} style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                {output}
+              </Text>
+            </Spoiler>
+          </Box>
+          <CopyIconButton value={output} copyLabel={copyLabel} copiedLabel={copiedLabel} size="sm" />
+        </Group>
+      )}
+      {note && (
+        <Text fz="xs" c="dimmed" mt={2} pl={LABEL_OFFSET}>{t(`flow.execution.note.${note}`)}</Text>
+      )}
+      {error && (
+        <Group gap={4} wrap="nowrap" align="flex-start" mt={2} pl={LABEL_OFFSET}>
+          <Text className="selectable" fz="xs" c="var(--error-text)" style={{ flex: 1, minWidth: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+            {displayError ?? error}
+          </Text>
+          <CopyIconButton value={error} copyLabel={copyLabel} copiedLabel={copiedLabel} size="sm" />
+        </Group>
+      )}
+    </Box>
+  );
+});
+ExecutionStepRow.displayName = 'ExecutionStepRow';
+
 export interface ExecutionResultPanelProps {
   steps: SkillInstance[];
   flowName: string;
@@ -47,7 +119,6 @@ export const ExecutionResultPanel: React.FC<ExecutionResultPanelProps> = React.m
   const flowRunning = useFlowStore((s) => s.selectedFlowId !== null && s.runningFlowIds.includes(s.selectedFlowId));
   // The steps as they ran: a step edited since says so, its output is not what it would give now.
   const snapshot = useFlowStore((s) => (s.selectedFlowId ? s.runSnapshots[s.selectedFlowId] : undefined));
-  const copyLabel = t('common.copy');
   const copiedLabel = t('common.copied');
   const buildMarkdown = useCallback(
     () => buildFlowRunMarkdown(flowName, steps, executionLogs, executionResult, t),
@@ -73,7 +144,7 @@ export const ExecutionResultPanel: React.FC<ExecutionResultPanelProps> = React.m
             <Button
               variant="default"
               size="compact-xs"
-              c={copyAllClipboard.copied ? 'var(--mantine-color-success)' : undefined}
+              c={copyAllClipboard.copied ? 'var(--success-text)' : undefined}
               onClick={handleCopyAll}
               leftSection={copyAllClipboard.copied ? <Check size={12} /> : <Copy size={12} />}
             >
@@ -96,51 +167,18 @@ export const ExecutionResultPanel: React.FC<ExecutionResultPanelProps> = React.m
             // A note is a signpost in the editor, not a result: it shows here only if it failed.
             if (step.type === 'comment' && !log.error) return null;
             return (
-              <Box key={step.id}>
-                <Box style={PROGRESS_ROW_STYLE}>
-                  <ProgressMark state={stepMark(log.status, flowRunning, log.error)} />
-                  <Group gap="xs" wrap="nowrap" style={{ minWidth: 0 }}>
-                    <Text fz="xs" fw={500} c={log.status === 'skipped' ? 'dimmed' : undefined}>{step.label}</Text>
-                    {snapshot?.[step.id] !== undefined && snapshot[step.id] !== stepRunKey(step) && (
-                      <Tooltip label={t('flow.run.changedSince.hint')} position="top">
-                        <Text fz="xs" c="var(--text-muted)" data-changed-since-run="" style={{ whiteSpace: 'nowrap' }}>{t('flow.run.changedSince')}</Text>
-                      </Tooltip>
-                    )}
-                    {stepHasOutput(step) && (
-                      <CopyButton value={`{{${step.outputKey}}}`}>
-                        {({ copied, copy }) => (
-                          <Tooltip label={copied ? copiedLabel : copyLabel} position="top">
-                            <Code fz="xs" style={{ cursor: 'pointer' }} onClick={copy}>{`{{${step.outputKey}}}`}</Code>
-                          </Tooltip>
-                        )}
-                      </CopyButton>
-                    )}
-                  </Group>
-                </Box>
-                {log.output && (
-                  <Group gap={4} wrap="nowrap" align="flex-start" mt={2} pl={LABEL_OFFSET}>
-                    <Box style={{ flex: 1, minWidth: 0 }}>
-                      <Spoiler maxHeight={72} showLabel={t('common.showMore')} hideLabel={t('common.showLess')}>
-                        <Text className="selectable" fz="xs" c="dimmed" ff={isCodeOutput(step.type, log.output) ? 'monospace' : undefined} style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                          {log.output}
-                        </Text>
-                      </Spoiler>
-                    </Box>
-                    <CopyIconButton value={log.output} copyLabel={copyLabel} copiedLabel={copiedLabel} size="sm" />
-                  </Group>
-                )}
-                {log.note && (
-                  <Text fz="xs" c="dimmed" mt={2} pl={LABEL_OFFSET}>{t(`flow.execution.note.${log.note}`)}</Text>
-                )}
-                {log.error && (
-                  <Group gap={4} wrap="nowrap" align="flex-start" mt={2} pl={LABEL_OFFSET}>
-                    <Text className="selectable" fz="xs" c="var(--mantine-color-error)" style={{ flex: 1, minWidth: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                      {log.displayError ?? log.error}
-                    </Text>
-                    <CopyIconButton value={log.error} copyLabel={copyLabel} copiedLabel={copiedLabel} size="sm" />
-                  </Group>
-                )}
-              </Box>
+              <ExecutionStepRow
+                key={step.id}
+                step={step}
+                status={log.status}
+                output={log.output}
+                note={log.note}
+                error={log.error}
+                displayError={log.displayError}
+                flowRunning={flowRunning}
+                changedSince={snapshot?.[step.id] !== undefined && snapshot[step.id] !== stepRunKey(step)}
+                t={t}
+              />
             );
           })}
         </Stack>

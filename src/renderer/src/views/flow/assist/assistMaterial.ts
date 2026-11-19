@@ -1,11 +1,14 @@
 import type { StepNameMaterial } from '../../../../../shared/flowAssist';
-import { ASSIST_NAME_MAX_STEPS, ASSIST_PROBLEMS_MAX } from '../../../../../shared/flowAssist';
+import { ASSIST_NAME_MAX_STEPS, isNumberedOutputKey } from '../../../../../shared/flowAssist';
+import { FLOW_VAR_PREFIX } from '../../../../../shared/flowVariables';
+import { HOTKEY_SELECTION_VAR, triggerInputVariables } from '../../../../../shared/flowReferenceCheck';
+import { loopVarName } from '../../../../../shared/flowBlockStructure';
+import { stepHasOutput } from '../stepOutput';
 import type { FlowDefinition, SkillInstance } from '../../../../../shared/types';
-import { stepDisplayName, stepSummary } from '../stepSummary';
+import { stepSummary } from '../stepSummary';
 import { isNamed } from '../stepSummary/core';
 import type { StepSummaryContext } from '../stepSummary';
 import { hasLabelField } from '../stepLabelRules';
-import type { StepIssue } from '../outline/stepIssues';
 
 /*
  * What the assistant's requests carry, built from what the editor already shows: each step's
@@ -44,16 +47,24 @@ export function stepNameMaterial(
       typeName: t(`flow.skill.${step.type}`),
       label: named ? step.label.trim() : '',
       summary: what.join(' · '),
+      outputKey: stepHasOutput(step) ? step.outputKey.trim() : '',
     };
   });
 }
 
-/** The editor's problem list as lines for the explanation: "#3 摘要：…". */
-export function problemLines(flow: FlowDefinition, issues: ReadonlyMap<string, StepIssue>, t: (key: string) => string): string[] {
-  const lines: string[] = [];
-  flow.steps.forEach((step, index) => {
-    const issue = issues.get(step.id);
-    if (issue) lines.push(`#${index + 1} ${stepDisplayName(step, t)}: ${issue.text}`);
-  });
-  return lines.slice(0, ASSIST_PROBLEMS_MAX);
+/**
+ * The steps the Name outputs button names: the ones whose output still has the editor's numbered
+ * name (`llm_1`); when none has, all that hand on an output. At most `ASSIST_NAME_MAX_STEPS`.
+ */
+export function outputKeyTargets(flow: FlowDefinition): string[] {
+  const keyed = flow.steps.filter((step) => stepHasOutput(step) && step.outputKey.trim());
+  const numbered = keyed.filter((step) => isNumberedOutputKey(step.outputKey));
+  return (numbered.length > 0 ? numbered : keyed).slice(0, ASSIST_NAME_MAX_STEPS).map((step) => step.id);
+}
+
+/** Names a step's output may not take: the built-ins, the flow's loop variables and trigger inputs. */
+export function reservedOutputNames(flow: FlowDefinition): string[] {
+  const loops = flow.steps.filter((step) => step.type === 'loop').map((step) => loopVarName(step));
+  const triggers = triggerInputVariables([flow.trigger, ...(flow.extraTriggers ?? [])]);
+  return [...new Set(['clipboard', 'timestamp', 'flow', FLOW_VAR_PREFIX, HOTKEY_SELECTION_VAR, 'file', 'bot', 'input', ...loops, ...triggers])];
 }

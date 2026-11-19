@@ -5,7 +5,7 @@ import { effectiveExpire } from '../../share/instanceExpires';
 import {
   captureBackgroundCss,
   paletteCardTheme,
-  CAPTURE_BACKGROUND_STYLES,
+  captureBackgroundStyleOf,
   DEFAULT_CAPTURE_BACKGROUND_STYLE,
   DEFAULT_CAPTURE_PALETTE,
 } from '../../../shared/capturePalettes';
@@ -26,10 +26,7 @@ import { isHeightLimitError } from '../../captureHeightLimit';
 export { isHeightLimitError };
 
 export function resolveBackgroundStyle(raw: string | undefined): CaptureBackgroundStyle {
-  const value = (raw ?? '').trim().toLowerCase();
-  return (CAPTURE_BACKGROUND_STYLES as readonly string[]).includes(value)
-    ? (value as CaptureBackgroundStyle)
-    : DEFAULT_CAPTURE_BACKGROUND_STYLE;
+  return captureBackgroundStyleOf((raw ?? '').trim().toLowerCase()) ?? DEFAULT_CAPTURE_BACKGROUND_STYLE;
 }
 
 export function resolveDocWidth(raw: string | undefined): number {

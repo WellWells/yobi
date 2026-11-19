@@ -18,11 +18,12 @@ import { connectorBotAccess } from './connectorBotAccess';
 import { MCP_CATEGORIES } from '../../../../../../shared/mcpCatalog';
 import {
   BUILTIN_CALENDAR_SERVER_ID, BUILTIN_MAIL_SERVER_ID, BUILTIN_PAGE_SERVER_ID, BUILTIN_PTT_SERVER_ID, BUILTIN_RAIL_SERVER_ID, BUILTIN_THUNDERBIRD_SERVER_ID,
-  BUILTIN_TRANSLATE_SERVER_ID, BUILTIN_X_SERVER_ID, THUNDERBIRD_UNAVAILABLE_ERROR,
+  BUILTIN_OFFICE_SERVER_ID, BUILTIN_TRANSLATE_SERVER_ID, BUILTIN_TWLAW_SERVER_ID, BUILTIN_X_SERVER_ID, BUILTIN_YOBI_SERVER_ID, OFFICE_TOOL_MISSING_ERROR, THUNDERBIRD_UNAVAILABLE_ERROR,
 } from '../../../../../../shared/builtinConnectors';
 import { MailAccountSetup } from './MailAccountSetup';
 import { CalendarAccountSetup } from './CalendarAccountSetup';
 import { RailKeySetup } from './RailKeySetup';
+import { ManagedToolSetup } from '../../../../components/managedTools/ManagedToolSetup';
 import { SITE_CONNECTOR_ROWS, siteConnectorServerId } from '../../../../../../shared/siteConnectors';
 import { BUILTIN_LINE_SERVER_ID } from '../../../../../../shared/types';
 import type { useMcpServers } from '../../hooks/useMcpServers';
@@ -58,6 +59,8 @@ interface BuiltinSpec {
   waitingError?: string;
   setup?: React.ReactNode;
   footer?: React.ReactNode;
+  /** Shown under the card while the connector is on, connected or not (the program it runs). */
+  whenOn?: React.ReactNode;
 }
 
 /** One row of the list: a built-in card or a gallery tile, already rendered. */
@@ -124,10 +127,22 @@ export const ConnectorGallery: React.FC<Props> = ({ mcp, roster, t, sectionGap }
       toggleLabel: t('settings.mcp.ptt.toggle'),
     },
     {
+      id: BUILTIN_TWLAW_SERVER_ID,
+      title: t('settings.mcp.twlaw.title'),
+      description: t('settings.mcp.twlaw.desc'),
+      toggleLabel: t('settings.mcp.twlaw.toggle'),
+    },
+    {
       id: BUILTIN_TRANSLATE_SERVER_ID,
       title: t('settings.mcp.translate.title'),
       description: t('settings.mcp.translate.desc'),
       toggleLabel: t('settings.mcp.translate.toggle'),
+    },
+    {
+      id: BUILTIN_YOBI_SERVER_ID,
+      title: t('settings.mcp.yobi.title'),
+      description: t('settings.mcp.yobi.desc'),
+      toggleLabel: t('settings.mcp.yobi.toggle'),
     },
     {
       id: BUILTIN_PAGE_SERVER_ID,
@@ -148,6 +163,14 @@ export const ConnectorGallery: React.FC<Props> = ({ mcp, roster, t, sectionGap }
       description: t('settings.mcp.calendar.desc'),
       toggleLabel: t('settings.mcp.calendar.toggle'),
       footer: <CalendarAccountSetup t={t} mailboxesVersion={mailboxesVersion} />,
+    },
+    {
+      id: BUILTIN_OFFICE_SERVER_ID,
+      title: t('settings.mcp.office.title'),
+      description: t('settings.mcp.office.desc'),
+      toggleLabel: t('settings.mcp.office.toggle'),
+      waitingError: OFFICE_TOOL_MISSING_ERROR,
+      whenOn: <ManagedToolSetup id="officecli" t={t} />,
     },
     ...SITE_CONNECTOR_ROWS.map((row) => ({
       id: siteConnectorServerId(row.site),
@@ -181,6 +204,7 @@ export const ConnectorGallery: React.FC<Props> = ({ mcp, roster, t, sectionGap }
           waitingError={spec.waitingError}
           setup={spec.setup}
           footer={spec.footer}
+          whenOn={spec.whenOn}
         />
       ),
     };
@@ -275,7 +299,7 @@ export const ConnectorGallery: React.FC<Props> = ({ mcp, roster, t, sectionGap }
         </Chip.Group>
 
         {mcp.error && !mcp.form && (
-          <Text fz="var(--font-size-sm)" c="var(--mantine-color-error)" mb={10}>{mcp.error}</Text>
+          <Text fz="var(--font-size-sm)" c="var(--error-text)" mb={10}>{mcp.error}</Text>
         )}
 
         {/* Columns follow the card's own width (a container query), never the window's. */}

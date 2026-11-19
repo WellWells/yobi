@@ -5,6 +5,7 @@ import type { ConversationFolder } from '../../../../shared/conversationFolders'
 import type { OutputFile } from '../../../../shared/types';
 import { useResolvedCombo } from '../../store/shortcutStore';
 import { ContextMenuPortal } from '../ContextMenuPortal';
+import { DangerMenuItem } from '../DangerMenuItem';
 import { SelectionActionBar } from '../SelectionActionBar';
 import { ShortcutHint } from '../ShortcutHint';
 import { MoveToFolderButton, MoveToFolderSub } from './FolderMenus';
@@ -98,15 +99,14 @@ export const SelectionContextMenu: React.FC<SelectionContextMenuProps> = ({
       <MMenu.Divider />
       <SelectionMenuItems onAction={onAction} disabled={busy} t={t} />
       <MMenu.Divider />
-      <MMenu.Item
+      <DangerMenuItem
         leftSection={<Trash size={13} />}
-        color="red"
         rightSection={<ShortcutHint combo={deleteCombo} />}
         disabled={busy}
         onClick={() => { onClose(); onDelete(); }}
       >
         {t('common.delete')}
-      </MMenu.Item>
+      </DangerMenuItem>
     </ContextMenuPortal>
   );
 };

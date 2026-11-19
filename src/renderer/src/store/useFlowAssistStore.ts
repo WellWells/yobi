@@ -7,7 +7,7 @@ import type { FlowBuildIssue, FlowDefinition } from '../../../shared/types';
  * it came back with. One request at a time per flow; a newer one replaces the last result.
  */
 
-export type AssistJobKind = 'edit' | 'explain' | 'names';
+export type AssistJobKind = 'edit' | 'explain' | 'names' | 'keys';
 
 export interface AssistNameRow {
   stepId: string;
@@ -18,6 +18,19 @@ export interface AssistNameRow {
   name: string;
 }
 
+export interface AssistKeyRow {
+  stepId: string;
+  /** 1-based, at the time of the request. */
+  index: number;
+  /** The step's name as the editor shows it, so the row says which step. */
+  stepName: string;
+  /** Its output name when asked; a step renamed since keeps its own. */
+  before: string;
+  key: string;
+  /** How many `{{before…}}` the flow has, all rewritten with it. */
+  references: number;
+}
+
 export type AssistResult =
   /** `base`: the draft it was made from (`assistBaseKey`); applying needs the draft unchanged. */
   | { kind: 'proposal'; change: string; flow: FlowDefinition; issues: FlowBuildIssue[]; paused: boolean; changes: AssistChangeList; base: string }
@@ -25,13 +38,15 @@ export type AssistResult =
   | { kind: 'unchanged'; change: string }
   | { kind: 'explain'; markdown: string }
   | { kind: 'names'; rows: AssistNameRow[]; skipped: number }
-  | { kind: 'applied'; what: 'edit' | 'names'; count: number }
+  | { kind: 'keys'; rows: AssistKeyRow[]; skipped: number }
+  | { kind: 'applied'; what: 'edit' | 'names' | 'keys'; count: number }
   | { kind: 'error'; message: string; retry: AssistRetry | null };
 
 export type AssistRetry =
   | { kind: 'edit'; change: string }
   | { kind: 'explain' }
-  | { kind: 'names' };
+  | { kind: 'names' }
+  | { kind: 'keys' };
 
 export interface AssistThread {
   job: { kind: AssistJobKind; id: string } | null;

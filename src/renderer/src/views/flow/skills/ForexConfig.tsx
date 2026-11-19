@@ -60,7 +60,7 @@ export const ForexConfig: React.FC<SkillConfigProps> = ({ step, onChange, t }) =
         />
       </Group>
       {sameCurrency(base || 'USD', target) && (
-        <Text fz="xs" c="var(--mantine-color-warning)">{t('flow.skill.forex.sameCurrency')}</Text>
+        <Text fz="xs" c="var(--warning-text)">{t('flow.skill.forex.sameCurrency')}</Text>
       )}
       <AppTextInput
         label={t('flow.skill.forex.amount')}

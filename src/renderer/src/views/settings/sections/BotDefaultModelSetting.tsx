@@ -36,6 +36,7 @@ export const BotDefaultModelSetting: React.FC<Props> = ({ value, busy, hint, onU
       control={
         <Box w={220}>
           <SelectDropdown
+            aria-label={t('settings.bot.defaultModel.label')}
             value={known ? value.targetUrl : ''}
             options={options}
             onChange={(v) => onUpdate({ targetUrl: v })}

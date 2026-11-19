@@ -1,6 +1,7 @@
 import { obj, str } from './flow/skills/jsonPick';
 import { fetchRawResponse } from './pageLoader';
 import { userAgentForUrl } from './userAgent';
+import { youtubeClearanceCookie } from './youtubeClearance';
 import { youtubeWatchUrl } from '../shared/youtubeUrl';
 import type { YtFormat } from '../shared/ytdl';
 
@@ -185,11 +186,13 @@ function pause(ms: number, signal: AbortSignal | undefined): Promise<void> {
 
 async function readWatchPage(videoId: string, signal: AbortSignal | undefined): Promise<YoutubeVideoInfo> {
   const url = youtubeWatchUrl(videoId);
+  // Google's pass for this address, when a person answered its check (`youtubeClearance.ts`).
+  const pass = await youtubeClearanceCookie();
   const { status, text } = await fetchRawResponse(url, {
     headers: {
       'User-Agent': userAgentForUrl(url),
       'Accept-Language': 'en-US,en;q=0.9',
-      Cookie: 'SOCS=CAI',
+      Cookie: pass ? `SOCS=CAI; ${pass}` : 'SOCS=CAI',
     },
     validateRedirectHost: stayOnYoutube,
     ...(signal ? { signal } : {}),

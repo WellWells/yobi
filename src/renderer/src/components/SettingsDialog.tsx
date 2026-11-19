@@ -1,4 +1,5 @@
 import React, { useEffect } from 'react';
+import { rem } from '@mantine/core';
 import { Z_SETTINGS } from '../config/zLayers';
 import { useI18nStore } from '../store/i18nStore';
 import { AppModal } from './AppModal';
@@ -93,13 +94,13 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({ opened, onClose,
       zIndex={Z_SETTINGS}
       styles={{
         inner: {
-          paddingTop: TOP_ROW_HEIGHT,
+          paddingTop: rem(TOP_ROW_HEIGHT),
           paddingBottom: SETTINGS_DIALOG_MARGIN,
           paddingInline: SIDE_MARGIN,
         },
         content: {
           flex: `0 0 min(${SETTINGS_DIALOG_MAX_WIDTH}px, 100%)`,
-          height: `calc(100dvh - ${TOP_ROW_HEIGHT + SETTINGS_DIALOG_MARGIN}px)`,
+          height: `calc(100dvh - ${rem(TOP_ROW_HEIGHT)} - ${SETTINGS_DIALOG_MARGIN}px)`,
           maxHeight: 'none',
           display: 'flex',
           flexDirection: 'column',

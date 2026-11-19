@@ -1,6 +1,6 @@
 import React, { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Flex, Stack } from '@mantine/core';
-import { Paperclip } from 'lucide-react';
+import { FilePlus, Paperclip } from 'lucide-react';
 import { Sidebar } from '../components/Sidebar';
 import { SidebarDrawer } from '../components/SidebarDrawer';
 import { closeSidebarDrawer } from '../store/sidebarDrawerStore';
@@ -23,6 +23,7 @@ import { FileDragArea, FileDropZone } from '../components/chat/FileDropZone';
 import { LoginRequiredDialog } from '../components/chat/LoginRequiredDialog';
 import { ShareLinkDialog } from '../components/chat/ShareLinkDialog';
 import { buildShareMarkdown } from '../../../shared/conversationDoc';
+import { kbConnectorId } from '../../../shared/knowledgeBase';
 import { conversationPlainMarkdown } from '../../../shared/conversationPlain';
 import { isNotionDoc } from '../../../shared/notion/notionDoc';
 import { conversationAliases } from '../utils/parseMarkdownBlocks';
@@ -55,6 +56,9 @@ import { useAgentRunStore } from '../store/useAgentRunStore';
 import { useConversationTurns } from '../hooks/useConversationTurns';
 import { ConversationView } from './chat/ConversationView';
 import { DocumentView } from './document/DocumentView';
+import { KB_REGION_FOCUS, KnowledgeHeader, KnowledgePage } from './knowledge/KnowledgePage';
+import { importIntoKnowledgeBase } from './knowledge/knowledgeImport';
+import { useKnowledgeStore } from '../store/useKnowledgeStore';
 import { quoteIntoAssistant } from './document/docAssistantActions';
 import { useDocAssistantStore } from '../store/docAssistantStore';
 import { openFocusTarget } from '../utils/openFocus';
@@ -162,10 +166,15 @@ export const ChatView: React.FC = React.memo(() => {
     optOutWeb,
     agent,
     setAgent,
+    knowledgeOnly,
+    setKnowledgeOnly,
+    knowledgeFiles,
+    setKnowledgeFiles,
     discloseAll: discloseConnectors,
     toggle: toggleConnector,
     remove: removeConnectors,
     clear: clearConnectors,
+    replace: replaceConnectors,
   } = useConversationConnectors(noop);
   // Agent is on when switched on by itself or implied by a capability; with none of them a send is
   // an ordinary chat turn — the only shape that can continue the provider's own thread natively.
@@ -344,6 +353,57 @@ export const ChatView: React.FC = React.memo(() => {
     closeSidebarDrawer();
     focusPromptInput();
   }, [selectFile, setFileContent, clearConnectors, setWeb, setAgent, focusPromptInput]);
+
+  // "New chat" on a knowledge base in Settings: a new conversation with that base attached, so
+  // every question searches it first. Waits for the base to reach the composer's candidates.
+  const knowledgeChatRequest = useAppStore((s) => s.knowledgeChatRequest);
+  useEffect(() => {
+    if (!knowledgeChatRequest) return;
+    const id = kbConnectorId(knowledgeChatRequest);
+    if (!connectors.some((connector) => connector.id === id)) return;
+    useAppStore.getState().clearKnowledgeChatRequest();
+    handleNewConversation();
+    replaceConnectors([id]);
+    setKnowledgeOnly(true);
+  }, [knowledgeChatRequest, connectors, handleNewConversation, replaceConnectors, setKnowledgeOnly]);
+
+  // A base's page sits in a new chat's place, over the same composer: the composer starts as a new
+  // conversation's with the base attached, answering from its documents alone ("knowledge base
+  // only", like NotebookLM) until the user widens it on the mode menu.
+  const openKnowledgeId = useAppStore((s) => s.openKnowledgeId);
+  const knowledgeAttached = useRef<string | null>(null);
+  useEffect(() => {
+    if (!openKnowledgeId) {
+      knowledgeAttached.current = null;
+      return;
+    }
+    if (knowledgeAttached.current === openKnowledgeId) return;
+    const id = kbConnectorId(openKnowledgeId);
+    if (!connectors.some((connector) => connector.id === id)) return;
+    knowledgeAttached.current = openKnowledgeId;
+    clearConnectors();
+    setWeb(false);
+    setAgent(loadAgentDefault());
+    replaceConnectors([id]);
+    setKnowledgeOnly(true);
+  }, [openKnowledgeId, connectors, clearConnectors, setWeb, setAgent, replaceConnectors, setKnowledgeOnly]);
+
+  // "Ask the ticked files" on a base's page: the composer answers from those documents alone. Waits
+  // until the page's own reset (above) has attached the base, so it is not undone by it.
+  const knowledgeAskRequest = useAppStore((s) => s.knowledgeAskRequest);
+  useEffect(() => {
+    if (!knowledgeAskRequest || knowledgeAttached.current !== knowledgeAskRequest.kbId) return;
+    useAppStore.getState().clearKnowledgeAskRequest();
+    const { kbId, files } = knowledgeAskRequest;
+    setKnowledgeFiles(files.length > 0 ? { [kbId]: files } : undefined);
+    focusPromptInput();
+  }, [knowledgeAskRequest, openKnowledgeId, setKnowledgeFiles, focusPromptInput]);
+
+  const knowledgeFileCount = useMemo(
+    () => Object.values(knowledgeFiles ?? {}).reduce((sum, files) => sum + files.length, 0),
+    [knowledgeFiles],
+  );
+  const wholeKnowledge = useCallback(() => setKnowledgeFiles(undefined), [setKnowledgeFiles]);
 
   // The blank chat the app opens on is a new conversation too.
   useEffect(() => {
@@ -525,7 +585,9 @@ export const ChatView: React.FC = React.memo(() => {
       const override = attachmentOverrideRef.current;
       const attachmentPaths = override ?? attachments.map((a) => a.path).filter(Boolean);
       // Web too: a send that has just turned it on has not flushed that into `web` either.
-      void runAgentCommand(input, activeModelUrl, attachmentPaths, scope, webOverride ?? webForRun(web, webOff));
+      // "Knowledge base only" holds while the send names no connector of its own (that is a wider ask).
+      const onlyKnowledge = knowledgeOnly && !directConnector;
+      void runAgentCommand(input, activeModelUrl, attachmentPaths, scope, webOverride ?? webForRun(web, webOff), onlyKnowledge, onlyKnowledge ? knowledgeFiles : undefined);
       if (!override && attachmentPaths.length > 0) clearAttachments();
       return true;
     }
@@ -533,7 +595,7 @@ export const ChatView: React.FC = React.memo(() => {
     return true;
   }, [
     activeModelUrl, attachments, clearAttachments, activeConnectorIds, handleDiscloseConnector,
-    handleNewConversation, showRecapNow, runCommand, runAgentCommand, web, webOff, t,
+    handleNewConversation, showRecapNow, runCommand, runAgentCommand, web, webOff, knowledgeOnly, knowledgeFiles, t,
   ]);
 
   // An edited question, as Gemini, ChatGPT and Claude treat one: the conversation goes back to just
@@ -680,11 +742,15 @@ export const ChatView: React.FC = React.memo(() => {
     pendingTurnCount: pendingSelectedTurns,
     hasContent: Boolean(fileContent) && Boolean(conversation),
   });
+  // A knowledge base's page fills the content area of a new chat until its first question is sent.
+  const knowledgeOpen = openKnowledgeId !== null && !selectedFile && pendingNewTurns === 0;
+  const knowledgeName = useKnowledgeStore((s) => (openKnowledgeId ? s.bases.find((kb) => kb.id === openKnowledgeId)?.name : undefined));
   // True exactly when the content area below falls through to one of the two welcome screens.
   // The composer then rises to sit under the greeting, as on the providers' own home pages.
   const blankChat = !(showConversationView && conversation)
     && !(fileContent && parsedBlocks)
     && !selectedFile
+    && !knowledgeOpen
     && !(tempChatMode && tempChatConversation && tempChatConversation.turns.length > 0)
     && pendingNewTurns === 0
     && !(tempChatMode && tempChatContent && tempChatBlocks);
@@ -808,15 +874,18 @@ export const ChatView: React.FC = React.memo(() => {
       )}
       {/* Under a document the chat column stays mounted, only hidden: the composer keeps what was typed. */}
       <Box display={documentConversation ? 'none' : 'flex'} flex={1} miw={0}>
+      {/* On a knowledge base's page a dropped file is added to the base, not attached to the question. */}
       <FileDropZone
         grow
-        onFiles={addFiles}
-        icon={Paperclip}
-        title={t('attach.drop.title')}
-        detail={attachUnsupportedReason ?? attachRestriction ?? t('attach.drop.detail')}
+        onFiles={knowledgeOpen && openKnowledgeId ? (files) => importIntoKnowledgeBase(openKnowledgeId, files, t) : addFiles}
+        icon={knowledgeOpen ? FilePlus : Paperclip}
+        title={knowledgeOpen && knowledgeName ? fillTemplate(t('kb.page.drop.title'), { name: knowledgeName }) : t('attach.drop.title')}
+        detail={knowledgeOpen ? t('kb.page.drop.detail') : attachUnsupportedReason ?? attachRestriction ?? t('attach.drop.detail')}
       >
-      <Stack gap={0} flex={1} pos="relative" bg="var(--mantine-color-body)" style={{ overflow: 'hidden' }}>
-        {!selectedFile && (
+      {/* The main landmark and an F6 region (WCAG 1.3.1, 2.4.1); the composer is a region inside it. */}
+      <Stack component="main" data-region="main" data-region-focus={knowledgeOpen ? KB_REGION_FOCUS : undefined} gap={0} flex={1} pos="relative" bg="var(--page-bg)" style={{ overflow: 'hidden' }}>
+        {knowledgeOpen && openKnowledgeId && <KnowledgeHeader kbId={openKnowledgeId} />}
+        {!selectedFile && !knowledgeOpen && (
           <ChatHeaderRow>
             <Box ml="auto">
               <TempChatToggle />
@@ -873,7 +942,9 @@ export const ChatView: React.FC = React.memo(() => {
             t={t}
           />
           {/* A document is drawn by DocumentView; drawing it here too would leave a second rewrite slot in the page. */}
-          {documentConversation ? null : showConversationView && conversation ? (
+          {documentConversation ? null : knowledgeOpen && openKnowledgeId ? (
+            <KnowledgePage key={openKnowledgeId} kbId={openKnowledgeId} />
+          ) : showConversationView && conversation ? (
             <ConversationView
               conversation={conversation}
               conversationPath={selectedFile?.path ?? ''}
@@ -948,7 +1019,14 @@ export const ChatView: React.FC = React.memo(() => {
           </Box>
         )}
 
-        <Box ref={composerRef} style={{ flexShrink: 0 }}>
+        <Box
+          ref={composerRef}
+          component="section"
+          aria-label={t('a11y.c.composer')}
+          data-region="composer"
+          data-region-focus="textarea"
+          style={{ flexShrink: 0 }}
+        >
         <PromptInputArea
           ref={promptAreaRef}
           t={t}
@@ -973,6 +1051,10 @@ export const ChatView: React.FC = React.memo(() => {
           webOff={webOff}
           onToggleWeb={toggleWeb}
           onSetWeb={handleComposerSetWeb}
+          knowledgeOnly={knowledgeOnly}
+          onSetKnowledgeOnly={setKnowledgeOnly}
+          knowledgeFileCount={knowledgeFileCount}
+          onWholeKnowledge={wholeKnowledge}
           autoWebSignal={autoWebSignal}
           onChangeMode={handleChangeMode}
           onPickMode={handlePickMode}
@@ -1074,6 +1156,8 @@ export const ChatView: React.FC = React.memo(() => {
         setWidth={captureExport.setCaptureWidth}
         margin={captureExport.captureMargin}
         setMargin={captureExport.setCaptureMargin}
+        cardOpacity={captureExport.captureCardOpacity}
+        setCardOpacity={captureExport.setCaptureCardOpacity}
         hiDpi={captureExport.captureHiDpi}
         setHiDpi={captureExport.setCaptureHiDpi}
         zip={captureExport.captureZip}

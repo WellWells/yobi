@@ -11,6 +11,8 @@ import { refreshClaudeModelList } from './ipc/claudeModel';
 import { clearChatgptModels } from './providers/chatgptModelSync';
 import { refreshChatgptModelList } from './ipc/chatgptModel';
 import { refreshGeminiModelList } from './ipc/geminiModel';
+import { clearPerplexityModels } from './providers/perplexityModelSync';
+import { refreshPerplexityModelList } from './ipc/perplexityModel';
 import { noteGeminiCookieRead, noteGeminiSessionChanged, refreshGeminiSignIn } from './providers/geminiSignInState';
 
 const WORKER_PARTITION = 'persist:gemini';
@@ -28,6 +30,7 @@ function afterSignIn(provider: AuthProvider): void {
   if (provider === 'gemini') void refreshGeminiModelList(true);
   if (provider === 'claude') void refreshClaudeModelList(true);
   if (provider === 'chatgpt') void refreshChatgptModelList(true);
+  if (provider === 'perplexity') void refreshPerplexityModelList(true);
 }
 
 export async function openAccountLoginWindow(provider: AuthProvider): Promise<boolean> {
@@ -69,6 +72,7 @@ export async function clearProviderData(provider: Provider): Promise<boolean> {
     await clearProviderSession(provider);
     if (provider === 'claude') clearClaudeModels();
     if (provider === 'chatgpt') clearChatgptModels();
+    if (provider === 'perplexity') clearPerplexityModels();
     if (provider === 'gemini') noteGeminiSessionChanged(false);
     // Every Provider is an AuthProvider today. If one ever is not, this stops
     // type-checking rather than silently skipping the status broadcast.

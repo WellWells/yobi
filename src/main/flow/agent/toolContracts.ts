@@ -100,6 +100,12 @@ export interface ToolContract {
    * have one; a server's own title, then the id spelled out, stand in for the rest.
    */
   titleKey?: string;
+  /**
+   * What the server would refuse in these arguments, found before the user is asked: answered like
+   * a schema error (not a block). Without it a bot asks the owner again and again for one
+   * change, each wrong guess refused only after the approval.
+   */
+  precheck?: (args: Args) => Promise<string | null>;
 }
 
 const DESTRUCTIVE_VERBS = new Set(['delete', 'del', 'remove', 'clear', 'drop', 'purge', 'empty', 'destroy', 'revoke']);

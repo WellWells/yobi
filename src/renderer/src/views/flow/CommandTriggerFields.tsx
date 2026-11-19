@@ -82,15 +82,15 @@ export const CommandTriggerFields: React.FC<CommandTriggerFieldsProps> = ({
 
       {commandEmpty && (
         <Group gap={6} align="center">
-          <TriangleExclamationPoint size={13} color="var(--mantine-color-warning)" />
-          <Text fz="xs" c="var(--mantine-color-warning)">{tk('command.empty')}</Text>
+          <TriangleExclamationPoint size={13} color="var(--warning-text)" />
+          <Text fz="xs" c="var(--warning-text)">{tk('command.empty')}</Text>
         </Group>
       )}
 
       {conflicts?.map((conflict) => (
         <Group key={conflict.kind} gap={6} align="flex-start" wrap="nowrap">
-          <TriangleExclamationPoint size={13} color="var(--mantine-color-warning)" style={{ marginTop: 2, flexShrink: 0 }} />
-          <Text fz="xs" c="var(--mantine-color-warning)">{describeFlowIssue(conflict, t)}</Text>
+          <TriangleExclamationPoint size={13} color="var(--warning-text)" style={{ marginTop: 2, flexShrink: 0 }} />
+          <Text fz="xs" c="var(--warning-text)">{describeFlowIssue(conflict, t)}</Text>
         </Group>
       ))}
 

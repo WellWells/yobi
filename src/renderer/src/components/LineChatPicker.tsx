@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Group, Stack, Text } from '@mantine/core';
 import { RefreshCw, Settings } from 'lucide-react';
 import { MultiSelectDropdown } from './MultiSelectDropdown';
+import { nameProps } from './a11y';
 import { AppButton } from './AppButton';
 import { lineApi } from '../api/electronApi';
 import { useI18nStore } from '../store/i18nStore';
@@ -103,7 +104,7 @@ export const LineChatPicker: React.FC<LineChatPickerProps> = ({ value, onChange,
   return (
     <Stack gap={4} ref={boxRef}>
       <MultiSelectDropdown
-        label={label}
+        {...nameProps(label, t('flow.skill.line_read.chat'))}
         options={options}
         value={selected}
         onChange={(next) => onChange(next.join(','))}
@@ -120,7 +121,7 @@ export const LineChatPicker: React.FC<LineChatPickerProps> = ({ value, onChange,
       )}
       {result !== null && !result.ok && (
         <Group gap="xs" align="center" wrap="nowrap">
-          <Text fz="xs" c="var(--mantine-color-warning)" style={{ flex: 1 }}>{result.message}</Text>
+          <Text fz="xs" c="var(--warning-text)" style={{ flex: 1 }}>{result.message}</Text>
           {result.reason === 'disabled' ? (
             <AppButton
               variant="light"

@@ -749,6 +749,25 @@ function realToolNames(handle: McpRuntimeIndex['handles'][number]): string {
   return ` Its tools: ${shown.join(', ')}${more}.`;
 }
 
+/**
+ * A built-in "tool" that is really a connector, or one of a connector's tools: the rejection names
+ * the call shape that reaches it. Without this the model reads a list of built-in tools only and
+ * gives up on the connector — it writes "taiwan-rail" as the tool, is refused, and takes
+ * train times from a third-party page instead. Only names already in this run's prompt are matched.
+ */
+export function connectorNamedAsTool(index: McpRuntimeIndex | null, tool: unknown): string | undefined {
+  if (!index || typeof tool !== 'string') return undefined;
+  const written = tool.trim().replace(/^mcp:/i, '');
+  if (!written) return undefined;
+  const handle = findMcpServer(index, written);
+  if (handle) {
+    return `"${written}" is a connector, not a tool. Call it with "server": "${handle.handle}" and "name" set to one of its tools, with "arguments".${realToolNames(handle)}`;
+  }
+  const owners = index.handles.filter((h) => h.tools.some((t) => t.name === written));
+  if (owners.length !== 1) return undefined;
+  return `"${written}" is a tool on connector "${owners[0].handle}". Call it with "server": "${owners[0].handle}", "name": "${written}" and "arguments".`;
+}
+
 export function validateMcpAction(obj: Record<string, unknown>, index: McpRuntimeIndex): Validation<McpAction> {
   const thought = typeof obj.thought === 'string' ? obj.thought : '';
   const server = typeof obj.server === 'string' ? obj.server.trim() : '';

@@ -1,6 +1,11 @@
-import type { CaptureSettings, CaptureTurn, CardLayout, CardTheme, MarkdownCapturePayload } from './types';
+import { clampCardOpacity } from './types';
+import type {
+  CaptureExportAction, CaptureFormat, CaptureSettings, CaptureTurn, CardLayout, CardTheme, MarkdownCapturePayload,
+  MarkdownCaptureRequest,
+} from './types';
 import { captureBackgroundCss, paletteCardTheme } from './capturePalettes';
 import type { CaptureBackgroundStyle, CaptureDirection } from './capturePalettes';
+import { splitLeadingTitle } from './markdownTitle';
 
 /**
  * What an exported card prints, shared by every path that renders one: the chat export dialog in
@@ -17,12 +22,13 @@ export interface CardStyle {
   cardTheme: CardTheme;
   width: number;
   margin: number;
+  cardOpacity: number;
   pixelRatio: number;
 }
 
 /**
  * The look Settings › Card style gives a card rendered in main (a bot export, a flow's llm
- * export): the background (palette, solid/gradient/mesh, direction), a light or dark card, width,
+ * export): the background (palette, solid/gradient/silk, direction), a light or dark card, width,
  * margin and resolution. `palette` is the caller's own pick and replaces the style's palette only;
  * blank keeps the style's.
  */
@@ -37,7 +43,65 @@ export function cardStyleFromSettings(settings: CaptureSettings, palette = ''): 
     cardTheme: paletteCardTheme(key),
     width: settings.width,
     margin: settings.margin,
+    cardOpacity: clampCardOpacity(settings.cardOpacity),
     pixelRatio: settings.pixelRatio,
+  };
+}
+
+/** What the quick-export panel picks; everything else on the card is fixed for a pasted document. */
+export interface DocumentCardLook {
+  palette: string;
+  backgroundStyle: CaptureBackgroundStyle;
+  direction: string;
+  width: number;
+  margin: number;
+  cardOpacity: number;
+  pixelRatio: number;
+}
+
+/** A pasted document as a card: its opening heading becomes the title and leaves the body. */
+export function documentCardPayload(markdown: string): MarkdownCapturePayload {
+  const { title, body } = splitLeadingTitle(markdown);
+  return {
+    title,
+    prompt: '',
+    content: body,
+    summary: '',
+    provider: '',
+    timestamp: '',
+    turns: [{ prompt: '', response: body, provider: '', timestamp: '' }],
+  };
+}
+
+/**
+ * The quick export's card. Main renders it and the panel previews it from the same function, so
+ * what the panel shows is what the capture window draws.
+ */
+export function documentCardRequest(
+  payload: MarkdownCapturePayload,
+  look: DocumentCardLook,
+  output: { format: CaptureFormat; zip: boolean; action: CaptureExportAction; fileName?: string },
+): MarkdownCaptureRequest {
+  return {
+    payload,
+    options: {
+      mode: output.action === 'save' ? 'save' : 'copy',
+      format: output.format,
+      ...(output.fileName === undefined ? {} : { fileName: output.fileName }),
+      showPrompt: false,
+      showContent: true,
+      showProvider: false,
+      showTimestamp: false,
+      showTokens: false,
+      cardLayout: 'document',
+      width: look.width,
+      margin: look.margin,
+      cardOpacity: clampCardOpacity(look.cardOpacity),
+      background: captureBackgroundCss(look.palette, look.backgroundStyle, look.direction as CaptureDirection),
+      cardTheme: paletteCardTheme(look.palette),
+      pixelRatio: look.pixelRatio,
+      zip: output.zip,
+    },
   };
 }
 

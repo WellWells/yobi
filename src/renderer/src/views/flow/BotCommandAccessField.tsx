@@ -54,8 +54,8 @@ export const BotCommandAccessField: React.FC<BotCommandAccessFieldProps> = ({ va
       )}
       {isTriggerClosed(value) && (
         <Group gap={6} align="center">
-          <TriangleExclamationPoint size={13} color="var(--mantine-color-error)" />
-          <Text fz="xs" c="var(--mantine-color-error)">{t('flow.trigger.bot.access.nobody')}</Text>
+          <TriangleExclamationPoint size={13} color="var(--error-text)" />
+          <Text fz="xs" c="var(--error-text)">{t('flow.trigger.bot.access.nobody')}</Text>
         </Group>
       )}
     </Stack>

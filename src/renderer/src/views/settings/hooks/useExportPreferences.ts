@@ -1,6 +1,6 @@
 import { useCallback, useEffect } from 'react';
 import { useExportSettingsStore } from '../../../store/exportSettingsStore';
-import { clampCaptureMargin } from '../../../../../shared/types';
+import { clampCaptureMargin, clampCardOpacity } from '../../../../../shared/types';
 import type { CardLayout } from '../../../../../shared/types';
 import type { CaptureBackgroundStyle } from '../../../../../shared/capturePalettes';
 
@@ -27,6 +27,8 @@ export function useExportPreferences() {
     setWidth: useCallback((width: number) => patchCapture({ width }), [patchCapture]),
     margin: clampCaptureMargin(capture.margin),
     setMargin: useCallback((margin: number) => patchCapture({ margin }), [patchCapture]),
+    cardOpacity: clampCardOpacity(capture.cardOpacity),
+    setCardOpacity: useCallback((cardOpacity: number) => patchCapture({ cardOpacity }), [patchCapture]),
     hiDpi: capture.pixelRatio === 2,
     setHiDpi: useCallback((on: boolean) => patchCapture({ pixelRatio: on ? 2 : 1 }), [patchCapture]),
   };

@@ -22,6 +22,8 @@ export interface ThreadEnvelope {
   output: string;
   subject: 'post' | 'account';
   platform: string;
+  /** The post's own opening block (an App Store app's card); absent for most posts. */
+  opening?: string;
   text: string;
   author: string;
   name: string;
@@ -54,7 +56,7 @@ export function pageOfThread(thread: ThreadEnvelope, url: string): PageRead {
     // A post with nothing written on it is all media; a profile is a list of posts.
     complete: post && thread.text.trim().length > 0,
     images: [],
-    ...(post ? { mainText: thread.text } : {}),
+    ...(post ? { mainText: [thread.opening, thread.text].filter(Boolean).join('\n\n') } : {}),
     ...(post && Number.isFinite(replies) ? { replyCount: replies } : {}),
   };
 }
@@ -66,6 +68,10 @@ async function readPublicPost(url: string, signal?: AbortSignal): Promise<PageRe
 
 const LIVE_DEPS: PageReaderDeps = {
   fetchPage: (url, signal) => fetchRawResponse(url, { headers: headersFor(url), signal }),
+  fetchFile: async (url, signal) => {
+    const answer = await fetchRawResponse(url, { headers: { 'User-Agent': userAgentForUrl(url) }, keepBytes: true, signal });
+    return { status: answer.status, bytes: answer.bytes ?? new Uint8Array() };
+  },
   renderPage: (url, signal) => pageFetchLane.runExclusive(() => loadPageHtml(url, undefined, signal)),
   resolveGoogleNews,
   readPost: readPublicPost,

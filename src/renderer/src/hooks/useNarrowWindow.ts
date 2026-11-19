@@ -1,4 +1,5 @@
 import { useMediaQuery } from '@mantine/hooks';
+import { useSystemTextScale } from '../styles/systemTextScale';
 
 /**
  * Below this window width the chat and flow sidebars stop sitting beside the view and open over it
@@ -12,5 +13,6 @@ export const NARROW_WINDOW_QUERY = `(max-width: ${NARROW_WINDOW_BELOW - 1}px)`;
 
 /** The window is too narrow for a sidebar beside the view. */
 export function useNarrowWindow(): boolean {
-  return useMediaQuery(NARROW_WINDOW_QUERY, false, { getInitialValueInEffect: false });
+  const scale = useSystemTextScale();
+  return useMediaQuery(scale === 1 ? NARROW_WINDOW_QUERY : `(max-width: ${NARROW_WINDOW_BELOW * scale - 1}px)`, false, { getInitialValueInEffect: false });
 }

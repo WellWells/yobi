@@ -1,6 +1,9 @@
 import type { FlowDefinition, SkillInstance, SkillType } from '../../../shared/types';
 import { DEFAULT_SKILL_CONFIG, SKILLS_WITHOUT_OUTPUT_KEY } from '../../../shared/flowSkillSchema';
 import { findMatchingMarker, loopVarName } from '../../../shared/flowBlockStructure';
+import { renameReferences } from '../../../shared/flowOutputRename';
+
+export { renameReferences };
 
 export const DEFAULT_OUTPUT_BASE: Partial<Record<SkillType, string>> = {
   browser_open: 'tab',
@@ -77,6 +80,8 @@ export function createDefaultStep(type: SkillType = 'shell', outputKey?: string,
     mail_fetch: t('flow.skill.mail_fetch'),
     almanac: t('flow.skill.almanac'),
     tw_invoice: t('flow.skill.tw_invoice'),
+    app_store: t('flow.skill.app_store'),
+    price_search: t('flow.skill.price_search'),
     random: t('flow.skill.random'),
   };
   const noOutputKey = SKILLS_WITHOUT_OUTPUT_KEY.includes(type);
@@ -114,19 +119,6 @@ export function nextFreeOutputKey(base: string, steps: SkillInstance[], start: n
   let n = Math.max(1, start);
   while (taken.has(`${base}_${n}`)) n++;
   return `${base}_${n}`;
-}
-
-function escapeRegExp(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-/** `{{old}}` and `{{old.sub}}` become `{{new}}` / `{{new.sub}}`; other keys are left alone. */
-export function renameReferences(text: string, renames: ReadonlyMap<string, string>): string {
-  let out = text;
-  for (const [from, to] of renames) {
-    out = out.replace(new RegExp(`\\{\\{(\\s*)${escapeRegExp(from)}(?=[\\s.}])`, 'g'), `{{$1${to}`);
-  }
-  return out;
 }
 
 /**

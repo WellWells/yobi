@@ -22,6 +22,8 @@ interface Props {
   increaseLabel: string;
   error?: boolean;
   disabled?: boolean;
+  /** The box's name; inside a `SettingField` its label already names it. */
+  'aria-label'?: string;
 }
 
 /**
@@ -36,7 +38,7 @@ export function stepperBase(input: string, value: number): number {
 /** − [ n unit ] ＋ (range): the settings page's one control for a small whole number. */
 export const NumberStepper: React.FC<Props> = ({
   value, input, onInputChange, onCommit, min, max, unit, unitWidth = 30, range,
-  decreaseLabel, increaseLabel, error, disabled,
+  decreaseLabel, increaseLabel, error, disabled, 'aria-label': ariaLabel,
 }) => (
   <Group gap={10} align="center">
     <ActionIcon
@@ -53,6 +55,7 @@ export const NumberStepper: React.FC<Props> = ({
       <AppTextInput
         type="text"
         inputMode="numeric"
+        aria-label={ariaLabel}
         tone="body"
         numeric
         value={input}

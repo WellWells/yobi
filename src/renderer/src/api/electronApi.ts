@@ -1,10 +1,11 @@
 import type { GeminiModelChoice, GeminiModelState } from '../../../shared/geminiModels';
 import type { ClaudeModelChoice, ClaudeModelState } from '../../../shared/claudeModels';
 import type { ChatgptModelChoice, ChatgptModelState } from '../../../shared/chatgptModels';
+import type { PerplexityModelChoice, PerplexityModelState } from '../../../shared/perplexityModels';
 import type { McpFlowToolsRequest, McpFlowToolsResult } from '../../../shared/mcpFlowStep';
 import type { AiNameRequest, AiNameResult } from '../../../shared/aiName';
 import type {
-  FlowAssistEditRequest, FlowAssistEditResult, FlowAssistExplainRequest, FlowAssistExplainResult, FlowAssistNamesRequest, FlowAssistNamesResult,
+  FlowAssistEditRequest, FlowAssistEditResult, FlowAssistExplainRequest, FlowAssistExplainResult, FlowAssistNamesRequest, FlowAssistNamesResult, FlowAssistKeysRequest, FlowAssistKeysResult,
 } from '../../../shared/flowAssist';
 import type { PromptAuthorRequest, PromptAuthorResult } from '../../../shared/promptAuthor';
 import type { MemoryEditResult, MemoryNote, BotSelfChange, UserMemorySnapshot } from '../../../shared/userMemory';
@@ -47,12 +48,14 @@ import type {
   TranslateProgress, TranslateRequest, TranslateResult, TurnTranslationRequest, TurnTranslationResult,
 } from '../../../shared/translate';
 import type { YtdlToolsState } from '../../../shared/ytdl';
-import type { DownloadsKeep } from '../../../shared/downloads';
+import type { ManagedToolId, ManagedToolState } from '../../../shared/managedTools';
+import type { BotDownloadCap, DownloadsKeep } from '../../../shared/downloads';
 import type { TelegramLargeUploadInput, TelegramLargeUploadResult } from '../../../shared/telegramUpload';
 import type { ConversationHistoryList, ConversationRestoreResult } from '../../../shared/conversationHistory';
 import type { ConversationMovedEvent, ConversationMoveResult } from '../../../shared/conversationMove';
 import type { ConversationFolder, FolderActionResult, FolderDeleteResult } from '../../../shared/conversationFolders';
 import type { FlowFolder, FlowFolderDeleteResult, FlowFolderMoveResult, FlowFolderResult } from '../../../shared/flowFolders';
+import type { FlowFolderRunStartResult, FlowFolderRunState } from '../../../shared/flowFolderRun';
 import type { SidebarViewPrefs } from '../../../shared/sidebarView';
 import type { LinkRecognitionState, LinkRecognitionTarget } from '../../../shared/linkRecognition';
 import type {
@@ -91,6 +94,7 @@ import type {
   McpServerSaveRequest,
   McpServerActionResult,
   ByokTestResult,
+  ByokKeyTestResult,
   CaptureSettings,
   QuickExportSettings,
   ChatCommandResult,
@@ -180,6 +184,18 @@ import type { FlowMetricsSnapshot } from '../../../shared/flowMetrics';
 import type { ConversationTokenStats } from '../../../shared/tokenEstimate';
 import type { FeedPreviewRequest, FeedPreviewResult } from '../../../shared/feedPreview';
 import type { PttBoardChoice, PttBoardPreviewRequest, PttBoardPreviewResult } from '../../../shared/pttBoard';
+import type { KnowledgeBase, KnowledgeFileScope } from '../../../shared/knowledgeBase';
+import type {
+  KnowledgeAnalysisEvent,
+  KnowledgeFile,
+  KnowledgeFileDetail,
+  KnowledgeFilePreview,
+  KnowledgeImportResult,
+  KnowledgeSaveError,
+  KnowledgeSaveRequest,
+  KnowledgeSearchResult,
+  KnowledgeStatus,
+} from '../../../shared/knowledgeStatus';
 
 import type { ShortcutOverride } from '../../../shared/shortcuts';
 
@@ -217,6 +233,15 @@ export const notionApi = {
   revert: (filePath: string, id: string): Promise<boolean> => window.electronAPI.notionRevert(filePath, id),
 };
 
+export const managedToolsApi = {
+  getAll: (): Promise<ManagedToolState[]> => window.electronAPI.managedToolsGet(),
+  install: (id: ManagedToolId): Promise<ManagedToolState[]> => window.electronAPI.managedToolsInstall(id),
+  checkUpdate: (id: ManagedToolId): Promise<ManagedToolState[]> => window.electronAPI.managedToolsCheckUpdate(id),
+  remove: (id: ManagedToolId): Promise<ManagedToolState[]> => window.electronAPI.managedToolsRemove(id),
+  setCustom: (id: ManagedToolId, file: string | null): Promise<ManagedToolState[]> => window.electronAPI.managedToolsSetCustom(id, file),
+  onState: (cb: (state: ManagedToolState) => void): (() => void) => window.electronAPI.onManagedToolState(cb),
+};
+
 export const ytdlToolsApi = {
   get: (): Promise<YtdlToolsState> => window.electronAPI.ytdlToolsGet(),
   install: (): Promise<YtdlToolsState> => window.electronAPI.ytdlToolsInstall(),
@@ -228,6 +253,12 @@ export const ytdlToolsApi = {
   onState: (cb: (state: YtdlToolsState) => void): (() => void) => window.electronAPI.onYtdlToolsState(cb),
   getDownloadsKeep: (): Promise<DownloadsKeep> => window.electronAPI.getDownloadsKeep(),
   setDownloadsKeep: (choice: DownloadsKeep): Promise<DownloadsKeep> => window.electronAPI.setDownloadsKeep(choice),
+  getBotDownloadCap: (): Promise<BotDownloadCap> => window.electronAPI.getBotDownloadCap(),
+  getBotUserDownloadCaps: (): Promise<Record<string, BotDownloadCap>> => window.electronAPI.getBotUserDownloadCaps(),
+  setBotUserDownloadCap: (request: { platform: string; userId: string; cap: BotDownloadCap | null }): Promise<Record<string, BotDownloadCap>> => (
+    window.electronAPI.setBotUserDownloadCap(request)
+  ),
+  setBotDownloadCap: (choice: BotDownloadCap): Promise<BotDownloadCap> => window.electronAPI.setBotDownloadCap(choice),
 };
 
 export const fileApi = {
@@ -325,6 +356,11 @@ export const flowFolderApi = {
   move: (flowIds: string[], folder: string, before?: string): Promise<FlowFolderMoveResult> =>
     window.electronAPI.moveFlowsToFolder(flowIds, folder, before),
   onChanged: (cb: (folders: FlowFolder[]) => void): (() => void) => window.electronAPI.onFlowFoldersChanged(cb),
+  /** 「全部執行」: main runs the folder's flows one after another. */
+  run: (folder: string): Promise<FlowFolderRunStartResult> => window.electronAPI.runFlowFolder(folder),
+  stopRun: (folder: string): Promise<boolean> => window.electronAPI.stopFlowFolderRun(folder),
+  listRuns: (): Promise<FlowFolderRunState[]> => window.electronAPI.listFlowFolderRuns(),
+  onRunsChanged: (cb: (states: FlowFolderRunState[]) => void): (() => void) => window.electronAPI.onFlowFolderRunsChanged(cb),
   /** Sorting unfiled flows: the model proposes folders, the user ticks what is filed. */
   getSortModel: (): Promise<string> => window.electronAPI.getFlowSortModel(),
   proposeSort: (request: FlowSortProposeRequest): Promise<FlowSortProposeResult> => window.electronAPI.proposeFlowSort(request),
@@ -351,6 +387,8 @@ export const settingsApi = {
     window.electronAPI.updateShortcuts(next),
   getAiUrl: (): Promise<string> => window.electronAPI.getAiUrl(),
   updateAiUrl: (url: string): Promise<boolean> => window.electronAPI.updateAiUrl(url),
+  onAiUrlChanged: (cb: (url: string) => void): (() => void) => window.electronAPI.onAiUrlChanged(cb),
+  onSettingsChanged: (cb: () => void): (() => void) => window.electronAPI.onSettingsChanged(cb),
   getHiddenSources: (): Promise<HiddenSources> => window.electronAPI.getHiddenSources(),
   updateHiddenSources: (next: HiddenSources): Promise<{ ok: boolean }> =>
     window.electronAPI.updateHiddenSources(next),
@@ -431,6 +469,8 @@ export const telegramApi = {
     window.electronAPI.testTelegramLargeUpload(input),
   updateAllowGroupCommands: (enabled: boolean): Promise<boolean> =>
     window.electronAPI.updateTelegramAllowGroupCommands(enabled),
+  updateReplaceLinkMessage: (enabled: boolean): Promise<boolean> =>
+    window.electronAPI.updateTelegramReplaceLinkMessage(enabled),
   updateLlmDirect: (config: BotLlmDirectConfig): Promise<boolean> =>
     window.electronAPI.updateTelegramLlmDirect(config),
   generatePairingCode: () => window.electronAPI.generateTelegramPairingCode(),
@@ -554,6 +594,7 @@ export const byokApi = {
     window.electronAPI.deleteByokInstance(id),
   listModels: (req: ByokConnectionProbe): Promise<ByokModelsResult> => window.electronAPI.listByokModels(req),
   testInstance: (req: ByokConnectionProbe): Promise<ByokTestResult> => window.electronAPI.testByokInstance(req),
+  testKeys: (ids?: string[]): Promise<ByokKeyTestResult[]> => window.electronAPI.testByokKeys(ids),
   saveGroup: (req: ByokGroupSaveRequest): Promise<{ ok: boolean; snapshot: ByokSettingsSnapshot }> =>
     window.electronAPI.saveByokGroup(req),
   deleteGroup: (id: string): Promise<{ ok: boolean; snapshot: ByokSettingsSnapshot }> =>
@@ -652,6 +693,7 @@ export const flowAssistApi = {
   edit: (request: FlowAssistEditRequest): Promise<FlowAssistEditResult> => window.electronAPI.assistFlowEdit(request),
   explain: (request: FlowAssistExplainRequest): Promise<FlowAssistExplainResult> => window.electronAPI.assistFlowExplain(request),
   names: (request: FlowAssistNamesRequest): Promise<FlowAssistNamesResult> => window.electronAPI.assistFlowNames(request),
+  keys: (request: FlowAssistKeysRequest): Promise<FlowAssistKeysResult> => window.electronAPI.assistFlowKeys(request),
   cancel: (id: string): Promise<boolean> => window.electronAPI.cancelFlowAssist(id),
 };
 
@@ -686,6 +728,13 @@ export const claudeModelApi = {
   set: (patch: Partial<ClaudeModelChoice>): Promise<ClaudeModelState> => window.electronAPI.setClaudeModel(patch),
   refresh: (): Promise<ClaudeModelState> => window.electronAPI.refreshClaudeModels(),
   onChanged: (cb: (state: ClaudeModelState) => void) => window.electronAPI.onClaudeModelsChanged(cb),
+};
+
+export const perplexityModelApi = {
+  get: (): Promise<PerplexityModelState> => window.electronAPI.getPerplexityModels(),
+  set: (patch: Partial<PerplexityModelChoice>): Promise<PerplexityModelState> => window.electronAPI.setPerplexityModel(patch),
+  refresh: (): Promise<PerplexityModelState> => window.electronAPI.refreshPerplexityModels(),
+  onChanged: (cb: (state: PerplexityModelState) => void) => window.electronAPI.onPerplexityModelsChanged(cb),
 };
 
 export const chatgptModelApi = {
@@ -875,10 +924,10 @@ export const flowApi = {
 
 
 export const agentApi = {
-  run: (goal: string, targetUrl: string, runId: string, conversationPath?: string, attachments?: string[], mcpServerIds?: string[], web?: boolean): Promise<AgentCommandResult> =>
-    window.electronAPI.runAgentCommand(goal, targetUrl, runId, conversationPath, attachments, mcpServerIds, web),
-  setConversationConnectors: (filePath: string, serverIds: string[], web?: boolean, agent?: boolean): Promise<boolean> =>
-    window.electronAPI.setConversationConnectors(filePath, serverIds, web, agent),
+  run: (goal: string, targetUrl: string, runId: string, conversationPath?: string, attachments?: string[], mcpServerIds?: string[], web?: boolean, knowledgeOnly?: boolean, knowledgeFiles?: KnowledgeFileScope): Promise<AgentCommandResult> =>
+    window.electronAPI.runAgentCommand(goal, targetUrl, runId, conversationPath, attachments, mcpServerIds, web, knowledgeOnly, knowledgeFiles),
+  setConversationConnectors: (filePath: string, serverIds: string[], web?: boolean, agent?: boolean, knowledgeOnly?: boolean, knowledgeFiles?: KnowledgeFileScope): Promise<boolean> =>
+    window.electronAPI.setConversationConnectors(filePath, serverIds, web, agent, knowledgeOnly, knowledgeFiles),
   resume: (runId: string, answer?: string, providerUrl?: string): Promise<AgentCommandResult> =>
     window.electronAPI.resumeAgentRun(runId, answer, providerUrl),
   cancel: (runId: string): Promise<boolean> => window.electronAPI.cancelAgentRun(runId),
@@ -917,6 +966,31 @@ export const xPostsApi = {
 export const lineReadApi = {
   hasCheckpoint: (stepId: string): Promise<boolean> => window.electronAPI.lineReadHasCheckpoint(stepId),
   clearCheckpoint: (stepId: string): Promise<boolean> => window.electronAPI.lineReadClearCheckpoint(stepId),
+};
+
+export const knowledgeApi = {
+  list: (): Promise<{ bases: KnowledgeBase[]; statuses: KnowledgeStatus[] }> => window.electronAPI.kbList(),
+  pickFolder: (): Promise<string | null> => window.electronAPI.kbPickFolder(),
+  save: (request: KnowledgeSaveRequest): Promise<{ bases: KnowledgeBase[] } | { error: KnowledgeSaveError }> => window.electronAPI.kbSave(request),
+  remove: (id: string): Promise<KnowledgeBase[]> => window.electronAPI.kbRemove(id),
+  sync: (id: string): Promise<boolean> => window.electronAPI.kbSync(id),
+  openCitation: (url: string): Promise<boolean> => window.electronAPI.kbOpenCitation(url),
+  openFolder: (id: string): Promise<boolean> => window.electronAPI.kbOpenFolder(id),
+  files: (id: string): Promise<{ files: KnowledgeFile[]; analysis: KnowledgeAnalysisEvent[] }> => window.electronAPI.kbFiles(id),
+  fileDetail: (id: string, rel: string): Promise<KnowledgeFileDetail | null> => window.electronAPI.kbFileDetail(id, rel),
+  filePreview: (id: string, rel: string): Promise<KnowledgeFilePreview | null> => window.electronAPI.kbFilePreview(id, rel),
+  search: (id: string, query: string): Promise<KnowledgeSearchResult | null> => window.electronAPI.kbSearch(id, query),
+  pickFiles: (): Promise<string[]> => window.electronAPI.kbPickFiles(),
+  importFiles: (id: string, paths: string[]): Promise<KnowledgeImportResult | null> => window.electronAPI.kbImport(id, paths),
+  deleteFiles: (id: string, rels: string[]): Promise<number> => window.electronAPI.kbDeleteFiles(id, rels),
+  openFile: (id: string, rel: string): Promise<boolean> => window.electronAPI.kbOpenFile(id, rel),
+  revealFile: (id: string, rel: string): Promise<boolean> => window.electronAPI.kbRevealFile(id, rel),
+  analyze: (id: string, rels: string[], model: string): Promise<boolean> => window.electronAPI.kbAnalyze(id, rels, model),
+  cancelAnalysis: (id: string, rels: string[]): Promise<void> => window.electronAPI.kbAnalyzeCancel(id, rels),
+  clearAi: (id: string, rels: string[]): Promise<number> => window.electronAPI.kbAiClear(id, rels),
+  onAnalysis: (cb: (event: KnowledgeAnalysisEvent) => void): (() => void) => window.electronAPI.onKbAnalysis(cb),
+  onStatus: (cb: (status: KnowledgeStatus) => void): (() => void) => window.electronAPI.onKbStatus(cb),
+  onChanged: (cb: (bases: KnowledgeBase[]) => void): (() => void) => window.electronAPI.onKbChanged(cb),
 };
 
 export const pttBoardApi = {

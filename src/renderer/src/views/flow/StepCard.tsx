@@ -2,9 +2,8 @@ import React, { useCallback, useRef } from 'react';
 import {
   ActionIcon, Badge, Box, Code, Group, Paper, Stack, Text, Tooltip, UnstyledButton,
 } from '@mantine/core';
-import { TriangleExclamationPoint, ArrowDown, ArrowUp, ChevronDown, ChevronsDownUp, ChevronsUpDown, Copy, Trash } from 'lucide-react';
+import { TriangleExclamationPoint, ArrowDown, ArrowUp, ChevronDown, ChevronsDownUp, ChevronsUpDown, Copy, CornerDownRight, Trash } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
-import { AppTextInput } from '../../components/AppTextInput';
 import { ProgressMark, type ProgressState } from '../../components/ProgressMark';
 import { MOVE_BLOCKED_MESSAGE, useFlowStore } from '../../store/useFlowStore';
 import { SKILL_ICON, STEP_CONFIG_EDITOR, skillHue, isDangerSkill } from './skills';
@@ -17,6 +16,9 @@ import { INSERT_DATA_IN_FORM, NO_INSERT_DATA } from './skills/types';
 import { StepDraftButton, type StepDraftButtonRender } from './StepDraftButton';
 import { deleteStepWithUndo } from './deleteStep';
 import { InsertStepBelow } from './InsertStepBelow';
+import { StepColorPicker } from './StepColorPicker';
+import { readFlowStepColor } from '../../../../shared/flowStepColor';
+import { stepColorBackground, stepColorTextVars } from '../../theme/flowStepColors';
 import { noteScopeChange } from './moveNotice';
 import { STEP_FORM_CONTAINER } from './editorColumn';
 import { locateStep } from './outline/locateStep';
@@ -24,6 +26,7 @@ import { useFlowOutlineStore } from '../../store/useFlowOutlineStore';
 import { fillTemplate } from '../../../../shared/fillTemplate';
 import { showAppNotice } from '../../hooks/useUiNotifications';
 import { stepHasOutput } from './stepOutput';
+import { OutputKeyField } from './OutputKeyField';
 import { ATOMIC_STEPS, hasLabelField } from './stepLabelRules';
 import { RenameInput } from '../../components/RenameInput';
 import { stepNameSource } from './assist/flowAssistActions';
@@ -77,6 +80,14 @@ export interface StepCardProps {
    * jumps there.
    */
   ownerId?: string;
+  /** For an end marker: the name of the block it closes, its title ("結束「逐篇處理」"). */
+  ownerName?: string;
+  /** For a closed skip-only condition: what it does when it holds, under its name. */
+  guardText?: string;
+  /** Where its ＋ puts a new step; right below it unless its block's steps are drawn on it. */
+  insertAt?: number;
+  /** An end marker closing a block: a borderless row the block's line turns into, not a card. */
+  slim?: boolean;
   t: (k: string) => string;
 }
 
@@ -91,7 +102,7 @@ const NO_MENU_ROOT: React.RefObject<HTMLElement | null> = { current: null };
 export const StepCard: React.FC<StepCardProps> = React.memo(({
   step, index, total, flowId, outputKeyError, varInput, flowTrigger,
   flowVariables = NO_VARIABLES, dragHandle, expanded, onToggle, runState, runError, runNote, selected, issue, issueTone,
-  blockFolded, blockSize, onToggleBlock, path, ownerId, t,
+  blockFolded, blockSize, onToggleBlock, path, ownerId, ownerName, guardText, insertAt, slim, t,
 }) => {
   const { updateStep, moveStep, duplicateStep } = useFlowStore(
     useShallow((s) => ({
@@ -160,11 +171,11 @@ export const StepCard: React.FC<StepCardProps> = React.memo(({
               <Badge variant="light" color="var(--mantine-color-error)" size="sm" leftSection={<TriangleExclamationPoint size={14} />}>
                 {t('flow.step.unknown')}
               </Badge>
-              <Code fz="xs" c="var(--mantine-color-error)">{step.type}</Code>
+              <Code fz="xs" c="var(--error-text)">{step.type}</Code>
               <Text fz="xs" c="dimmed">#{index + 1}</Text>
             </Group>
             <Tooltip label={t('flow.step.delete')} position="top">
-              <ActionIcon variant="subtle" color="red" size="sm" onClick={handleDelete}>
+              <ActionIcon variant="subtle" color="red" size="sm" aria-label={t('flow.step.delete')} onClick={handleDelete}>
                 <Trash size={14} />
               </ActionIcon>
             </Tooltip>
@@ -177,10 +188,15 @@ export const StepCard: React.FC<StepCardProps> = React.memo(({
 
   const hue = skillHue(step.type);
   const danger = isDangerSkill(step.type);
+  const color = readFlowStepColor(step.color);
+  const background = stepColorBackground(color)
+    ?? (danger ? 'color-mix(in srgb, var(--mantine-color-error) 10%, var(--mantine-color-body))' : undefined);
   const atomic = ATOMIC_STEPS.includes(step.type);
   const showLabel = hasLabelField(step.type);
   const open = !atomic && (expanded || outputKeyError !== null);
-  const headline = stepHeadline(step, t, namedModels);
+  const headline = END_MARKERS.includes(step.type) && ownerName
+    ? { title: fillTemplate(t('flow.summary.end'), { name: ownerName }), detail: '', titleIsCode: false, detailIsCode: false }
+    : stepHeadline(step, t, namedModels);
   const insertInForm = INSERT_DATA_IN_FORM.has(step.type);
   const draftButton: StepDraftButtonRender = (field, kind, fieldLabel) => (
     <StepDraftButton
@@ -203,7 +219,15 @@ export const StepCard: React.FC<StepCardProps> = React.memo(({
         <Text fz={11} c="var(--text-muted)" lineClamp={1} data-step-path="" style={{ wordBreak: 'break-all' }}>{path}</Text>
       )}
       {headline.title ? (
-        <Text fz="sm" fw={500} lineClamp={1} ff={headline.titleIsCode ? 'monospace' : undefined} style={{ wordBreak: 'break-all' }}>
+        <Text
+          fz={slim ? 'xs' : 'sm'}
+          fw={slim ? undefined : 500}
+          c={slim ? 'var(--text-muted)' : undefined}
+          mt={slim ? 2 : undefined}
+          lineClamp={1}
+          ff={headline.titleIsCode ? 'monospace' : undefined}
+          style={{ wordBreak: 'break-all' }}
+        >
           {headline.title}
         </Text>
       ) : (
@@ -214,13 +238,18 @@ export const StepCard: React.FC<StepCardProps> = React.memo(({
           {headline.detail}
         </Text>
       )}
-      {blockFolded && blockSize ? (
+      {guardText ? (
+        <Text fz="xs" c="var(--text-muted)" data-step-guard="" style={{ display: 'flex', gap: 4, alignItems: 'flex-start' }}>
+          <CornerDownRight size={12} style={{ flexShrink: 0, marginTop: 2 }} />
+          {guardText}
+        </Text>
+      ) : blockFolded && blockSize ? (
         <Text fz="xs" c="var(--text-muted)" data-block-folded="">{fillTemplate(t('flow.step.block.foldedCount'), { count: String(blockSize) })}</Text>
       ) : null}
       {issue && !outputKeyError && (
         <Text
           fz="xs"
-          c={issueTone === 'warning' ? 'var(--mantine-color-warning)' : 'var(--mantine-color-error)'}
+          c={issueTone === 'warning' ? 'var(--warning-text)' : 'var(--error-text)'}
           lineClamp={open ? undefined : 1}
           data-step-issue={issueTone ?? 'error'}
           style={{ display: 'flex', gap: 4, alignItems: 'flex-start', wordBreak: 'break-word' }}
@@ -245,30 +274,33 @@ export const StepCard: React.FC<StepCardProps> = React.memo(({
 
   return (
     <Paper
-      withBorder
+      withBorder={!slim || Boolean(color)}
       p="sm"
+      py={slim ? 4 : undefined}
       radius="md"
+      data-step-slim={slim ? '' : undefined}
       id={stepDomId(step.id)}
       data-step-id={step.id}
+      data-step-color={color}
       data-selected={selected ? 'true' : undefined}
-      style={{ scrollMarginTop: 12, ...(selected ? { outline: '1px solid var(--mantine-primary-color-filled)', outlineOffset: 1 } : {}) }}
+      style={{ ...stepColorTextVars(color), scrollMarginTop: 12, ...(selected ? { outline: '1px solid var(--mantine-primary-color-filled)', outlineOffset: 1 } : {}) }}
       data-expanded={open ? 'true' : 'false'}
       data-run={runState}
-      bg={danger ? 'color-mix(in srgb, var(--mantine-color-red-light) 50%, transparent)' : undefined}
+      bg={background ?? (slim ? 'transparent' : undefined)}
     >
       <Stack gap="xs">
         {/* An open card can be taller than the editor (a long prompt): its header stays at the top
             while the form scrolls under it, so its name and actions are never out of reach. */}
         <Group
           justify="space-between"
-          wrap="nowrap"
+          wrap="wrap"
           align="flex-start"
           gap="xs"
           data-step-header=""
-          style={open ? { position: 'sticky', top: 0, zIndex: 3, background: 'var(--mantine-color-body)', paddingBlock: 4, marginBlock: -4 } : undefined}
+          style={open ? { position: 'sticky', top: 0, zIndex: 3, background: background ?? 'var(--mantine-color-body)', paddingBlock: 4, marginBlock: -4 } : undefined}
         >
-          <Group gap="xs" wrap="nowrap" align="flex-start" style={{ flex: 1, minWidth: 0 }}>
-            {dragHandle}
+          <Group gap="xs" wrap="nowrap" align="flex-start" style={{ flex: '1 1 12rem', minWidth: 0 }}>
+            {!slim && dragHandle}
             <Badge variant="light" color={hue} size="sm" leftSection={SKILL_ICON[step.type]} mt={1} style={{ flexShrink: 0 }}>
               {t(skillLabelKey)}
             </Badge>
@@ -308,7 +340,7 @@ export const StepCard: React.FC<StepCardProps> = React.memo(({
               </UnstyledButton>
             )}
           </Group>
-          <Group gap={6} wrap="nowrap" style={{ flexShrink: 0 }}>
+          <Group gap={6} wrap="wrap" style={{ maxWidth: '100%' }}>
             {open && stepHasOutput(step) && (
               <Code fz="xs" c="dimmed">{`{{${step.outputKey}}}`}</Code>
             )}
@@ -326,16 +358,17 @@ export const StepCard: React.FC<StepCardProps> = React.memo(({
                 </ActionIcon>
               </Tooltip>
             )}
-            <InsertStepBelow flowId={flowId} at={index + 1} t={t} />
+            <StepColorPicker color={color} onChange={(next) => updateStep(flowId, step.id, { color: next })} t={t} />
+            <InsertStepBelow flowId={flowId} at={insertAt ?? index + 1} t={t} />
             {!END_MARKERS.includes(step.type) && (
               <>
                 <Tooltip label={t('flow.step.moveUp')} position="top">
-                  <ActionIcon variant="subtle" size="sm" disabled={index === 0} onClick={() => handleMove('up')}>
+                  <ActionIcon variant="subtle" size="sm" aria-label={t('flow.step.moveUp')} disabled={index === 0} onClick={() => handleMove('up')}>
                     <ArrowUp size={14} />
                   </ActionIcon>
                 </Tooltip>
                 <Tooltip label={t('flow.step.moveDown')} position="top">
-                  <ActionIcon variant="subtle" size="sm" disabled={index === total - 1} onClick={() => handleMove('down')}>
+                  <ActionIcon variant="subtle" size="sm" aria-label={t('flow.step.moveDown')} disabled={index === total - 1} onClick={() => handleMove('down')}>
                     <ArrowDown size={14} />
                   </ActionIcon>
                 </Tooltip>
@@ -349,7 +382,7 @@ export const StepCard: React.FC<StepCardProps> = React.memo(({
               </Tooltip>
             )}
             <Tooltip label={t('flow.step.delete')} position="top">
-              <ActionIcon variant="subtle" color="red" size="sm" onClick={handleDelete}>
+              <ActionIcon variant="subtle" color="red" size="sm" aria-label={t('flow.step.delete')} onClick={handleDelete}>
                 <Trash size={14} />
               </ActionIcon>
             </Tooltip>
@@ -357,7 +390,7 @@ export const StepCard: React.FC<StepCardProps> = React.memo(({
         </Group>
 
         {runError && (
-          <Text className="selectable" fz="xs" c="var(--mantine-color-error)" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+          <Text className="selectable" fz="xs" c="var(--error-text)" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
             {runError}
           </Text>
         )}
@@ -389,16 +422,7 @@ export const StepCard: React.FC<StepCardProps> = React.memo(({
             </Box>
             {!insertInForm && !NO_INSERT_DATA.has(step.type) && insertDataMenu}
 
-            {stepHasOutput(step) && (
-              <AppTextInput
-                label={t('flow.step.outputKey')}
-                description={t('flow.step.outputKey.hint')}
-                value={step.outputKey}
-                onChange={(e) => updateStep(flowId, step.id, { outputKey: e.currentTarget.value })}
-                size="xs"
-                error={outputKeyError ? t(`flow.step.outputKey.error.${outputKeyError}`) : undefined}
-              />
-            )}
+            {stepHasOutput(step) && <OutputKeyField step={step} flowId={flowId} error={outputKeyError} t={t} />}
           </>
         )}
       </Stack>

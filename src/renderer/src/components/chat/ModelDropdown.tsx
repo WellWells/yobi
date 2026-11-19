@@ -1,14 +1,18 @@
 import React, { useState } from 'react';
-import { Menu, Tooltip } from '@mantine/core';
+import { Menu } from '@mantine/core';
 import type { ModelOption } from '../../config/models';
-import { PROVIDER_DROPDOWN_MAX_HEIGHT, findModelOption } from '../../config/models';
+import { findModelOption } from '../../config/models';
+import { MODEL_MENU_MIDDLEWARES } from '../../config/modelMenuSizing';
 import { useProviderModels } from '../../hooks/useProviderModels';
 import { useAppStore } from '../../store/appStore';
 import { PROVIDER_URLS } from '../../../../shared/types';
 import { selectedGeminiModel } from '../../../../shared/geminiModels';
 import { selectedClaudeModel } from '../../../../shared/claudeModels';
 import { ComposerPill } from './ComposerPill';
+import { TooltipTarget } from '../TooltipTarget';
 import { GeminiModelSummary } from './GeminiModelMenu';
+import { PerplexityModelSummary } from './PerplexityModelMenu';
+import { selectedPerplexityModel } from '../../../../shared/perplexityModels';
 import { ClaudeModelSummary } from './ClaudeModelMenu';
 import { ChatgptModelSummary, chatgptSummaryText } from './ChatgptModelMenu';
 import { ModelMenuItems } from './ModelMenuItems';
@@ -51,6 +55,7 @@ export const ModelDropdown: React.FC<ModelDropdownProps> = ({
   const geminiModels = useAppStore((s) => s.geminiModels);
   const claudeModels = useAppStore((s) => s.claudeModels);
   const chatgptModels = useAppStore((s) => s.chatgptModels);
+  const perplexityModels = useAppStore((s) => s.perplexityModels);
   const current = findModelOption(value, extraModels);
   const CurrentIcon = current.icon;
   const toggle = () => {
@@ -61,12 +66,15 @@ export const ModelDropdown: React.FC<ModelDropdownProps> = ({
   const geminiModel = current.url === PROVIDER_URLS.gemini ? selectedGeminiModel(geminiModels) : null;
   const claudeModel = current.url === PROVIDER_URLS.claude ? selectedClaudeModel(claudeModels) : null;
   const chatgptText = current.url === PROVIDER_URLS.chatgpt ? chatgptSummaryText(chatgptModels) : null;
+  const perplexityModel = current.url === PROVIDER_URLS.perplexity ? selectedPerplexityModel(perplexityModels) : null;
   const summary = geminiModel && geminiModels
     ? <GeminiModelSummary state={geminiModels} />
     : claudeModel && claudeModels
       ? <ClaudeModelSummary state={claudeModels} />
-      : chatgptText && chatgptModels ? <ChatgptModelSummary state={chatgptModels} /> : null;
-  const subLabel = geminiModel?.label ?? claudeModel?.label ?? chatgptText;
+      : chatgptText && chatgptModels
+        ? <ChatgptModelSummary state={chatgptModels} />
+        : perplexityModel && perplexityModels ? <PerplexityModelSummary state={perplexityModels} /> : null;
+  const subLabel = geminiModel?.label ?? claudeModel?.label ?? chatgptText ?? perplexityModel?.label;
   const defaultTrigger = (
     <ComposerPill
       variant="subtle"
@@ -87,12 +95,12 @@ export const ModelDropdown: React.FC<ModelDropdownProps> = ({
       offset={6}
       withinPortal
       zIndex={zIndex}
+      middlewares={MODEL_MENU_MIDDLEWARES}
       styles={{
         dropdown: {
           background: 'var(--mantine-color-default)',
           borderColor: 'var(--mantine-color-default-border)',
           minWidth: 180,
-          maxHeight: PROVIDER_DROPDOWN_MAX_HEIGHT,
           overflowY: 'auto',
         },
         item: {
@@ -105,9 +113,11 @@ export const ModelDropdown: React.FC<ModelDropdownProps> = ({
           ? renderTrigger({ open, current, toggle, disabled })
           : tooltipLabel
             ? (
-              <Tooltip label={tooltipLabel} position="top">
+              // Off while the menu is open: the menu ends right at the pill, so the hint sat on
+              // its last row for as long as the pointer stayed on the pill it had just clicked.
+              <TooltipTarget label={tooltipLabel} position="top" disabled={open}>
                 {defaultTrigger}
-              </Tooltip>
+              </TooltipTarget>
             )
             : defaultTrigger}
       </Menu.Target>

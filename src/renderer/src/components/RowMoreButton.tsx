@@ -18,6 +18,13 @@ interface RowMoreButtonProps {
   menuOpen: boolean;
   onOpen: (at: MenuAnchor) => void;
   className?: string;
+  /**
+   * The row is an item of a tree with roving focus (the sidebars): the button is a pointer
+   * affordance only — not a Tab stop and hidden from assistive tech, since the row's own
+   * context-menu key (Shift+F10 / the menu key) opens the same menu (WCAG 2.1.1, 2.4.3; axe
+   * nested-interactive would otherwise count it inside the row).
+   */
+  pointerOnly?: boolean;
 }
 
 /**
@@ -27,7 +34,7 @@ interface RowMoreButtonProps {
  * start dragging a conversation out of the window (mousedown's default is what starts a drag), or
  * pick a flow up for sorting (dnd-kit listens for pointerdown and Enter/Space on the row).
  */
-export const RowMoreButton: React.FC<RowMoreButtonProps> = ({ label, menuOpen, onOpen, className }) => (
+export const RowMoreButton: React.FC<RowMoreButtonProps> = ({ label, menuOpen, onOpen, className, pointerOnly = false }) => (
   <ActionIcon
     variant="subtle"
     size="sm"
@@ -35,6 +42,8 @@ export const RowMoreButton: React.FC<RowMoreButtonProps> = ({ label, menuOpen, o
     c="dimmed"
     className={className}
     aria-label={label}
+    tabIndex={pointerOnly ? -1 : undefined}
+    aria-hidden={pointerOnly || undefined}
     aria-haspopup="menu"
     aria-expanded={menuOpen}
     data-menu-open={menuOpen || undefined}

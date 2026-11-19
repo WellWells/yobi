@@ -39,6 +39,8 @@ export interface XPost {
    * author, board, time, place and tally): a chat message opens with it instead of who wrote it.
    */
   heading?: string;
+  /** What names the chat when "who: what they said" would not: an app's name, not its developer. */
+  title?: string;
   /** The same header as data, which the desktop chat draws as a card. */
   card?: PostCard;
   /**

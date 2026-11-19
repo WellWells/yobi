@@ -1,5 +1,5 @@
 import { BrowserWindow } from 'electron';
-import { SILENT_WEB_PREFERENCES, muteWindow, parkWindowOffscreen } from '../silentWindow';
+import { SILENT_WEB_PREFERENCES, muteWindow, hideBeforeMapping, parkWindowOffscreen } from '../silentWindow';
 import { prepareSiteWindow, siteSession } from '../siteAccounts';
 import { Semaphore } from '../flow/lanes';
 import { within } from '../promiseRace';
@@ -113,7 +113,7 @@ async function capture(url: string, ready: (answers: readonly unknown[]) => bool
   try {
     // Mapped, not merely created: a window never shown stalls the page's own scripts.
     // Transparent before it is mapped, so it never flashes before parking.
-    win.setOpacity(0);
+    hideBeforeMapping(win);
     win.showInactive();
     parkWindowOffscreen(win);
     // A webContents that never navigated gives the debugger no page: a blank one first.

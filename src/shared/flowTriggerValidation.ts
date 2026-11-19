@@ -3,6 +3,7 @@ import { BOT_COMMAND_RE, SYSTEM_EVENTS } from './types';
 import type { SystemEvent } from './types';
 import { parseCronToScheduleFields } from './flowSchedule';
 import { isUsableWatchFolder, parseWatchPatterns } from './flowFileTrigger';
+import { oneTimeTriggerFromRunAt } from './flowRunAt';
 
 export type TriggerValidationResult =
   | { ok: true; trigger: TriggerConfig }
@@ -68,6 +69,8 @@ export function validateTrigger(raw: unknown): TriggerValidationResult {
     return { ok: true, trigger: { type: 'hotkey', keys } };
   }
   if (tr.type === 'cron') {
+    // The flow compiler's one-time schedule; never stored, so a saved flow never comes back through here with it.
+    if (typeof tr.runAt === 'string' && tr.runAt.trim()) return oneTimeTriggerFromRunAt(tr.runAt);
     const cronExpression = typeof tr.cronExpression === 'string' ? tr.cronExpression.trim() : '';
     if (!cronExpression) return { ok: false, error: 'Cron trigger is missing "cronExpression"' };
     if (!isPlausibleCronExpression(cronExpression)) {

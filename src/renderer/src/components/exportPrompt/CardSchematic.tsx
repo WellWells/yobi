@@ -2,6 +2,7 @@ import React from 'react';
 import { Box } from '@mantine/core';
 import { captureBackgroundCss, paletteCardTheme } from '../../../../shared/capturePalettes';
 import type { CaptureBackgroundStyle, CaptureDirection } from '../../../../shared/capturePalettes';
+import { cardBackground } from '../../hooks/captureTheme';
 
 interface Props {
   palette: string;
@@ -9,13 +10,14 @@ interface Props {
   direction: CaptureDirection;
   width: number;
   margin: number;
+  cardOpacity: number;
   boxWidth: number;
 }
 
 const LINE_WIDTHS = ['72%', '88%', '61%', '80%'];
 
 export const CardSchematic: React.FC<Props> = ({
-  palette, backgroundStyle, direction, width, margin, boxWidth,
+  palette, backgroundStyle, direction, width, margin, cardOpacity, boxWidth,
 }) => {
   const card = paletteCardTheme(palette);
   const dark = card === 'dark';
@@ -38,7 +40,7 @@ export const CardSchematic: React.FC<Props> = ({
         style={{
           height: '100%',
           borderRadius: Math.max(3, Math.round(20 * scale)),
-          background: dark ? 'rgba(13, 17, 23, 0.94)' : 'rgba(255, 255, 255, 0.96)',
+          background: cardBackground(card, cardOpacity),
           border: `1px solid ${dark ? 'rgba(201, 209, 217, 0.2)' : 'rgba(15, 23, 42, 0.1)'}`,
           boxShadow: dark ? '0 6px 18px rgba(0, 0, 0, 0.36)' : '0 6px 18px rgba(15, 23, 42, 0.12)',
           padding: '11px 12px',

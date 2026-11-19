@@ -237,6 +237,8 @@ export const SelectionToolbar = React.forwardRef<HTMLDivElement, SelectionToolba
             {sources.map((source) => (
               <NavLink
                 key={source.id}
+                component="button"
+                type="button"
                 label={source.title}
                 description={citationHost(source.url)}
                 px={14}

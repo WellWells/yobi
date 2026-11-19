@@ -1,16 +1,18 @@
+import { parseAppStoreUrl } from './appStoreLinks';
+import { parsePlayUrl } from './playLinks';
 import { parseFacebookUrl } from '../facebookLinks';
 import { BILIBILI_SHARE_TITLE, bilibiliListVideoId, bilibiliVideoUrl, parseBilibiliListUrl, parseBilibiliUrl } from './bilibiliLinks';
 import { parseDcardUrl } from './dcardLinks';
-import { parseInstagramUrl } from '../instagramLinks';
+import { INSTAGRAM_HOST_HINT, parseInstagramUrl } from '../instagramLinks';
 import { parseM3u8Url } from './m3u8Links';
-import { parseThreadsPostUrl } from '../threadsLinks';
+import { THREADS_HOST_HINT, parseThreadsPostUrl } from '../threadsLinks';
 import { parsePttUrl } from './pttLinks';
 import { parseRedditUrl } from './redditLinks';
 import { parseSoundcloudUrl } from './soundcloudLinks';
 import { parseTikTokUrl } from './tiktokLinks';
 import { parseVimeoListUrl, parseVimeoUrl } from './vimeoLinks';
 import { parseWeiboUrl } from './weiboLinks';
-import { parseXPostUrl } from '../xHandles';
+import { X_POST_HOST_HINT, parseXPostUrl } from '../xHandles';
 import {
   isYoutubeMusicUrl, strictYoutubeListId, strictYoutubePlaylistId, strictYoutubeVideoId, youtubePlaylistUrl, youtubeWatchUrl,
 } from '../youtubeUrl';
@@ -55,7 +57,7 @@ const X_ROW: PostRow = {
   label: 'X',
   shape: 'post',
   match(token) {
-    if (!/(?:^|[./])(?:x|twitter)\.com\//i.test(token)) return null;
+    if (!X_POST_HOST_HINT.test(token)) return null;
     const ref = parseXPostUrl(token);
     return ref ? postRef('x', { url: `https://x.com/${ref.author || 'i'}/status/${ref.id}`, id: ref.id, author: ref.author }) : null;
   },
@@ -66,7 +68,7 @@ const THREADS_ROW: PostRow = {
   label: 'Threads',
   shape: 'post',
   match(token) {
-    if (!/(?:^|[./])threads\.(?:com|net)\//i.test(token)) return null;
+    if (!THREADS_HOST_HINT.test(token)) return null;
     const ref = parseThreadsPostUrl(token);
     return ref ? postRef('threads', ref) : null;
   },
@@ -77,7 +79,7 @@ const INSTAGRAM_ROW: PostRow = {
   label: 'Instagram',
   shape: 'post',
   match(token) {
-    if (!/(?:^|[./])(?:instagram\.com|instagr\.am)\//i.test(token)) return null;
+    if (!INSTAGRAM_HOST_HINT.test(token)) return null;
     const ref = parseInstagramUrl(token);
     return ref ? postRef('instagram', ref) : null;
   },
@@ -181,6 +183,36 @@ const WEIBO_ROW: PostRow = {
     if (!/(?:^|[./])weibo\.(?:com|cn)\//i.test(token)) return null;
     const ref = parseWeiboUrl(token);
     return ref ? postRef('weibo', ref) : null;
+  },
+};
+
+/*
+ * An app's App Store page: read as a card (what it is, who makes it, this store's price and its
+ * in-app purchases), with the description for an "analyze". It has no media and no replies.
+ */
+const APP_STORE_ROW: PostRow = {
+  id: 'appstore',
+  label: 'App Store',
+  shape: 'post',
+  match(token) {
+    if (!/(?:^|\/\/)apps\.apple\.com\//i.test(token)) return null;
+    const ref = parseAppStoreUrl(token);
+    return ref ? postRef('appstore', { url: ref.url, id: ref.id, author: '' }) : null;
+  },
+};
+
+/*
+ * An app's Google Play page: the same card as the App Store's, with what Play shows instead of the
+ * in-app purchase items (their price range, ads, installs). It has no media and no replies.
+ */
+const GOOGLE_PLAY_ROW: PostRow = {
+  id: 'googleplay',
+  label: 'Google Play',
+  shape: 'post',
+  match(token) {
+    if (!/(?:^|\/\/)play\.google\.com\/store\/apps\/details/i.test(token)) return null;
+    const ref = parsePlayUrl(token);
+    return ref ? postRef('googleplay', { url: ref.url, id: ref.id, author: '' }) : null;
   },
 };
 
@@ -313,7 +345,7 @@ const M3U8_ROW: VideoRow = {
 
 /** Every link site, in the order a token is tried against them. The order is behaviour. */
 export const LINK_SITE_ROWS: readonly LinkSiteRow[] = [
-  X_ROW, THREADS_ROW, INSTAGRAM_ROW, FACEBOOK_ROW, TIKTOK_ROW, PTT_ROW, DCARD_ROW, REDDIT_ROW, WEIBO_ROW, YOUTUBE_ROW, BILIBILI_ROW, SOUNDCLOUD_ROW, VIMEO_ROW, M3U8_ROW,
+  X_ROW, THREADS_ROW, INSTAGRAM_ROW, FACEBOOK_ROW, TIKTOK_ROW, PTT_ROW, DCARD_ROW, REDDIT_ROW, WEIBO_ROW, APP_STORE_ROW, GOOGLE_PLAY_ROW, YOUTUBE_ROW, BILIBILI_ROW, SOUNDCLOUD_ROW, VIMEO_ROW, M3U8_ROW,
 ];
 
 const POST_ROWS = LINK_SITE_ROWS.filter((row): row is PostRow => row.shape === 'post');

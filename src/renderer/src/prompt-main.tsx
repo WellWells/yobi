@@ -2,14 +2,13 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { MantineProvider } from '@mantine/core';
 import '@mantine/core/styles.css';
-import { getMantineTheme, buildCssVariablesResolver, applyRootThemeVars } from './theme';
+import { APP_MANTINE_THEME, applyRootThemeVars, rootColorSchemeManager } from './theme';
 import { ExportPromptPanel } from './components/exportPrompt/ExportPromptPanel';
 import { ShareResultPanel } from './components/exportPrompt/ShareResultPanel';
 import type {
   ExportNameRequest, ExportNameResult, ExportPromptChoice, ExportPromptPayload, PanelHeight, ShareResultAction,
   ShareResultState,
 } from '../../shared/types';
-import type { Theme } from '../../shared/themes';
 import './styles/globals.css';
 import { markHostPlatform } from './utils/hostPlatform';
 
@@ -31,18 +30,13 @@ if (!rootElement) {
 }
 const root = ReactDOM.createRoot(rootElement);
 
-let promptTheme: Theme = 'light';
 let promptTitle = '';
 
+// The panel's theme lives on <html> (`applyRootThemeVars` per payload), like the main window's.
 function paint(node: React.ReactNode): void {
-  const { theme, colorScheme } = getMantineTheme(promptTheme);
   root.render(
     <React.StrictMode>
-      <MantineProvider
-        theme={theme}
-        forceColorScheme={colorScheme}
-        cssVariablesResolver={buildCssVariablesResolver(promptTheme)}
-      >
+      <MantineProvider theme={APP_MANTINE_THEME} colorSchemeManager={rootColorSchemeManager}>
         {node}
       </MantineProvider>
     </React.StrictMode>,
@@ -117,8 +111,6 @@ let promptGeneration = 0;
 
 window.renderExportPrompt = (payload) => new Promise<ExportPromptChoice | null>((resolve) => {
   applyRootThemeVars(payload.theme);
-  document.documentElement.setAttribute('data-theme', payload.theme);
-  promptTheme = payload.theme;
   promptTitle = payload.strings.title;
 
   let settled = false;

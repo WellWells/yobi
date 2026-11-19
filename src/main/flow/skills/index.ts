@@ -10,6 +10,8 @@ import { execCalendar } from './calendar';
 import { execMailFetch } from './mailFetch';
 import { execAlmanac } from './almanac';
 import { execTwInvoice } from './twInvoice';
+import { execAppStore } from './appStore';
+import { execPriceSearch } from './priceSearch';
 import { execFileDelete, execFileDownload, execFileList, execFileRead, execFileWrite } from './fileOps';
 import { execShare } from './share';
 import { execEmailSend } from './email';
@@ -150,6 +152,10 @@ export async function executeSkill(
       return execAlmanac(config);
     case 'tw_invoice':
       return execTwInvoice(config, timeoutMs);
+    case 'app_store':
+      return execAppStore(config, signal);
+    case 'price_search':
+      return execPriceSearch(config, stepId, signal);
     case 'calendar':
       return execCalendar(config, signal);
     case 'mail_fetch':
